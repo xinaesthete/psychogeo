@@ -43,7 +43,7 @@ function animate() {
     renderer.domElement.style.transform = `translateY(${window.scrollY}px)`;
     //renderer.domElement.style.transform = `translate(${window.scrollX}px, ${window.scrollY}px)`;
     views.forEach(v => v.updateLayout());
-    renderer.setClearColor(0x308080);
+    renderer.setClearColor(0x305050);
     renderer.autoClear = false;
     renderer.setRenderTarget(null);
     renderer.clear();
@@ -52,6 +52,14 @@ function animate() {
 
 init();
 
+/**
+ * React documentation & general conventions strongly favour composition over inheritence, for sound reasons.
+ * However, it seems as though this represents a sufficiently different kind of component that it may make sense
+ * to make the parts responsible for compositing related boilerplate abstract.
+ * I'm still very new to React and it may well be that having an appropriate type of Prop will allow any behaviour
+ * I might reasonably want.
+ * That said, I don't see a very strong reason that inheritence wouldn't in this case be a relatively clean strategy.
+ */
 export class Threact extends React.Component<any, any> {
     composite: THREE.Mesh;
     private mount?: HTMLDivElement;
@@ -95,18 +103,21 @@ export class Threact extends React.Component<any, any> {
     }
     updateLayout() {
         if (!this.mount) return;
+        //nb: it could be possible to use something other than bounding rect, in cases with odd CSS transform.
+        //but that's a bit of a tangent.
         const rect = this.mount.getBoundingClientRect();
         //TODO: don't render if off screen.
-        const w = rect.width;
-        const h = rect.height;
+        const w = rect.width, cw = renderer.domElement.clientWidth;
+        const h = rect.height, ch = renderer.domElement.clientHeight;
         const left = rect.left + w/2;
-        const bottom = (renderer.domElement.clientHeight - rect.bottom) + h/2;
+        const bottom = (ch - rect.bottom) + h/2;
         this.composite.position.x = left;
         this.composite.position.y = bottom;
         //this.composite.scale.x = w;
         //this.composite.scale.y = h;
 
         this.composite.updateMatrix();
+        if (rect.bottom < 0 || rect.top > ch || rect.right < 0 || rect.left > cw) return;
         this.renderGL();
     }
     renderGL() {
@@ -120,8 +131,6 @@ export class Threact extends React.Component<any, any> {
         renderer.setRenderTarget(rt);
     }
     render() {
-        return <div className='threact_view_proxy' ref={(mount) => this.mount = mount as HTMLDivElement}>
-            {this.hue}
-            </div>
+        return <div className='threact_view_proxy' ref={(mount) => this.mount = mount as HTMLDivElement} />
     }
 }
