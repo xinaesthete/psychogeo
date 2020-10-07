@@ -1,0 +1,15 @@
+#threact_main_canvas {
+    position: absolute;
+    top: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: -1;
+    display: block;
+}
+
+.threact_view_proxy {
+    width: 250px;
+    height: 250px;
+    margin: 10px;
+    border: 1px solid black;
+}
