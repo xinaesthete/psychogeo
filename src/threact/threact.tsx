@@ -1,6 +1,5 @@
 import React from 'react'
 import * as THREE from 'three'
-import { WebGLRenderTarget } from 'three';
 import './threact.css'
 
 declare const window: Window;
@@ -55,7 +54,7 @@ init();
 export class Threact extends React.Component<any, any> {
     composite: THREE.Mesh;
     private mount?: HTMLDivElement;
-    renderTarget: WebGLRenderTarget;
+    renderTarget: THREE.WebGLRenderTarget;
     scene: THREE.Scene;
     camera: THREE.Camera;
     color: THREE.Color;
@@ -65,7 +64,7 @@ export class Threact extends React.Component<any, any> {
         this.scene = new THREE.Scene();
         this.color = new THREE.Color();
         this.hue = Math.random();
-        this.color.setHSL(this.hue, 0.5, 1);
+        this.color.setHSL(this.hue, 0.9, 0.4);
         this.renderTarget = new THREE.WebGLRenderTarget(250, 250);
         this.camera = new THREE.PerspectiveCamera();
         this.camera.position.set(0, 0, -10);
