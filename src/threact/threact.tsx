@@ -41,6 +41,7 @@ function resize() {
 function animate() {
     requestAnimationFrame(animate);
     renderer.domElement.style.transform = `translateY(${window.scrollY}px)`;
+    //renderer.domElement.style.transform = `translate(${window.scrollX}px, ${window.scrollY}px)`;
     views.forEach(v => v.updateLayout());
     renderer.setClearColor(0x308080);
     renderer.autoClear = false;
@@ -67,12 +68,12 @@ export class Threact extends React.Component<any, any> {
         this.color.setHSL(this.hue, 0.9, 0.4);
         this.renderTarget = new THREE.WebGLRenderTarget(250, 250);
         this.camera = new THREE.PerspectiveCamera();
-        this.camera.position.set(0, 0, -10);
+        this.camera.position.set(0, 0, -3);
         this.camera.lookAt(0, 0, 0);
         
         const geo = new THREE.PlaneBufferGeometry(250, 250, 1, 1); //TODO: something more efficient / reusable.
-        //const mat = new THREE.MeshBasicMaterial({map: this.renderTarget.texture});
-        const mat = new THREE.MeshBasicMaterial({color: this.color});
+        const mat = new THREE.MeshBasicMaterial({map: this.renderTarget.texture});
+        //const mat = new THREE.MeshBasicMaterial({color: this.color});
         this.composite = new THREE.Mesh(geo, mat);
         this.addBox();
     }
@@ -106,9 +107,11 @@ export class Threact extends React.Component<any, any> {
         //this.composite.scale.y = h;
 
         this.composite.updateMatrix();
-        //this.renderGL();
+        this.renderGL();
     }
     renderGL() {
+        this.scene.children[0].rotateY(0.1);
+        this.scene.children[0].rotateZ(0.13*this.hue);
         const rt = renderer.getRenderTarget();
         renderer.setRenderTarget(this.renderTarget);
         renderer.setClearColor(this.color);
