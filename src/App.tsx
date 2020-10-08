@@ -1,9 +1,14 @@
 import React from 'react';
 import './App.css';
 import { OpenJ2KImage } from './openjpegjs/OpenJ2KImage';
-import { Threact } from './threact/threact';
+import { IThree, Threact } from './threact/threact';
+import { DefaultCube } from './threact/threexample';
 
 function App() {
+  const threeBits: IThree[] = [];
+  for (let i=0; i<10; i++) {
+    threeBits.push(new DefaultCube());
+  }
   return (
     <div className="App">
       <header className="App-header">
@@ -13,12 +18,7 @@ function App() {
         <OpenJ2KImage src="data/OSTN/ostnEShift-90.jpx" />
       <OpenJ2KImage src="data/OSTN/ostnNShift-90.jpx" /> */}
       </header>
-      <Threact />
-      <Threact />
-      <Threact />
-      <Threact />
-      <Threact />
-      <Threact />
+      {threeBits.map((t, i) => <Threact key={i} gfx={t} />)}
     </div>
   );
 }
