@@ -135,6 +135,8 @@ export class JP2HeightField extends ThreactTrackballBase {
         uniform sampler2D heightFeild;
         out vec2 vUv;
         out float normalisedHeight;
+        out vec3 v_modelSpacePosition;
+        out vec3 v_viewSpacePosition;
         float mapHeight(float h) {
             return heightMin + h * (heightMax - heightMin);
         }
@@ -160,16 +162,31 @@ export class JP2HeightField extends ThreactTrackballBase {
             normalisedHeight = h;
             vUv = uv;
             vec4 p = computePos(uv);
-            gl_Position = projectionMatrix * modelViewMatrix * p;
+            v_modelSpacePosition = p.xyz;
+            p = modelViewMatrix * p;
+            v_viewSpacePosition = p.xyz;
+            gl_Position = projectionMatrix * p;
         }
         `
         const frag = glsl`#version 300 es
         precision highp float;
         out vec4 col;
+        in vec3 v_modelSpacePosition;
+        in vec3 v_viewSpacePosition;
         in vec2 vUv;
         in float normalisedHeight;
+        vec3 computeNormal() {
+            vec3 p = v_modelSpacePosition;
+            vec3 dx = dFdx(p);
+            vec3 dy = dFdy(p);
+            return normalize(cross(dx, dy));
+        }
+        float computeSteepness() {
+            return pow(1.-abs(dot(vec3(0.,0.,1.), computeNormal())), 0.1);
+        }
         void main() {
             col = vec4(vec3(normalisedHeight), 1.0);
+            col.rgb = vec3(computeSteepness());
         }
         `
         jp2Texture(this.url).then(result => {
