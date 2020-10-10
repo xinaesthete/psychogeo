@@ -154,7 +154,9 @@ export class JP2HeightField extends ThreactTrackballBase {
         vec2 uvFromVertID() {
             int x = gl_VertexID / gridSizeY;
             int y = gl_VertexID % gridSizeX;
-            return vec2(float(x), float(y)) * EPS;
+            //NB: when I was doing this in OF, I didn't include the +0.5
+            //I think this version is correct... see some odd artefacts otherwise.
+            return vec2(float(x)+0.5, float(y)+0.5) * EPS;
         }
         vec4 computePos(in vec2 uv) {
             return vec4((uv-0.5) * horizontalScale, getHeight(uv), 1.0);
@@ -184,6 +186,7 @@ export class JP2HeightField extends ThreactTrackballBase {
             vec3 dy = dFdy(p);
             return normalize(cross(dx, dy));
         }
+        //this function seems quite good at showing up certain artefacts...
         float computeSteepness() {
             return pow(1.-abs(dot(vec3(0.,0.,1.), computeNormal())), 0.1);
         }
@@ -196,9 +199,9 @@ export class JP2HeightField extends ThreactTrackballBase {
             const w = result.frameInfo.width, h = result.frameInfo.height;
             const uniforms = {
                 heightFeild: { value: result.texture },
-                heightMin: { value: 0 }, heightMax: { value: 1 },
+                heightMin: { value: 0 }, heightMax: { value: 20 },
                 EPS: { value: new THREE.Vector2(1/w, 1/h) },
-                horizontalScale: { value: 100 },
+                horizontalScale: { value: 1000 },
                 gridSizeX: { value: w }, gridSizeY: { value: h }
             }
             const mat = new THREE.RawShaderMaterial({vertexShader: vert, fragmentShader: frag, uniforms: uniforms});
