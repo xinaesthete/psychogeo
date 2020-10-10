@@ -57,6 +57,7 @@ export interface IThree {
     camera: THREE.Camera;
     initThree(dom: HTMLElement): void;
     update(): void;
+    resize(rect: DOMRect): void;
     disposeThree(): void;
 }
 
@@ -64,6 +65,8 @@ export interface IThree {
 export interface IThreact {
     gfx: IThree;
 }
+
+const basePlane = new THREE.PlaneBufferGeometry(1, 1, 1, 1);
 
 /**
  * React documentation & general conventions strongly favour composition over inheritence, for sound reasons.
@@ -78,6 +81,8 @@ export class Threact extends React.Component<IThreact, any> {
     private mount?: HTMLDivElement;
     renderTarget: THREE.WebGLRenderTarget;
     color = 0x202020;
+    private lastW = 0;
+    private lastH = 0;
     constructor(props: any) {
         super(props);
         this.state = {
@@ -85,7 +90,7 @@ export class Threact extends React.Component<IThreact, any> {
         }
         this.renderTarget = new THREE.WebGLRenderTarget(250, 250);
         
-        const geo = new THREE.PlaneBufferGeometry(250, 250, 1, 1); //TODO: something more efficient / reusable.
+        const geo = basePlane;
         const mat = new THREE.MeshBasicMaterial({map: this.renderTarget.texture});
         //const mat = new THREE.MeshBasicMaterial({color: this.color});
         this.composite = new THREE.Mesh(geo, mat);
@@ -110,16 +115,28 @@ export class Threact extends React.Component<IThreact, any> {
         //TODO: don't render if off screen.
         const w = rect.width, cw = renderer.domElement.clientWidth;
         const h = rect.height, ch = renderer.domElement.clientHeight;
+        this.resize(rect);
+        
         const left = rect.left + w/2;
         const bottom = (ch - rect.bottom) + h/2;
         this.composite.position.x = left;
         this.composite.position.y = bottom;
-        //this.composite.scale.x = w;
-        //this.composite.scale.y = h;
-
+        
         //this.composite.updateMatrix();
         if (rect.bottom < 0 || rect.top > ch || rect.right < 0 || rect.left > cw) return;
         this.renderGL();
+    }
+    resize(rect: DOMRect) {
+        const w = rect.width;
+        const h = rect.height;
+        let dirty = (w !== this.lastW) || (h !== this.lastH);
+        if (!dirty) return;
+        this.renderTarget.setSize(w, h);
+        this.composite.scale.setX(w);
+        this.composite.scale.setY(h);
+        this.lastW = w;
+        this.lastH = h;
+        this.props.gfx.resize(rect);
     }
     renderGL() {
         //this can be a significant performance bottleneck here, understandably:

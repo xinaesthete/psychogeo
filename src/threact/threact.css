@@ -12,8 +12,8 @@ body {
 }
 
 .threact_view_proxy {
-    width: 250px;
-    height: 250px;
+    width: 800px;
+    height: 500px;
     margin: 10px;
     border: 1px solid black;
 }
