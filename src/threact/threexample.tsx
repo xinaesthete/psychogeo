@@ -97,11 +97,12 @@ export class JP2TextureView extends ThreactTrackballBase {
     }
 }
 
-const indicesAttribute2kGrid = (() => {
+
+function computeTriangleGridIndices(gridSizeX: number, gridSizeY: number) {
     const d: number[] = [];
-    const index = (x: number, y: number) => 2000 * x + y;
-    for (let i=0; i<2000 - 1; i++) {
-        for (let j=0; j<2000 - 1; j++) {
+    const index = (x: number, y: number) => gridSizeY * x + y;
+    for (let i=0; i<gridSizeX - 1; i++) {
+        for (let j=0; j<gridSizeY - 1; j++) {
             d.push(index(i, j));
             d.push(index(i+1, j));
             d.push(index(i+1, j+1));
@@ -111,7 +112,9 @@ const indicesAttribute2kGrid = (() => {
         }
     }
     return new THREE.BufferAttribute(new Uint32Array(d), 1);
-})();
+}
+
+const indicesAttribute2kGrid = computeTriangleGridIndices(2000, 2000);
 
 export class JP2HeightField extends ThreactTrackballBase {
     geo = new THREE.BufferGeometry();
@@ -200,7 +203,7 @@ export class JP2HeightField extends ThreactTrackballBase {
             }
             const mat = new THREE.RawShaderMaterial({vertexShader: vert, fragmentShader: frag, uniforms: uniforms});
             mat.side = THREE.DoubleSide;
-            this.geo.drawRange.count = w*h*6;
+            this.geo.drawRange.count = (w-1)*(h-1)*6;
             if (w!==2000 || h !== 2000) alert('whoopsie, expected everything to always be 2k^2');
             this.geo.setIndex(indicesAttribute2kGrid);
             const mesh = new THREE.Mesh(this.geo, mat);
