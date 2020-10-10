@@ -41,7 +41,7 @@ export class DefaultCube extends ThreactTrackballBase {
 }
 
 
-async function jp2Texture(url: string) {
+export async function jp2Texture(url: string) {
     const result = await getPixelDataU16(url);
     const frameInfo = result.frameInfo;
     const data = result.pixData;
@@ -128,23 +128,22 @@ export class JP2HeightField extends ThreactTrackballBase {
     init() {
         this.camera.position.y = -100;
         this.camera.position.z = 50;
-        const vert = glsl`#version 300 es
-        precision highp float;
-        uniform mat4 projectionMatrix, modelViewMatrix;
+        const vert = glsl`
+        //uniform mat4 projectionMatrix, modelViewMatrix;
         uniform int gridSizeX, gridSizeY;
         uniform vec2 EPS;
         uniform float heightMin, heightMax;
         uniform float horizontalScale;
         uniform sampler2D heightFeild;
-        out vec2 vUv;
-        out float normalisedHeight;
-        out vec3 v_modelSpacePosition;
-        out vec3 v_viewSpacePosition;
+        varying vec2 vUv;
+        varying float normalisedHeight;
+        varying vec3 v_modelSpacePosition;
+        varying vec3 v_viewSpacePosition;
         float mapHeight(float h) {
             return heightMin + h * (heightMax - heightMin);
         }
         float getNormalisedHeight(vec2 uv) {
-            vec4 v = texture(heightFeild, uv);
+            vec4 v = texture2D(heightFeild, uv);
             float h = v.r + (v.g / 256.);
             return h;
         }
@@ -173,13 +172,13 @@ export class JP2HeightField extends ThreactTrackballBase {
             gl_Position = projectionMatrix * p;
         }
         `
-        const frag = glsl`#version 300 es
+        const frag = glsl`//#version 300 es
         precision highp float;
-        out vec4 col;
-        in vec3 v_modelSpacePosition;
-        in vec3 v_viewSpacePosition;
-        in vec2 vUv;
-        in float normalisedHeight;
+        //out vec4 col;
+        varying vec3 v_modelSpacePosition;
+        varying vec3 v_viewSpacePosition;
+        varying vec2 vUv;
+        varying float normalisedHeight;
         vec3 computeNormal() {
             vec3 p = v_modelSpacePosition;
             vec3 dx = dFdx(p);
@@ -191,8 +190,9 @@ export class JP2HeightField extends ThreactTrackballBase {
             return pow(1.-abs(dot(vec3(0.,0.,1.), computeNormal())), 0.1);
         }
         void main() {
-            col = vec4(vec3(normalisedHeight), 1.0);
+            vec4 col = vec4(vec3(normalisedHeight), 1.0);
             col.rgb = vec3(computeSteepness());
+            gl_FragColor = col;
         }
         `
         jp2Texture(this.url).then(result => {
@@ -204,7 +204,7 @@ export class JP2HeightField extends ThreactTrackballBase {
                 horizontalScale: { value: 1000 },
                 gridSizeX: { value: w }, gridSizeY: { value: h }
             }
-            const mat = new THREE.RawShaderMaterial({vertexShader: vert, fragmentShader: frag, uniforms: uniforms});
+            const mat = new THREE.ShaderMaterial({vertexShader: vert, fragmentShader: frag, uniforms: uniforms, extensions: {derivatives: true}});
             mat.side = THREE.DoubleSide;
             this.geo.drawRange.count = (w-1)*(h-1)*6;
             if (w!==2000 || h !== 2000) alert('whoopsie, expected everything to always be 2k^2');
