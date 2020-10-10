@@ -5,7 +5,8 @@ import './threact.css'
 declare const window: Window;
 declare const document: Document;
 
-let renderer: THREE.WebGLRenderer;
+/** access to the global rendering context, interface likely to change */
+export let renderer: THREE.WebGLRenderer;
 let compositeScene: THREE.Scene;
 let compositeCamera: THREE.OrthographicCamera;
 const views: Set<Threact> = new Set();
@@ -13,7 +14,6 @@ const views: Set<Threact> = new Set();
 function init() {
     //NB:: I should consider the implications of having these values determined in a global GL context, 
     //and how they may be configured in an application (probably require app to call init with arguments).
-    //renderer = new THREE.WebGLRenderer({antialias: true, logarithmicDepthBuffer: true});
     renderer = new THREE.WebGLRenderer({antialias: true, logarithmicDepthBuffer: true});
     compositeScene = new THREE.Scene();
     const w = window.innerWidth, h = window.innerHeight;
@@ -43,7 +43,7 @@ function animate() {
     renderer.domElement.style.transform = `translateY(${window.scrollY}px)`;
     //renderer.domElement.style.transform = `translate(${window.scrollX}px, ${window.scrollY}px)`;
     views.forEach(v => v.updateLayout());
-    renderer.setClearColor(0x305050);
+    renderer.setClearColor(0x283838);
     renderer.autoClear = false;
     renderer.setRenderTarget(null);
     renderer.clear();
@@ -77,7 +77,7 @@ export class Threact extends React.Component<IThreact, any> {
     composite: THREE.Mesh;
     private mount?: HTMLDivElement;
     renderTarget: THREE.WebGLRenderTarget;
-    color = 0x808080;
+    color = 0x202020;
     constructor(props: any) {
         super(props);
         this.state = {
