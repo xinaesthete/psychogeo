@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { computeTriangleGridIndices, ThreactTrackballBase, jp2Texture, glsl } from '../threact/threexample';
+import { jp2Texture } from '../openjpegjs/jp2kloader';
+import { computeTriangleGridIndices, ThreactTrackballBase, glsl } from '../threact/threexample';
 import * as dsm_cat from './dsm_catalog.json'
 
 //temporary... hopefully introduce config file & interface soon...
