@@ -4,7 +4,7 @@ import { getPixelDataU16 } from "../openjpegjs/jp2kloader";
 import { renderer, IThree } from "./threact";
 
 //only used for literal highlighting e.g. with glsl-literal extension
-const glsl = (a: any,...bb: any) => a.map((x:any,i:any) => [x, bb[i]]).flat().join('');
+export const glsl = (a: any,...bb: any) => a.map((x:any,i:any) => [x, bb[i]]).flat().join('');
 
 export abstract class ThreactTrackballBase implements IThree {
     scene = new THREE.Scene();
@@ -58,6 +58,8 @@ export async function jp2Texture(url: string) {
     //const texture = new THREE.DataTexture(data, frameInfo.width, frameInfo.height, THREE.LuminanceFormat, THREE.UnsignedShortType,
         //THREE.UVMapping, THREE.ClampToEdgeWrapping, THREE.ClampToEdgeWrapping, THREE.NearestFilter, THREE.NearestFilter, 1
     //);
+    //there is evidence the following work in WebGL2, need to translate to THREE.DataTexture:
+    //internalFormat = gl.DEPTH_COMPONENT16; format = gl.DEPTH_COMPONENT; type = gl.UNSIGNED_SHORT; // OK, red    
     const texture = new THREE.DataTexture(splitData, frameInfo.width, frameInfo.height, THREE.RGBFormat, THREE.UnsignedByteType);
     texture.minFilter = texture.magFilter = THREE.NearestFilter;
     return {texture, frameInfo};
@@ -98,7 +100,7 @@ export class JP2TextureView extends ThreactTrackballBase {
 }
 
 
-function computeTriangleGridIndices(gridSizeX: number, gridSizeY: number) {
+export function computeTriangleGridIndices(gridSizeX: number, gridSizeY: number) {
     const d: number[] = [];
     const index = (x: number, y: number) => gridSizeY * x + y;
     for (let i=0; i<gridSizeX - 1; i++) {
@@ -114,115 +116,7 @@ function computeTriangleGridIndices(gridSizeX: number, gridSizeY: number) {
     return new THREE.BufferAttribute(new Uint32Array(d), 1);
 }
 
-const indicesAttribute2kGrid = computeTriangleGridIndices(2000, 2000);
-const indicesAttribute1kGrid = computeTriangleGridIndices(1000, 1000);
 
-export class JP2HeightField extends ThreactTrackballBase {
-    geo = new THREE.BufferGeometry();
-    url: string;
-    heightMin = 0;
-    heightMax = 1;
-    constructor(url: string) {
-        super();
-        this.url = url;
-    }
-    init() {
-        this.camera.position.y = -100;
-        this.camera.position.z = 50;
-        this.camera.near = 1;
-        this.camera.far = 200000;
-        const vert = glsl`
-        //uniform mat4 projectionMatrix, modelViewMatrix;
-        uniform uint gridSizeX, gridSizeY;
-        uniform vec2 EPS;
-        uniform float heightMin, heightMax;
-        uniform float horizontalScale;
-        uniform sampler2D heightFeild;
-        varying vec2 vUv;
-        varying float normalisedHeight;
-        varying vec3 v_modelSpacePosition;
-        varying vec3 v_viewSpacePosition;
-        float mapHeight(float h) {
-            return heightMin + h * (heightMax - heightMin);
-        }
-        float getNormalisedHeight(vec2 uv) {
-            vec4 v = texture2D(heightFeild, uv);
-            float h = v.r + (v.g / 256.);
-            return h;
-        }
-        float getHeight(vec2 uv) {
-            return mapHeight(getNormalisedHeight(uv));
-        }
-        vec2 uvFromVertID() {
-            uint id = uint(gl_VertexID);
-            uint x = id / gridSizeY;
-            uint y = id % gridSizeX;
-            //NB: when I was doing this in OF, I didn't include the +0.5
-            //I think this version is correct... see some odd artefacts otherwise.
-            return vec2(float(x)+0.5, float(y)+0.5) * EPS;
-        }
-        vec4 computePos(in vec2 uv) {
-            return vec4((uv-0.5) * horizontalScale, getHeight(uv), 1.0);
-        }
-        void main() {
-            vec2 uv = uvFromVertID();
-            float h = getNormalisedHeight(uv);
-            normalisedHeight = h;
-            vUv = uv;
-            vec4 p = computePos(uv);
-            v_modelSpacePosition = p.xyz;
-            p = modelViewMatrix * p;
-            v_viewSpacePosition = p.xyz;
-            gl_Position = projectionMatrix * p;
-        }
-        `
-        const frag = glsl`//#version 300 es
-        precision highp float;
-        //out vec4 col;
-        varying vec3 v_modelSpacePosition;
-        varying vec3 v_viewSpacePosition;
-        varying vec2 vUv;
-        varying float normalisedHeight;
-        vec3 computeNormal() {
-            vec3 p = v_modelSpacePosition;
-            vec3 dx = dFdx(p);
-            vec3 dy = dFdy(p);
-            return normalize(cross(dx, dy));
-        }
-        //this function seems quite good at showing up certain artefacts...
-        float computeSteepness() {
-            return pow(1.-abs(dot(vec3(0.,0.,1.), computeNormal())), 0.1);
-        }
-        void main() {
-            vec4 col = vec4(vec3(normalisedHeight), 1.0);
-            col.rgb = vec3(computeSteepness());
-            gl_FragColor = col;
-        }
-        `
-        jp2Texture(this.url).then(result => {
-            const w = result.frameInfo.width, h = result.frameInfo.height;
-            const uniforms = {
-                heightFeild: { value: result.texture },
-                heightMin: { value: 0 }, heightMax: { value: 20 },
-                EPS: { value: new THREE.Vector2(1/w, 1/h) },
-                horizontalScale: { value: 1000 },
-                gridSizeX: { value: w }, gridSizeY: { value: h }
-            }
-            const mat = new THREE.ShaderMaterial({vertexShader: vert, fragmentShader: frag, uniforms: uniforms});
-            mat.extensions.derivatives = true;
-            //mat.side = THREE.DoubleSide;
-            this.geo.drawRange.count = (w-1)*(h-1)*6;
-            let grid: THREE.BufferAttribute;
-            if (w === 2000 &&  h === 2000) grid = indicesAttribute2kGrid;
-            else if (w === 1000 &&  h === 1000) grid = indicesAttribute1kGrid;
-            else grid = computeTriangleGridIndices(w, h);
-            this.geo.setIndex(grid);
-            const mesh = new THREE.Mesh(this.geo, mat);
-            mesh.frustumCulled = false; //TODO: appropriate bounding box
-            this.scene.add(mesh);
-        });
-    }
-}
 
 // export class VidFeedbackTest extends ThreactTrackballBase {
 //     rt: WebGLRenderTarget[];
