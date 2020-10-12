@@ -133,7 +133,7 @@ export class Threact extends React.Component<IThreact, any> {
         if (!dirty) return;
         this.renderTarget.setSize(w, h);
         this.composite.scale.setX(w);
-        this.composite.scale.setY(h);
+        this.composite.scale.setY(h - 1);
         this.lastW = w;
         this.lastH = h;
         this.props.gfx.resize(rect);

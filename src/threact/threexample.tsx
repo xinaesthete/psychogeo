@@ -1,5 +1,4 @@
 import * as THREE from "three";
-import { WebGLRenderTarget } from "three";
 import { TrackballControls } from "three/examples/jsm/controls/TrackballControls";
 import { getPixelDataU16 } from "../openjpegjs/jp2kloader";
 import { renderer, IThree } from "./threact";
@@ -60,6 +59,7 @@ export async function jp2Texture(url: string) {
         //THREE.UVMapping, THREE.ClampToEdgeWrapping, THREE.ClampToEdgeWrapping, THREE.NearestFilter, THREE.NearestFilter, 1
     //);
     const texture = new THREE.DataTexture(splitData, frameInfo.width, frameInfo.height, THREE.RGBFormat, THREE.UnsignedByteType);
+    texture.minFilter = texture.magFilter = THREE.NearestFilter;
     return {texture, frameInfo};
 }
 
@@ -115,6 +115,7 @@ function computeTriangleGridIndices(gridSizeX: number, gridSizeY: number) {
 }
 
 const indicesAttribute2kGrid = computeTriangleGridIndices(2000, 2000);
+const indicesAttribute1kGrid = computeTriangleGridIndices(1000, 1000);
 
 export class JP2HeightField extends ThreactTrackballBase {
     geo = new THREE.BufferGeometry();
@@ -128,9 +129,11 @@ export class JP2HeightField extends ThreactTrackballBase {
     init() {
         this.camera.position.y = -100;
         this.camera.position.z = 50;
+        this.camera.near = 1;
+        this.camera.far = 200000;
         const vert = glsl`
         //uniform mat4 projectionMatrix, modelViewMatrix;
-        uniform int gridSizeX, gridSizeY;
+        uniform uint gridSizeX, gridSizeY;
         uniform vec2 EPS;
         uniform float heightMin, heightMax;
         uniform float horizontalScale;
@@ -151,8 +154,9 @@ export class JP2HeightField extends ThreactTrackballBase {
             return mapHeight(getNormalisedHeight(uv));
         }
         vec2 uvFromVertID() {
-            int x = gl_VertexID / gridSizeY;
-            int y = gl_VertexID % gridSizeX;
+            uint id = uint(gl_VertexID);
+            uint x = id / gridSizeY;
+            uint y = id % gridSizeX;
             //NB: when I was doing this in OF, I didn't include the +0.5
             //I think this version is correct... see some odd artefacts otherwise.
             return vec2(float(x)+0.5, float(y)+0.5) * EPS;
@@ -204,11 +208,15 @@ export class JP2HeightField extends ThreactTrackballBase {
                 horizontalScale: { value: 1000 },
                 gridSizeX: { value: w }, gridSizeY: { value: h }
             }
-            const mat = new THREE.ShaderMaterial({vertexShader: vert, fragmentShader: frag, uniforms: uniforms, extensions: {derivatives: true}});
-            mat.side = THREE.DoubleSide;
+            const mat = new THREE.ShaderMaterial({vertexShader: vert, fragmentShader: frag, uniforms: uniforms});
+            mat.extensions.derivatives = true;
+            //mat.side = THREE.DoubleSide;
             this.geo.drawRange.count = (w-1)*(h-1)*6;
-            if (w!==2000 || h !== 2000) alert('whoopsie, expected everything to always be 2k^2');
-            this.geo.setIndex(indicesAttribute2kGrid);
+            let grid: THREE.BufferAttribute;
+            if (w === 2000 &&  h === 2000) grid = indicesAttribute2kGrid;
+            else if (w === 1000 &&  h === 1000) grid = indicesAttribute1kGrid;
+            else grid = computeTriangleGridIndices(w, h);
+            this.geo.setIndex(grid);
             const mesh = new THREE.Mesh(this.geo, mat);
             mesh.frustumCulled = false; //TODO: appropriate bounding box
             this.scene.add(mesh);
@@ -216,23 +224,23 @@ export class JP2HeightField extends ThreactTrackballBase {
     }
 }
 
-export class VidFeedbackTest extends ThreactTrackballBase {
-    rt: WebGLRenderTarget[];
-    constructor() {
-        super();
-        this.rt = [];
+// export class VidFeedbackTest extends ThreactTrackballBase {
+//     rt: WebGLRenderTarget[];
+//     constructor() {
+//         super();
+//         this.rt = [];
         
-    }
-    private makeRT() {
-        return new THREE.WebGLRenderTarget(256, 256);
-    }
-    init() {
+//     }
+//     private makeRT() {
+//         return new THREE.WebGLRenderTarget(256, 256);
+//     }
+//     init() {
 
-    }
-    update() {
-        super.update();
-        const rtBak = renderer.getRenderTarget();
+//     }
+//     update() {
+//         super.update();
+//         const rtBak = renderer.getRenderTarget();
 
-        renderer.setRenderTarget(rtBak);
-    }
-}
+//         renderer.setRenderTarget(rtBak);
+//     }
+// }

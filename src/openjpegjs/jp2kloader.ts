@@ -8,7 +8,7 @@
  * Well a little unit testing wouldn't do us any harm... (no a little unit testing wouldn't do us any harm)
  */
 
-
+ 
 /* // for ref:
 EMSCRIPTEN_BINDINGS(FrameInfo) {
   value_object<FrameInfo>("FrameInfo")
@@ -118,8 +118,13 @@ function getPixelData(frameInfo: FrameInfo, decodedBuffer: Uint8Array) {
 
 export async function getPixelDataU16(url: string) {
     const decoder = await getDecoder();
-    const response = await fetch(url);
-    const encodedBitstream = new Uint8Array(await response.arrayBuffer());
+    let encodedBitstream: Uint8Array;
+    if (url.startsWith("C:")) {
+      encodedBitstream = await (window as any).electron.readFile(url);
+    } else {
+      const response = await fetch(url);
+      encodedBitstream = new Uint8Array(await response.arrayBuffer());
+    }
     //--decode();--
     const encodedBuffer = decoder.getEncodedBuffer(encodedBitstream.length);
     encodedBuffer.set(encodedBitstream);
