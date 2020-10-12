@@ -62,6 +62,7 @@ float mapHeight(float h) {
     return heightMin + h * (heightMax - heightMin);
 }
 float getNormalisedHeight(vec2 uv) {
+    uv.y = 1. - uv.y;
     vec4 v = texture2D(heightFeild, uv);
     float h = v.r + (v.g / 256.);
     return h;
@@ -77,15 +78,15 @@ vec2 uvFromVertID() {
     //I think this version is correct... see some odd artefacts otherwise.
     return vec2(float(x)+0.5, float(y)+0.5) * EPS;
 }
-vec4 computePos(in vec2 uv) {
-    return vec4((uv-0.5) * horizontalScale, getHeight(uv), 1.0);
+vec4 computePos(vec2 uv) {
+    return vec4((uv) * horizontalScale, getHeight(uv), 1.0);
 }
 void main() {
     vec2 uv = uvFromVertID();
-    float h = getNormalisedHeight(uv);
-    normalisedHeight = h;
     vUv = uv;
-    vec4 p = computePos(uv);
+    float h = getNormalisedHeight(vUv);
+    normalisedHeight = h;
+    vec4 p = computePos(vUv);
     v_modelSpacePosition = p.xyz;
     p = modelViewMatrix * p;
     v_viewSpacePosition = p.xyz;
@@ -107,57 +108,94 @@ vec3 computeNormal() {
 }
 //this function seems quite good at showing up certain artefacts...
 float computeSteepness() {
-    return pow(1.-abs(dot(vec3(0.,0.,1.), computeNormal())), 0.1);
+    return pow(1.-abs(dot(vec3(0.,0.,1.), computeNormal())), 0.5);
 }
 void main() {
     vec4 col = vec4(vec3(normalisedHeight), 1.0);
     col.rgb = vec3(computeSteepness());
+    // col.rg = vUv;
     gl_FragColor = col;
 }
 `;
 
+const tileBSphere = new THREE.Sphere(new THREE.Vector3(0.5, 0.5, 0.5), 0.8);
+const tileGeometry1k = new THREE.BufferGeometry();
+tileGeometry1k.setIndex(indicesAttribute1kGrid);
+//tileGeometry1k.boundingBox = tileBox;
+tileGeometry1k.boundingSphere = tileBSphere;
+tileGeometry1k.drawRange.count = 999 * 999 * 6;
+const tileGeometry2k = new THREE.BufferGeometry();
+tileGeometry2k.setIndex(indicesAttribute2kGrid);
+// tileGeometry2k.boundingBox = tileBox;
+tileGeometry2k.boundingSphere = tileBSphere;
+tileGeometry2k.drawRange.count = 1999 * 1999 * 6;
+
 export class JP2HeightField extends ThreactTrackballBase {
-    geo = new THREE.BufferGeometry();
     coord: EastNorth;
     tileProp: DsmCatItem;
     url: string;
-    heightMin = 0;
-    heightMax = 1;
     constructor(coord: EastNorth) {
         super();
-        this.coord = coord;
+        this.coord = {...coord};
         this.tileProp = getTileProperties(coord.east, coord.north);
         this.url = getImageFilename(this.tileProp.source_filename);
+        this.addAxes();
+    }
+    addMarker() {
+        const info = this.tileProp;
+        const markerMat = new THREE.MeshBasicMaterial({transparent: true, opacity: 0.5, color: 0xff0000});
+        const m = new THREE.Mesh(new THREE.SphereBufferGeometry(5, 30, 30), markerMat);
+        m.position.x = this.coord.east - info.xllcorner;
+        m.position.y = this.coord.north - info.yllcorner;
+        m.position.z = info.max_ele;
+        m.scale.z = (info.max_ele - info.min_ele) / 10;
+
+        this.scene.add(m);
+    }
+    addAxes() {
+        const ax = new THREE.AxesHelper(100);
+        ax.position.set(0, 0, this.tileProp.min_ele);
+        this.scene.add(ax);
     }
     init() {
+        const info = this.tileProp;
         this.camera.position.y = -100;
-        this.camera.position.z = 50;
+        this.camera.position.z = info.max_ele + 50;
+        this.camera.lookAt(0, 0, info.max_ele);
         this.camera.near = 1;
         this.camera.far = 200000;
         
+        this.addMarker();
 
         jp2Texture(this.url).then(result => {
             const w = result.frameInfo.width, h = result.frameInfo.height;
-            const info = this.tileProp;
             const uniforms = {
                 heightFeild: { value: result.texture },
-                heightMin: { value: info.min_ele }, heightMax: { value: info.max_ele },
+                // heightMin: { value: info.min_ele }, heightMax: { value: info.max_ele },
+                heightMin: { value: 0 }, heightMax: { value: 1 },
                 EPS: { value: new THREE.Vector2(1/w, 1/h) },
-                horizontalScale: { value: 1000 },
+                // horizontalScale: { value: 1000 },
+                horizontalScale: { value: 1 },
                 gridSizeX: { value: w }, gridSizeY: { value: h }
             }
             const mat = new THREE.ShaderMaterial({vertexShader: vert, fragmentShader: frag, uniforms: uniforms});
             mat.extensions.derivatives = true;
-            //mat.side = THREE.DoubleSide;
-            this.geo.drawRange.count = (w-1)*(h-1)*6;
-            let grid: THREE.BufferAttribute;
-            if (w === 2000 &&  h === 2000) grid = indicesAttribute2kGrid;
-            else if (w === 1000 &&  h === 1000) grid = indicesAttribute1kGrid;
-            else grid = computeTriangleGridIndices(w, h);
-            this.geo.setIndex(grid);
-            const mesh = new THREE.Mesh(this.geo, mat);
-            mesh.frustumCulled = false; //TODO: appropriate bounding box
+            mat.side = THREE.DoubleSide;
+            let geo: THREE.BufferGeometry;
+            if (w === 2000 &&  h === 2000) geo = tileGeometry2k;
+            else if (w === 1000 &&  h === 1000) geo = tileGeometry1k;
+            else {
+                throw new Error('only working with 1k & 2k grid');
+                //grid = computeTriangleGridIndices(w, h);
+            }
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.frustumCulled = true; //tileBSphere hopefully correct...
+            mesh.scale.set(1000, 1000, info.max_ele-info.min_ele);
+            mesh.position.z = info.min_ele;
             this.scene.add(mesh);
+            
+            const box = new THREE.BoxHelper(mesh, 0x00ffff);
+            this.scene.add(box);
         });
     }
 }
