@@ -138,7 +138,14 @@ export async function getPixelDataU16(url: string) {
     return { pixData: pixelData as Uint16Array, frameInfo };
 }
 
+interface TextureTile {
+  texture: THREE.Texture;
+  frameInfo: FrameInfo;
+}
+const textureCache = new Map<string, TextureTile>();
+
 export async function jp2Texture(url: string) {
+  if (textureCache.has(url)) return textureCache.get(url) as TextureTile;
   const result = await getPixelDataU16(url);
   const frameInfo = result.frameInfo;
   const data = result.pixData;
@@ -160,5 +167,8 @@ export async function jp2Texture(url: string) {
   //internalFormat = gl.DEPTH_COMPONENT16; format = gl.DEPTH_COMPONENT; type = gl.UNSIGNED_SHORT; // OK, red    
   const texture = new THREE.DataTexture(splitData, frameInfo.width, frameInfo.height, THREE.RGBFormat, THREE.UnsignedByteType);
   texture.minFilter = texture.magFilter = THREE.NearestFilter;
-  return {texture, frameInfo};
+  texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
+  const t = {texture, frameInfo};
+  textureCache.set(url, t);
+  return t;
 }
