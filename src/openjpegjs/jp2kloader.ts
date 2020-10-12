@@ -137,3 +137,27 @@ export async function getPixelDataU16(url: string) {
     return { pixData: pixelData as Uint16Array, frameInfo };
 }
 
+export async function jp2Texture(url: string) {
+  const result = await getPixelDataU16(url);
+  const frameInfo = result.frameInfo;
+  const data = result.pixData;
+
+  const splitData = new Uint8Array(data.length*3);
+  data.forEach((v, i) => {
+      const r = v >> 8;
+      const g = v - (r << 8);
+      splitData[3*i] = r;
+      splitData[3*i + 1] = g;
+      splitData[3*i + 2] = 0;
+  });
+
+  //https://jsfiddle.net/f2Lommf5/1856/ - doesn't give errors but doesn't seem to load any meaningful data.
+  //const texture = new THREE.DataTexture(data, frameInfo.width, frameInfo.height, THREE.LuminanceFormat, THREE.UnsignedShortType,
+      //THREE.UVMapping, THREE.ClampToEdgeWrapping, THREE.ClampToEdgeWrapping, THREE.NearestFilter, THREE.NearestFilter, 1
+  //);
+  //there is evidence the following work in WebGL2, need to translate to THREE.DataTexture:
+  //internalFormat = gl.DEPTH_COMPONENT16; format = gl.DEPTH_COMPONENT; type = gl.UNSIGNED_SHORT; // OK, red    
+  const texture = new THREE.DataTexture(splitData, frameInfo.width, frameInfo.height, THREE.RGBFormat, THREE.UnsignedByteType);
+  texture.minFilter = texture.magFilter = THREE.NearestFilter;
+  return {texture, frameInfo};
+}
