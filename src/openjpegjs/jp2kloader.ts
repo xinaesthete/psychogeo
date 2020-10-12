@@ -8,7 +8,8 @@
  * Well a little unit testing wouldn't do us any harm... (no a little unit testing wouldn't do us any harm)
  */
 
- 
+ import * as THREE from 'three'
+
 /* // for ref:
 EMSCRIPTEN_BINDINGS(FrameInfo) {
   value_object<FrameInfo>("FrameInfo")
