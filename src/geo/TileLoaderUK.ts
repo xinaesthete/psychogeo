@@ -16,7 +16,8 @@ interface DsmCatItem {
     yllcorner: number,
     nrows: number,
     ncols: number,
-    source_filename: string
+    source_filename: string,
+    mesh?: THREE.Mesh
 }
 
 export interface EastNorth {
@@ -24,16 +25,24 @@ export interface EastNorth {
     north: number;
 }
 
+/** 
+ * return the lower-left corner of the grid cell containing coord
+ * used to derive index for looking up in catalog / cache.
+ */
+function truncateEastNorth(coord: EastNorth) {
+    const e = Math.floor(coord.east /1000) * 1000;
+    const n = Math.floor(coord.north/1000) * 1000;
+    return {east: e, north: n};
+}
 /**
  * Given coordinates (in the form found in dsm_cat...), see if we can find a corresponding tile and return some info about it.
  * @param x 
  * @param y 
  */
-export function getTileProperties(x: number, y: number) {
-    const xll = Math.floor(x/1000) * 1000;
-    const yll = Math.floor(y/1000) * 1000;
+export function getTileProperties(coord: EastNorth) {
+    const low = truncateEastNorth(coord);
     //almost robust enough for critical medical data...
-    const k = xll + ", " + yll;
+    const k = low.east + ", " + low.north;
 
     return cat[k] as DsmCatItem;
 }
@@ -121,14 +130,47 @@ void main() {
 const tileBSphere = new THREE.Sphere(new THREE.Vector3(0.5, 0.5, 0.5), 0.8);
 const tileGeometry1k = new THREE.BufferGeometry();
 tileGeometry1k.setIndex(indicesAttribute1kGrid);
-//tileGeometry1k.boundingBox = tileBox;
 tileGeometry1k.boundingSphere = tileBSphere;
 tileGeometry1k.drawRange.count = 999 * 999 * 6;
 const tileGeometry2k = new THREE.BufferGeometry();
 tileGeometry2k.setIndex(indicesAttribute2kGrid);
-// tileGeometry2k.boundingBox = tileBox;
 tileGeometry2k.boundingSphere = tileBSphere;
 tileGeometry2k.drawRange.count = 1999 * 1999 * 6;
+
+
+async function getTileMesh(coord: EastNorth) {
+    const info = getTileProperties(coord);
+    if (info.mesh) return info;
+    const url = getImageFilename(info.source_filename);
+    const {texture, frameInfo} = await jp2Texture(url);
+    const w = frameInfo.width, h = frameInfo.height;
+    const uniforms = {
+        heightFeild: { value: texture },
+        // heightMin: { value: info.min_ele }, heightMax: { value: info.max_ele },
+        heightMin: { value: 0 }, heightMax: { value: 1 },
+        EPS: { value: new THREE.Vector2(1/w, 1/h) },
+        // horizontalScale: { value: 1000 },
+        horizontalScale: { value: 1 },
+        gridSizeX: { value: w }, gridSizeY: { value: h }
+    }
+    const mat = new THREE.ShaderMaterial({vertexShader: vert, fragmentShader: frag, uniforms: uniforms});
+    mat.extensions.derivatives = true;
+    mat.side = THREE.DoubleSide;
+    let geo: THREE.BufferGeometry;
+    if (w === 2000 &&  h === 2000) geo = tileGeometry2k;
+    else if (w === 1000 &&  h === 1000) geo = tileGeometry1k;
+    else {
+        throw new Error('only working with 1k & 2k grid');
+        //grid = computeTriangleGridIndices(w, h);
+    }
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.frustumCulled = true; //tileBSphere hopefully correct...
+    mesh.scale.set(1000, 1000, info.max_ele-info.min_ele);
+    mesh.position.z = info.min_ele;
+    
+    info.mesh = mesh;
+    return info;
+}
 
 export class JP2HeightField extends ThreactTrackballBase {
     coord: EastNorth;
@@ -137,7 +179,7 @@ export class JP2HeightField extends ThreactTrackballBase {
     constructor(coord: EastNorth) {
         super();
         this.coord = {...coord};
-        this.tileProp = getTileProperties(coord.east, coord.north);
+        this.tileProp = getTileProperties(coord);
         this.url = getImageFilename(this.tileProp.source_filename);
         this.addAxes();
     }
@@ -167,35 +209,6 @@ export class JP2HeightField extends ThreactTrackballBase {
         
         this.addMarker();
 
-        jp2Texture(this.url).then(result => {
-            const w = result.frameInfo.width, h = result.frameInfo.height;
-            const uniforms = {
-                heightFeild: { value: result.texture },
-                // heightMin: { value: info.min_ele }, heightMax: { value: info.max_ele },
-                heightMin: { value: 0 }, heightMax: { value: 1 },
-                EPS: { value: new THREE.Vector2(1/w, 1/h) },
-                // horizontalScale: { value: 1000 },
-                horizontalScale: { value: 1 },
-                gridSizeX: { value: w }, gridSizeY: { value: h }
-            }
-            const mat = new THREE.ShaderMaterial({vertexShader: vert, fragmentShader: frag, uniforms: uniforms});
-            mat.extensions.derivatives = true;
-            mat.side = THREE.DoubleSide;
-            let geo: THREE.BufferGeometry;
-            if (w === 2000 &&  h === 2000) geo = tileGeometry2k;
-            else if (w === 1000 &&  h === 1000) geo = tileGeometry1k;
-            else {
-                throw new Error('only working with 1k & 2k grid');
-                //grid = computeTriangleGridIndices(w, h);
-            }
-            const mesh = new THREE.Mesh(geo, mat);
-            mesh.frustumCulled = true; //tileBSphere hopefully correct...
-            mesh.scale.set(1000, 1000, info.max_ele-info.min_ele);
-            mesh.position.z = info.min_ele;
-            this.scene.add(mesh);
-            
-            const box = new THREE.BoxHelper(mesh, 0x00ffff);
-            this.scene.add(box);
-        });
+        getTileMesh(this.coord).then(info => this.scene.add(info.mesh!));
     }
 }
