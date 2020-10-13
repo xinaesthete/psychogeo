@@ -15,7 +15,7 @@ interface DsmCatItem {
     nrows: number,
     ncols: number,
     source_filename: string,
-    mesh?: THREE.Mesh //nb, one caveat is that having a given Object3D expects to appear once in one scenegraph
+    mesh?: THREE.Object3D //nb, one caveat is that having a given Object3D expects to appear once in one scenegraph
 }
 
 export interface EastNorth {
@@ -64,6 +64,7 @@ uniform sampler2D heightFeild;
 varying vec2 vUv;
 varying float normalisedHeight;
 varying vec3 v_modelSpacePosition;
+varying vec3 v_worldSpacePosition;
 varying vec3 v_viewSpacePosition;
 float mapHeight(float h) {
     return heightMin + h * (heightMax - heightMin);
@@ -96,7 +97,9 @@ void main() {
     vec4 p = computePos(vUv);
     normalisedHeight = p.z;
     v_modelSpacePosition = p.xyz;
-    p = modelViewMatrix * p;
+    p = modelMatrix * p;
+    v_worldSpacePosition = p.xyz;
+    p = viewMatrix * p;
     v_viewSpacePosition = p.xyz;
     gl_Position = projectionMatrix * p;
 }
@@ -105,11 +108,12 @@ const frag = glsl`//#version 300 es
 precision highp float;
 //out vec4 col;
 varying vec3 v_modelSpacePosition;
+varying vec3 v_worldSpacePosition;
 varying vec3 v_viewSpacePosition;
 varying vec2 vUv;
 varying float normalisedHeight;
 vec3 computeNormal() {
-    vec3 p = v_modelSpacePosition;
+    vec3 p = v_worldSpacePosition;
     vec3 dx = dFdx(p);
     vec3 dy = dFdy(p);
     return normalize(cross(dx, dy));
@@ -118,9 +122,18 @@ vec3 computeNormal() {
 float computeSteepness() {
     return pow(1.-abs(dot(vec3(0.,0.,1.), computeNormal())), 0.5);
 }
+float computeContour() {
+    float h = v_worldSpacePosition.z;
+    h = mod(h, 10.)/10.;
+    h = max(smoothstep(0.98, 1.0, h), smoothstep(0.02, 0., h));
+    return h;
+}
 void main() {
-    vec4 col = vec4(vec3(normalisedHeight), 1.0);
-    col.rgb = vec3(computeSteepness());
+    float h = computeContour();
+    float s = computeSteepness();
+    float v = normalisedHeight;
+    vec4 col = vec4(vec3(h, s, v), 1.0);
+    //col.rgb = vec3(computeSteepness());
     // col.rg = vUv;
     gl_FragColor = col;
 }
@@ -136,7 +149,10 @@ tileGeometry2k.setIndex(indicesAttribute2kGrid);
 tileGeometry2k.boundingSphere = tileBSphere;
 tileGeometry2k.drawRange.count = 1999 * 1999 * 6;
 
-const nullInfo = getTileProperties({east: 448475, north: 129631}); //TODO proper handling of gaps in data / other exceptions
+const nullInfo: DsmCatItem = {
+    xllcorner:0, yllcorner: 0, min_ele:0, max_ele:0, ncols:0, nrows:0, 
+    source_filename: "no", valid_percent: 0, mesh: new THREE.Object3D()
+};
 
 async function getTileMesh(coord: EastNorth) {
     let info = getTileProperties(coord) || nullInfo;
@@ -228,44 +244,13 @@ export class JP2HeightField extends ThreactTrackballBase {
         this.camera.far = 200000;
         
         this.addMarker();
-        //getTileMesh(this.coord).then(info => this.scene.add(info.mesh!));
-        
         this.makeTiles().then(v => {console.log('finished making tiles')});
     }
     async makeTiles() {
-        const tileGen = generateTileMeshes(this.coord, 3, 3);
-        let i = 0;
+        const tileGen = generateTileMeshes(this.coord, 20, 20);
         for await (const tile of tileGen) {
-            //debugger;
-            if (i++ > 100) {
-                debugger;
-                break;
-            }
             this.scene.add(tile.mesh!);
         }
-        
-        // const c = {...this.coord};
-        // for (let i=-3; i<3; i++) {
-        //     for (let j=-1; j<3; j++) {
-        //         ((x, y) => {getTileMesh({east: c.east + x, north: c.north + y}).then(info => {
-        //             this.scene.add(info.mesh!);
-        //             info.mesh!.position.x = x;
-        //             info.mesh!.position.y = y;
-        //         })})(i*1000, j*1000);
-        //     }
-        // }
-        
-        // setTimeout(() => {
-        //     for (let i=-3; i<3; i++) {
-        //         for (let j=3; j<6; j++) {
-        //             ((x, y) => {getTileMesh({east: c.east + x, north: c.north + y}).then(info => {
-        //                 this.scene.add(info.mesh!);
-        //                 info.mesh!.position.x = x;
-        //                 info.mesh!.position.y = y;
-        //             })})(i*1000, j*1000);
-        //         }
-        //     }
-        // }, 10000)
     }
     update() {
         super.update();
