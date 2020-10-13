@@ -165,7 +165,7 @@ async function getTileMesh(coord: EastNorth) {
         //grid = computeTriangleGridIndices(w, h);
     }
     const mesh = new THREE.Mesh(geo, mat);
-    mesh.frustumCulled = false; //tileBSphere hopefully correct...
+    mesh.frustumCulled = true; //tileBSphere hopefully correct...
     mesh.scale.set(1000, 1000, info.max_ele-info.min_ele);
     mesh.position.z = info.min_ele;
     
