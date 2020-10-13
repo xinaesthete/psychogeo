@@ -21,6 +21,8 @@ function createWindow() {
       preload: path.join(__dirname, '../public/electron-preload.js'),
     },
   })
+  mainWindow.maximize();
+  mainWindow.webContents.openDevTools();
 
   mainWindow.loadURL(
     process.env.ELECTRON_START_URL ||

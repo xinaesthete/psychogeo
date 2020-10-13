@@ -177,7 +177,7 @@ async function* generateTileMeshes(coord: EastNorth, numX: number, numY: number)
     for (let i=0; i<numX; i++) {
         const dx = -(numX*500) + i*1000;
         const e = coord.east + dx;
-        for (let j=0; j<numY; i++) {
+        for (let j=0; j<numY; j++) {
             const dy = -(numY*500) + j*1000;
             const n = coord.north + dy;
             const m = await getTileMesh({east: e, north: n});
@@ -187,20 +187,21 @@ async function* generateTileMeshes(coord: EastNorth, numX: number, numY: number)
             yield m;
         }
     }
+    return;
 }
 type TileGenerator = AsyncGenerator<DsmCatItem, void, unknown>;
 export class JP2HeightField extends ThreactTrackballBase {
     coord: EastNorth;
     tileProp: DsmCatItem;
     url: string;
-    tileGen: TileGenerator;
+    //tileGen: TileGenerator;
     constructor(coord: EastNorth) {
         super();
         this.coord = {...coord};
         this.tileProp = getTileProperties(coord);
         this.url = getImageFilename(this.tileProp.source_filename);
         this.addAxes();
-        this.tileGen = generateTileMeshes(this.coord, 2, 2);
+        //this.tileGen = generateTileMeshes(this.coord, 2, 2);
     }
     addMarker() {
         const info = this.tileProp;
@@ -228,23 +229,43 @@ export class JP2HeightField extends ThreactTrackballBase {
         
         this.addMarker();
         //getTileMesh(this.coord).then(info => this.scene.add(info.mesh!));
-        const c = {...this.coord};
-        for (let i=-3; i<2; i++) {
-            for (let j=-2; j<3; j++) {
-                ((x, y) => {getTileMesh({east: c.east + x, north: c.north + y}).then(info => {
-                    this.scene.add(info.mesh!);
-                    info.mesh!.position.x = x;
-                    info.mesh!.position.y = y;
-                })})(i*1000, j*1000);
-            }
-        }
         
-        //this.makeTiles().then(v => {});
+        this.makeTiles().then(v => {console.log('finished making tiles')});
     }
     async makeTiles() {
-        for await (const tile of this.tileGen) {
+        const tileGen = generateTileMeshes(this.coord, 3, 3);
+        let i = 0;
+        for await (const tile of tileGen) {
+            //debugger;
+            if (i++ > 100) {
+                debugger;
+                break;
+            }
             this.scene.add(tile.mesh!);
         }
+        
+        // const c = {...this.coord};
+        // for (let i=-3; i<3; i++) {
+        //     for (let j=-1; j<3; j++) {
+        //         ((x, y) => {getTileMesh({east: c.east + x, north: c.north + y}).then(info => {
+        //             this.scene.add(info.mesh!);
+        //             info.mesh!.position.x = x;
+        //             info.mesh!.position.y = y;
+        //         })})(i*1000, j*1000);
+        //     }
+        // }
+        
+        // setTimeout(() => {
+        //     for (let i=-3; i<3; i++) {
+        //         for (let j=3; j<6; j++) {
+        //             ((x, y) => {getTileMesh({east: c.east + x, north: c.north + y}).then(info => {
+        //                 this.scene.add(info.mesh!);
+        //                 info.mesh!.position.x = x;
+        //                 info.mesh!.position.y = y;
+        //             })})(i*1000, j*1000);
+        //         }
+        //     }
+        // }, 10000)
     }
     update() {
         super.update();
