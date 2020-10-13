@@ -153,6 +153,7 @@ const nullInfo: DsmCatItem = {
     xllcorner:0, yllcorner: 0, min_ele:0, max_ele:0, ncols:0, nrows:0, 
     source_filename: "no", valid_percent: 0, mesh: new THREE.Object3D()
 };
+nullInfo.mesh!.userData.isNull = true;
 
 async function getTileMesh(coord: EastNorth) {
     let info = getTileProperties(coord) || nullInfo;
@@ -247,8 +248,10 @@ export class JP2HeightField extends ThreactTrackballBase {
         this.makeTiles().then(v => {console.log('finished making tiles')});
     }
     async makeTiles() {
-        const tileGen = generateTileMeshes(this.coord, 20, 20);
+        const tileGen = generateTileMeshes(this.coord, 15, 15);
         for await (const tile of tileGen) {
+            const m = tile.mesh!;
+            if (m.userData.isNull) continue;
             this.scene.add(tile.mesh!);
         }
     }
