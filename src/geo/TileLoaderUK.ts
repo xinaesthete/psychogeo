@@ -156,7 +156,9 @@ const nullInfo: DsmCatItem = {
 nullInfo.mesh!.userData.isNull = true;
 
 function getTileLOD(dist: number) {
+    //TODO: work out a proper formula, change effect...
     if (dist < 2000) return 1;
+    if (dist > 20000) return 32;
     if (dist > 10000) return 16;
     return 8;
 }
