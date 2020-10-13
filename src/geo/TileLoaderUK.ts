@@ -155,6 +155,12 @@ const nullInfo: DsmCatItem = {
 };
 nullInfo.mesh!.userData.isNull = true;
 
+function getTileLOD(dist: number) {
+    if (dist < 2000) return 1;
+    if (dist > 10000) return 16;
+    return 8;
+}
+
 async function getTileMesh(coord: EastNorth) {
     let info = getTileProperties(coord) || nullInfo;
     //XXX: NO! when hot-module-replacement happens, keeping hold of WebGL context related resources is a problem.
@@ -185,7 +191,19 @@ async function getTileMesh(coord: EastNorth) {
     mesh.frustumCulled = true; //tileBSphere hopefully correct...
     mesh.scale.set(1000, 1000, info.max_ele-info.min_ele);
     mesh.position.z = info.min_ele;
-    
+
+    // LOD hack-----------
+    const dCam = new THREE.Vector3(), offset = new THREE.Vector3(500, 500, info.min_ele), pos = new THREE.Vector3();
+    const fullLODCount = (w-1)*(h-1)*6;
+    mesh.onBeforeRender = (r, s, cam, g, mat, group) => {
+        pos.addVectors(mesh.position, offset);
+        const dist = dCam.subVectors(pos, cam.position).length();
+        const geo = g as THREE.BufferGeometry;
+        const lod = getTileLOD(dist);
+        geo.drawRange.count = fullLODCount/lod;
+        uniforms.EPS.value.x = lod/w;
+    }
+    // --------------------
     info.mesh = mesh;
     return info;
 }
@@ -248,7 +266,7 @@ export class JP2HeightField extends ThreactTrackballBase {
         this.makeTiles().then(v => {console.log('finished making tiles')});
     }
     async makeTiles() {
-        const tileGen = generateTileMeshes(this.coord, 15, 15);
+        const tileGen = generateTileMeshes(this.coord, 100, 100);
         for await (const tile of tileGen) {
             const m = tile.mesh!;
             if (m.userData.isNull) continue;
