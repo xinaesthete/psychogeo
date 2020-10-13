@@ -120,8 +120,8 @@ function getPixelData(frameInfo: FrameInfo, decodedBuffer: Uint8Array) {
 export async function getPixelDataU16(url: string) {
     const decoder = await getDecoder();
     let encodedBitstream: Uint8Array;
-    if (url.startsWith("C:")) {
-      encodedBitstream = await (window as any).electron.readFile(url);
+    if (url.startsWith("tile:")) {
+      encodedBitstream = await (window as any).electron.readTile(url);
     } else {
       const response = await fetch(url);
       encodedBitstream = new Uint8Array(await response.arrayBuffer());
@@ -148,6 +148,7 @@ export async function jp2Texture(url: string) {
   if (textureCache.has(url)) return textureCache.get(url) as TextureTile;
   const result = await getPixelDataU16(url);
   const frameInfo = result.frameInfo;
+  console.log(JSON.stringify(frameInfo, null, 2));
   const data = result.pixData;
 
   const splitData = new Uint8Array(data.length*3);
@@ -171,4 +172,9 @@ export async function jp2Texture(url: string) {
   const t = {texture, frameInfo};
   textureCache.set(url, t);
   return t;
+}
+
+export function newGLContext() {
+  //TODO: formalise GL resource management with threact.
+  textureCache.clear();
 }

@@ -14,6 +14,7 @@ const views: Set<Threact> = new Set();
 function init() {
     //NB:: I should consider the implications of having these values determined in a global GL context, 
     //and how they may be configured in an application (probably require app to call init with arguments).
+    console.log('<< threact module init() >>');
     renderer = new THREE.WebGLRenderer({antialias: true, logarithmicDepthBuffer: true});
     compositeScene = new THREE.Scene();
     const w = window.innerWidth, h = window.innerHeight;

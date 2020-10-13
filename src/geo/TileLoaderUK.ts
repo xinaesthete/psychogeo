@@ -1,10 +1,8 @@
 import * as THREE from 'three';
-import { jp2Texture } from '../openjpegjs/jp2kloader';
+import * as JP2 from '../openjpegjs/jp2kloader';
 import { computeTriangleGridIndices, ThreactTrackballBase, glsl } from '../threact/threexample';
 import * as dsm_cat from './dsm_catalog.json'
 
-//temporary... hopefully introduce config file & interface soon...
-const sourceFolder = "C:/Users/peter/Dropbox/BlenderGIS/pyUtil/images/web/";
 
 const cat = (dsm_cat as any).default;
 
@@ -17,7 +15,7 @@ interface DsmCatItem {
     nrows: number,
     ncols: number,
     source_filename: string,
-    mesh?: THREE.Mesh
+    mesh?: THREE.Mesh //nb, one caveat is that having a given Object3D expects to appear once in one scenegraph
 }
 
 export interface EastNorth {
@@ -48,7 +46,7 @@ export function getTileProperties(coord: EastNorth) {
 }
 
 export function getImageFilename(source_filename: string) {
-    return sourceFolder + source_filename + "_normalised_60db.jpx";
+    return "tile:" + source_filename + "_normalised_60db.jpx";
 }
 
 
@@ -88,14 +86,15 @@ vec2 uvFromVertID() {
     return vec2(float(x)+0.5, float(y)+0.5) * EPS;
 }
 vec4 computePos(vec2 uv) {
-    return vec4((uv) * horizontalScale, getHeight(uv), 1.0);
+    return vec4((uv) * horizontalScale, getNormalisedHeight(uv), 1.0);
 }
 void main() {
     vec2 uv = uvFromVertID();
     vUv = uv;
-    float h = getNormalisedHeight(vUv);
-    normalisedHeight = h;
+    // float h = getNormalisedHeight(vUv);
+    // normalisedHeight = h;
     vec4 p = computePos(vUv);
+    normalisedHeight = p.z;
     v_modelSpacePosition = p.xyz;
     p = modelViewMatrix * p;
     v_viewSpacePosition = p.xyz;
@@ -137,12 +136,14 @@ tileGeometry2k.setIndex(indicesAttribute2kGrid);
 tileGeometry2k.boundingSphere = tileBSphere;
 tileGeometry2k.drawRange.count = 1999 * 1999 * 6;
 
+const nullInfo = getTileProperties({east: 448475, north: 129631}); //TODO proper handling of gaps in data / other exceptions
 
 async function getTileMesh(coord: EastNorth) {
-    const info = getTileProperties(coord);
-    if (info.mesh) return info;
+    let info = getTileProperties(coord) || nullInfo;
+    //XXX: NO! when hot-module-replacement happens, keeping hold of WebGL context related resources is a problem.
+    if (info.mesh) return info; 
     const url = getImageFilename(info.source_filename);
-    const {texture, frameInfo} = await jp2Texture(url);
+    const {texture, frameInfo} = await JP2.jp2Texture(url);
     const w = frameInfo.width, h = frameInfo.height;
     const uniforms = {
         heightFeild: { value: texture },
@@ -164,7 +165,7 @@ async function getTileMesh(coord: EastNorth) {
         //grid = computeTriangleGridIndices(w, h);
     }
     const mesh = new THREE.Mesh(geo, mat);
-    mesh.frustumCulled = true; //tileBSphere hopefully correct...
+    mesh.frustumCulled = false; //tileBSphere hopefully correct...
     mesh.scale.set(1000, 1000, info.max_ele-info.min_ele);
     mesh.position.z = info.min_ele;
     
@@ -172,16 +173,34 @@ async function getTileMesh(coord: EastNorth) {
     return info;
 }
 
+async function* generateTileMeshes(coord: EastNorth, numX: number, numY: number) {
+    for (let i=0; i<numX; i++) {
+        const dx = -(numX*500) + i*1000;
+        const e = coord.east + dx;
+        for (let j=0; j<numY; i++) {
+            const dy = -(numY*500) + j*1000;
+            const n = coord.north + dy;
+            const m = await getTileMesh({east: e, north: n});
+            //TODO: more clarity about origin in scene etc.
+            m.mesh!.position.x = dx;
+            m.mesh!.position.y = dy;
+            yield m;
+        }
+    }
+}
+type TileGenerator = AsyncGenerator<DsmCatItem, void, unknown>;
 export class JP2HeightField extends ThreactTrackballBase {
     coord: EastNorth;
     tileProp: DsmCatItem;
     url: string;
+    tileGen: TileGenerator;
     constructor(coord: EastNorth) {
         super();
         this.coord = {...coord};
         this.tileProp = getTileProperties(coord);
         this.url = getImageFilename(this.tileProp.source_filename);
         this.addAxes();
+        this.tileGen = generateTileMeshes(this.coord, 2, 2);
     }
     addMarker() {
         const info = this.tileProp;
@@ -189,7 +208,7 @@ export class JP2HeightField extends ThreactTrackballBase {
         const m = new THREE.Mesh(new THREE.SphereBufferGeometry(5, 30, 30), markerMat);
         m.position.x = this.coord.east - info.xllcorner;
         m.position.y = this.coord.north - info.yllcorner;
-        m.position.z = info.max_ele;
+        m.position.z = info.min_ele;
         m.scale.z = (info.max_ele - info.min_ele) / 10;
 
         this.scene.add(m);
@@ -208,7 +227,40 @@ export class JP2HeightField extends ThreactTrackballBase {
         this.camera.far = 200000;
         
         this.addMarker();
-
-        getTileMesh(this.coord).then(info => this.scene.add(info.mesh!));
+        //getTileMesh(this.coord).then(info => this.scene.add(info.mesh!));
+        const c = {...this.coord};
+        for (let i=-3; i<2; i++) {
+            for (let j=-2; j<3; j++) {
+                ((x, y) => {getTileMesh({east: c.east + x, north: c.north + y}).then(info => {
+                    this.scene.add(info.mesh!);
+                    info.mesh!.position.x = x;
+                    info.mesh!.position.y = y;
+                })})(i*1000, j*1000);
+            }
+        }
+        
+        //this.makeTiles().then(v => {});
+    }
+    async makeTiles() {
+        for await (const tile of this.tileGen) {
+            this.scene.add(tile.mesh!);
+        }
+    }
+    update() {
+        super.update();
     }
 }
+
+/**
+ * Pending better formalisation of GL resource management,
+ * at the time of writing, this should be called from the main application, 
+ * and is responsible for calling whatever methods are necessary to clear caches etc in other modules.
+ */
+export function newGLContext() {
+    console.log('<< TileLoaderUK newGLContext() >>');
+    JP2.newGLContext();
+    Object.entries<DsmCatItem>(cat).forEach((v) => {
+        v[1].mesh = undefined;
+    });
+}
+//newGLCoxtent();
