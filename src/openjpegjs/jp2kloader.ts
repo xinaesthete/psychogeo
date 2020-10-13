@@ -131,7 +131,7 @@ export async function getPixelDataU16(url: string) {
     encodedBuffer.set(encodedBitstream);
     decoder.decode(); //nb, original code calls decodeSubResolution
     const frameInfo: FrameInfo = decoder.getFrameInfo();
-    console.log(JSON.stringify(frameInfo, null, 2));
+    //console.log(JSON.stringify(frameInfo, null, 2));
 
     const decodedBuffer = decoder.getDecodedBuffer();
     const pixelData = getPixelData(frameInfo, decodedBuffer);
@@ -148,7 +148,7 @@ export async function jp2Texture(url: string) {
   if (textureCache.has(url)) return textureCache.get(url) as TextureTile;
   const result = await getPixelDataU16(url);
   const frameInfo = result.frameInfo;
-  console.log(JSON.stringify(frameInfo, null, 2));
+  // console.log(JSON.stringify(frameInfo, null, 2));
   const data = result.pixData;
 
   const splitData = new Uint8Array(data.length*3);
