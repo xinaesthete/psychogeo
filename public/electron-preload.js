@@ -9,10 +9,10 @@ contextBridge.exposeInMainWorld('electron', {
     readTile: async tileName => {
         try {
             const fileName = path.join(sourceFolder, tileName.substring(5));
-            const f = await fs.promises.readFile(fileName);
+            // const f = await fs.promises.readFile(fileName);
             // at some point I was having trouble with async & resorted to this,
-            // seems to've mysteriously fixed itself :?
-            // const f = fs.readFileSync(fileName);
+            // seems to've mysteriously fixed itself :? Or not.
+            const f = fs.readFileSync(fileName);
             return f;
         } catch (e) {
             console.log('error in readTile: ' + e);

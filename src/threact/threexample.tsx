@@ -76,6 +76,8 @@ export class JP2TextureView extends ThreactTrackballBase {
 
 
 export function computeTriangleGridIndices(gridSizeX: number, gridSizeY: number) {
+    //TODO: order triangle so that they can be used for better LOD
+    
     const d: number[] = [];
     const index = (x: number, y: number) => gridSizeY * x + y;
     for (let i=0; i<gridSizeX - 1; i++) {

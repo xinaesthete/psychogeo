@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import * as JP2 from '../openjpegjs/jp2kloader';
+import { globalUniforms } from '../threact/threact';
 import { computeTriangleGridIndices, ThreactTrackballBase, glsl } from '../threact/threexample';
 import * as dsm_cat from './dsm_catalog.json'
 
@@ -66,6 +67,7 @@ varying float normalisedHeight;
 varying vec3 v_modelSpacePosition;
 varying vec3 v_worldSpacePosition;
 varying vec3 v_viewSpacePosition;
+varying vec3 v_normal;
 float mapHeight(float h) {
     return heightMin + h * (heightMax - heightMin);
 }
@@ -89,12 +91,20 @@ vec2 uvFromVertID() {
 vec4 computePos(vec2 uv) {
     return vec4((uv) * horizontalScale, getNormalisedHeight(uv), 1.0);
 }
+vec3 computeNormal(vec2 uv, vec4 pos) {
+    //what about the edges?
+    vec3 p = pos.xyz;
+    vec3 dx = normalize(computePos(uv + vec2(EPS.x, 0.)).xyz - p);
+    vec3 dy = normalize(computePos(uv + vec2(0., EPS.y)).xyz - p);
+    return normalize(cross(dx, dy)).xyz;
+}
 void main() {
     vec2 uv = uvFromVertID();
     vUv = uv;
     // float h = getNormalisedHeight(vUv);
     // normalisedHeight = h;
     vec4 p = computePos(vUv);
+    v_normal = computeNormal(uv, p);
     normalisedHeight = p.z;
     v_modelSpacePosition = p.xyz;
     p = modelMatrix * p;
@@ -107,11 +117,17 @@ void main() {
 const frag = glsl`//#version 300 es
 precision highp float;
 //out vec4 col;
+uniform float iTime;
 varying vec3 v_modelSpacePosition;
 varying vec3 v_worldSpacePosition;
 varying vec3 v_viewSpacePosition;
 varying vec2 vUv;
 varying float normalisedHeight;
+varying vec3 v_normal;
+float aastep(float threshold, float value) {
+    float afwidth = length(vec2(dFdx(value), dFdy(value))) * 0.70710678118654757;
+    return smoothstep(threshold-afwidth, threshold+afwidth, value);
+}
 vec3 computeNormal() {
     vec3 p = v_worldSpacePosition;
     vec3 dx = dFdx(p);
@@ -120,20 +136,22 @@ vec3 computeNormal() {
 }
 //this function seems quite good at showing up certain artefacts...
 float computeSteepness() {
-    return pow(1.-abs(dot(vec3(0.,0.,1.), computeNormal())), 0.5);
+    // return pow(1.-abs(dot(vec3(0.,0.,1.), computeNormal())), 0.5);
+    return pow(1.-abs(dot(vec3(0.,0.,1.), v_normal)), 0.5);
 }
 float computeContour() {
     float h = v_worldSpacePosition.z;
-    h = mod(h, 10.)/10.;
+    h = mod(h-3.*iTime, 5.)/5.;
     h = max(smoothstep(0.98, 1.0, h), smoothstep(0.02, 0., h));
+    //h = aastep(0.5, h);
     return h;
 }
 void main() {
     float h = computeContour();
     float s = computeSteepness();
     float v = normalisedHeight;
-    vec4 col = vec4(vec3(h, s, v), 1.0);
-    //col.rgb = vec3(computeSteepness());
+    vec4 col = vec4(vec3(0.2, s*0.7, v), 1.0);
+    col.rgb *= vec3(h);
     // col.rg = vUv;
     gl_FragColor = col;
 }
@@ -158,8 +176,9 @@ nullInfo.mesh!.userData.isNull = true;
 function getTileLOD(dist: number) {
     //TODO: work out a proper formula, change effect...
     if (dist < 2000) return 1;
-    if (dist > 20000) return 32;
-    if (dist > 10000) return 16;
+    if (dist > 20000) return 64;
+    if (dist > 10000) return 32;
+    if (dist > 5000) return 16;
     return 8;
 }
 
@@ -177,7 +196,8 @@ async function getTileMesh(coord: EastNorth) {
         EPS: { value: new THREE.Vector2(1/w, 1/h) },
         // horizontalScale: { value: 1000 },
         horizontalScale: { value: 1 },
-        gridSizeX: { value: w }, gridSizeY: { value: h }
+        gridSizeX: { value: w }, gridSizeY: { value: h },
+        iTime: globalUniforms.iTime
     }
     const mat = new THREE.ShaderMaterial({vertexShader: vert, fragmentShader: frag, uniforms: uniforms});
     mat.extensions.derivatives = true;
@@ -268,7 +288,7 @@ export class JP2HeightField extends ThreactTrackballBase {
         this.makeTiles().then(v => {console.log('finished making tiles')});
     }
     async makeTiles() {
-        const tileGen = generateTileMeshes(this.coord, 100, 100);
+        const tileGen = generateTileMeshes(this.coord, 20, 20);
         for await (const tile of tileGen) {
             const m = tile.mesh!;
             if (m.userData.isNull) continue;

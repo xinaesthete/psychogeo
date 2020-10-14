@@ -11,6 +11,10 @@ let compositeScene: THREE.Scene;
 let compositeCamera: THREE.OrthographicCamera;
 const views: Set<Threact> = new Set();
 
+export const globalUniforms = {
+    iTime: { value: 0 }
+}
+
 function init() {
     //NB:: I should consider the implications of having these values determined in a global GL context, 
     //and how they may be configured in an application (probably require app to call init with arguments).
@@ -38,11 +42,12 @@ function resize() {
     compositeCamera.updateProjectionMatrix();
     renderer.setSize(w, h);
 }
-
+const startTime = Date.now();
 function animate() {
     requestAnimationFrame(animate);
     renderer.domElement.style.transform = `translateY(${window.scrollY}px)`;
     //renderer.domElement.style.transform = `translate(${window.scrollX}px, ${window.scrollY}px)`;
+    globalUniforms.iTime.value = (Date.now()-startTime) / 1000;
     views.forEach(v => v.updateLayout());
     renderer.setClearColor(0x283838);
     renderer.autoClear = false;
