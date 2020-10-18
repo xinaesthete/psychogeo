@@ -3,12 +3,13 @@ const fs = require('fs');
 const path = require('path');
 //temporary... hopefully introduce config file & interface soon...
 const sourceFolder = "C:/Users/peter/Dropbox/BlenderGIS/pyUtil/images/web/";
+const tileSuffix = "_normalised_60db.jpx";
 
 contextBridge.exposeInMainWorld('electron', {
     //XXX: should really restrict access for security
     readTile: async tileName => {
         try {
-            const fileName = path.join(sourceFolder, tileName.substring(5));
+            const fileName = path.join(sourceFolder, tileName.substring(5) + tileSuffix);
             // const f = await fs.promises.readFile(fileName);
             // at some point I was having trouble with async & resorted to this,
             // seems to've mysteriously fixed itself :? Or not.

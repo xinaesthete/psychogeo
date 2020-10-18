@@ -47,13 +47,14 @@ export function getTileProperties(coord: EastNorth) {
 }
 
 export function getImageFilename(source_filename: string) {
-    return "tile:" + source_filename + "_normalised_60db.jpx";
+    return "tile:" + source_filename;
 }
 
 
 
 const indicesAttribute2kGrid = computeTriangleGridIndices(2000, 2000);
 const indicesAttribute1kGrid = computeTriangleGridIndices(1000, 1000);
+const indicesAttribute500Grid = computeTriangleGridIndices(500, 500);
 
 const vert = glsl`
 //uniform mat4 projectionMatrix, modelViewMatrix;
@@ -177,6 +178,10 @@ const tileGeometry1k = new THREE.BufferGeometry();
 tileGeometry1k.setIndex(indicesAttribute1kGrid);
 tileGeometry1k.boundingSphere = tileBSphere;
 tileGeometry1k.drawRange.count = 999 * 999 * 6;
+const tileGeometry500 = new THREE.BufferGeometry();
+tileGeometry500.setIndex(indicesAttribute500Grid);
+tileGeometry500.boundingSphere = tileBSphere;
+tileGeometry500.drawRange.count = 499 * 499 * 6;
 const tileGeometry2k = new THREE.BufferGeometry();
 tileGeometry2k.setIndex(indicesAttribute2kGrid);
 tileGeometry2k.boundingSphere = tileBSphere;
@@ -220,6 +225,7 @@ async function getTileMesh(coord: EastNorth) {
     let geo: THREE.BufferGeometry;
     if (w === 2000 &&  h === 2000) geo = tileGeometry2k;
     else if (w === 1000 &&  h === 1000) geo = tileGeometry1k;
+    else if (w === 500 &&  h === 500) geo = tileGeometry500;
     else {
         throw new Error('only working with 1k & 2k grid');
         //grid = computeTriangleGridIndices(w, h);
@@ -239,6 +245,11 @@ async function getTileMesh(coord: EastNorth) {
         const lod = getTileLOD(dist);
         geo.drawRange.count = fullLODCount/lod;
         uniforms.EPS.value.x = lod/w;
+        
+        // geo.drawRange.count = 18*(h-1);// fullLODCount/lod;
+        // const wa = window as any;
+        // if (!wa.EPS) wa.EPS = 1/3;
+        // uniforms.EPS.value.x = wa.EPS; //lod/w;
     }
     // --------------------
     info.mesh = mesh;
@@ -261,17 +272,43 @@ async function* generateTileMeshes(coord: EastNorth, numX: number, numY: number)
     }
     return;
 }
+
+class LazyTile {
+    static loaderGeometry = new THREE.BoxBufferGeometry();
+    static loaderMat = new THREE.MeshBasicMaterial({transparent: true, color: 0x800000, opacity: 0.1, blending: THREE.AdditiveBlending});
+    object3D: THREE.Object3D;
+    constructor(info: DsmCatItem, origin: EastNorth, parent: THREE.Object3D) {
+        let obj = this.object3D = new THREE.Mesh(LazyTile.loaderGeometry, LazyTile.loaderMat);
+        const coord = {east: info.xllcorner, north: info.yllcorner};
+        const dx = info.xllcorner - origin.east;
+        const dy = info.yllcorner - origin.north;
+        obj.position.x = dx;
+        obj.position.y = dy;
+        obj.position.z = info.min_ele;
+        obj.scale.set(1000, 1000, info.max_ele-info.min_ele);
+        parent.add(obj);
+        obj.onBeforeRender = () => {
+            parent.remove(obj);
+            //TODO: add intermediate 'loading' graphic.
+            getTileMesh(coord).then(m => {
+                m.mesh!.position.x = dx;
+                m.mesh!.position.y = dy;
+                this.object3D = m.mesh!;
+                parent.add(this.object3D);
+            });
+        }
+    }
+}
+
 type TileGenerator = AsyncGenerator<DsmCatItem, void, unknown>;
 export class JP2HeightField extends ThreactTrackballBase {
     coord: EastNorth;
     tileProp: DsmCatItem;
-    url: string;
     //tileGen: TileGenerator;
     constructor(coord: EastNorth) {
         super();
         this.coord = {...coord};
         this.tileProp = getTileProperties(coord);
-        this.url = getImageFilename(this.tileProp.source_filename);
         this.addAxes();
         //this.tileGen = generateTileMeshes(this.coord, 2, 2);
     }
@@ -303,12 +340,27 @@ export class JP2HeightField extends ThreactTrackballBase {
         this.makeTiles().then(v => {console.log('finished making tiles')});
     }
     async makeTiles() {
-        const tileGen = generateTileMeshes(this.coord, 20, 20);
+        Object.entries(cat).forEach((k) => {
+            const info = k[1] as DsmCatItem;
+            const t = new LazyTile(info, this.coord, this.scene);
+        });
+    }
+    async makeTilesX() {
+        const tileGen = generateTileMeshes(this.coord, 10000, 10000);
+        const t = Date.now();
+        let skipped = 0, tried = 0;
         for await (const tile of tileGen) {
+            tried++;
             const m = tile.mesh!;
-            if (m.userData.isNull) continue;
+            if (m.userData.isNull) {
+                skipped++;
+                continue;
+            }
             this.scene.add(tile.mesh!);
         }
+        const dt = new Date(Date.now()-t).toLocaleTimeString();
+        console.log(`finished loading tile data in ${dt}`);
+        console.log(`skipped ${Math.floor(skipped*100/tried)}%`);
     }
     update() {
         super.update();
