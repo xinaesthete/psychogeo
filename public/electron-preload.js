@@ -19,5 +19,5 @@ contextBridge.exposeInMainWorld('electron', {
             throw(e);
         }
     },
-    ping: 42
+    ping: "Inner Landscape"
 });

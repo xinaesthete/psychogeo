@@ -167,8 +167,9 @@ export async function jp2Texture(url: string) {
   //there is evidence the following work in WebGL2, need to translate to THREE.DataTexture:
   //internalFormat = gl.DEPTH_COMPONENT16; format = gl.DEPTH_COMPONENT; type = gl.UNSIGNED_SHORT; // OK, red    
   const texture = new THREE.DataTexture(splitData, frameInfo.width, frameInfo.height, THREE.RGBFormat, THREE.UnsignedByteType);
-  texture.minFilter = texture.magFilter = THREE.NearestFilter;
+  texture.minFilter = texture.magFilter = THREE.LinearFilter;
   texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.generateMipmaps = true; //TODO: test & make sure full use being made...
   const t = {texture, frameInfo};
   textureCache.set(url, t);
   return t;

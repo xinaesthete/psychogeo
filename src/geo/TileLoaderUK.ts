@@ -117,6 +117,8 @@ void main() {
 const frag = glsl`//#version 300 es
 precision highp float;
 //out vec4 col;
+uniform sampler2D heightFeild;
+uniform float heightMin, heightMax;
 uniform float iTime;
 varying vec3 v_modelSpacePosition;
 varying vec3 v_worldSpacePosition;
@@ -124,6 +126,18 @@ varying vec3 v_viewSpacePosition;
 varying vec2 vUv;
 varying float normalisedHeight;
 varying vec3 v_normal;
+float mapHeight(float h) {
+    return heightMin + h * (heightMax - heightMin);
+}
+float getNormalisedHeight(vec2 uv) {
+    uv.y = 1. - uv.y;
+    vec4 v = texture2D(heightFeild, uv);
+    float h = v.r + (v.g / 256.);
+    return h;
+}
+float getHeight(vec2 uv) {
+    return mapHeight(getNormalisedHeight(uv));
+}
 float aastep(float threshold, float value) {
     float afwidth = length(vec2(dFdx(value), dFdy(value))) * 0.70710678118654757;
     return smoothstep(threshold-afwidth, threshold+afwidth, value);
@@ -140,7 +154,7 @@ float computeSteepness() {
     return pow(1.-abs(dot(vec3(0.,0.,1.), v_normal)), 0.5);
 }
 float computeContour() {
-    float h = v_worldSpacePosition.z;
+    float h = getHeight(vUv);// v_worldSpacePosition.z;
     h = mod(h-3.*iTime, 5.)/5.;
     h = max(smoothstep(0.98, 1.0, h), smoothstep(0.02, 0., h));
     //h = aastep(0.5, h);
@@ -149,9 +163,10 @@ float computeContour() {
 void main() {
     float h = computeContour();
     float s = computeSteepness();
-    float v = normalisedHeight;
+    // float v = normalisedHeight;
+    float v = abs(getHeight(vUv) - v_worldSpacePosition.z);
     vec4 col = vec4(vec3(0.2, s*0.7, v), 1.0);
-    col.rgb *= vec3(h);
+    col.rg *= vec2(h);
     // col.rg = vUv;
     gl_FragColor = col;
 }
@@ -191,8 +206,8 @@ async function getTileMesh(coord: EastNorth) {
     const w = frameInfo.width, h = frameInfo.height;
     const uniforms = {
         heightFeild: { value: texture },
-        // heightMin: { value: info.min_ele }, heightMax: { value: info.max_ele },
-        heightMin: { value: 0 }, heightMax: { value: 1 },
+        heightMin: { value: info.min_ele }, heightMax: { value: info.max_ele },
+        // heightMin: { value: 0 }, heightMax: { value: 1 },
         EPS: { value: new THREE.Vector2(1/w, 1/h) },
         // horizontalScale: { value: 1000 },
         horizontalScale: { value: 1 },
