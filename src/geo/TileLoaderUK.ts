@@ -47,7 +47,9 @@ export function getTileProperties(coord: EastNorth) {
 }
 
 export function getImageFilename(source_filename: string) {
-    return "tile:" + source_filename;
+    return "tile:" + source_filename; // not sure what's happening with electron async
+    // would be good not to rely on it
+    // return "data/web/" + source_filename + "_normalised_60db.jpx";
 }
 
 
@@ -245,7 +247,10 @@ async function getTileMesh(coord: EastNorth) {
         const lod = getTileLOD(dist);
         geo.drawRange.count = fullLODCount/lod;
         uniforms.EPS.value.x = lod/w;
-        
+
+        mesh.userData.lastRender = Date.now();
+        mesh.userData.lastLOD = lod;
+
         // geo.drawRange.count = 18*(h-1);// fullLODCount/lod;
         // const wa = window as any;
         // if (!wa.EPS) wa.EPS = 1/3;
@@ -314,8 +319,9 @@ export class JP2HeightField extends ThreactTrackballBase {
     }
     addMarker() {
         const info = this.tileProp;
-        const markerMat = new THREE.MeshBasicMaterial({transparent: true, opacity: 0.5, color: 0xff0000});
-        const m = new THREE.Mesh(new THREE.SphereBufferGeometry(5, 30, 30), markerMat);
+        //const markerMat = new THREE.MeshBasicMaterial({transparent: true, opacity: 0.5, color: 0xff0000});
+        const m = new THREE.PointLight();// THREE.Mesh(new THREE.SphereBufferGeometry(5, 30, 30), markerMat);
+        m.castShadow = true;
         m.position.x = this.coord.east - info.xllcorner;
         m.position.y = this.coord.north - info.yllcorner;
         m.position.z = info.min_ele;
@@ -334,7 +340,7 @@ export class JP2HeightField extends ThreactTrackballBase {
         this.camera.position.z = info.max_ele + 50;
         this.camera.lookAt(0, 0, info.max_ele);
         this.camera.near = 1;
-        this.camera.far = 200000;
+        this.camera.far = 100000;
         
         this.addMarker();
         this.makeTiles().then(v => {console.log('finished making tiles')});

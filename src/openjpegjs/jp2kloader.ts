@@ -8,7 +8,8 @@
  * Well a little unit testing wouldn't do us any harm... (no a little unit testing wouldn't do us any harm)
  */
 
- import * as THREE from 'three'
+import * as THREE from 'three'
+import { WorkerPool } from './workerPool';
 
 /* // for ref:
 EMSCRIPTEN_BINDINGS(FrameInfo) {
@@ -138,14 +139,34 @@ export async function getPixelDataU16(url: string) {
     return { pixData: pixelData as Uint16Array, frameInfo };
 }
 
-interface TextureTile {
+export interface TextureTile {
   texture: THREE.Texture;
   frameInfo: FrameInfo;
 }
-const textureCache = new Map<string, TextureTile>();
+export interface PixFrame {
+  frameInfo: FrameInfo;
+  pixData: Uint16Array;
+}
+
+// worker implementation, not currently used.
+// extremely slow for some reason???
+// also need to decide how to arrange serving files.
+const workers = new WorkerPool();
+export async function getPixelDataU16W(url: string) : Promise<PixFrame> {
+  const worker = await workers.getWorker();// new Worker('texture_worker.js');
+  const promise = new Promise<PixFrame>(async (resolve) => {
+    worker.onmessage = m => {
+      workers.releaseWorker(worker);
+      resolve(m.data as PixFrame);
+    }
+    worker.postMessage(url);
+  });
+  return promise;
+}
+//const textureCache = new Map<string, TextureTile>();
 
 export async function jp2Texture(url: string) {
-  if (textureCache.has(url)) return textureCache.get(url) as TextureTile;
+  //if (textureCache.has(url)) return textureCache.get(url) as TextureTile;
   const result = await getPixelDataU16(url);
   const frameInfo = result.frameInfo;
   // console.log(JSON.stringify(frameInfo, null, 2));
@@ -171,11 +192,11 @@ export async function jp2Texture(url: string) {
   texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
   texture.generateMipmaps = true; //TODO: test & make sure full use being made...
   const t = {texture, frameInfo};
-  textureCache.set(url, t);
+  //textureCache.set(url, t);
   return t;
 }
 
 export function newGLContext() {
   //TODO: formalise GL resource management with threact.
-  textureCache.clear();
+  //textureCache.clear();
 }

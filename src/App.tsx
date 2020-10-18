@@ -9,7 +9,8 @@ function App() {
   const threeBits: IThree[] = [];
   //threeBits.push(new JP2HeightField("data/heightTileTest.jpx"));
   //448475 , 129631
-  const coord = {east: 448475, north: 129631};
+  //320709 , 088243
+  const coord = {east: 320709, north: 88243};
   threeBits.push(new JP2HeightField(coord));
   // for (let i=0; i<3; i++) {
   //   coord.east += 1000;
@@ -18,7 +19,7 @@ function App() {
   return (
     <div className="App">
       <header className="App-header">
-        {(window as any).electron.ping}
+        {/* {(window as any).electron.ping} */}
       </header>
       {threeBits.map((t, i) => <Threact key={i} gfx={t} />)}
     </div>
