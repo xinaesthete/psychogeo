@@ -47,9 +47,7 @@ export function getTileProperties(coord: EastNorth) {
 }
 
 export function getImageFilename(source_filename: string) {
-    return "tile:" + source_filename; // not sure what's happening with electron async
-    // would be good not to rely on it
-    // return "data/web/" + source_filename + "_normalised_60db.jpx";
+    return "/tile/" + source_filename; // /tile/ interpreted as url for fetch, tile: uses electron api
 }
 
 
