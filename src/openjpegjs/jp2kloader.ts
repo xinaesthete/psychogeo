@@ -118,7 +118,7 @@ function getPixelData(frameInfo: FrameInfo, decodedBuffer: Uint8Array) {
 }
 
 
-export async function getPixelDataU16(url: string) {
+export async function getPixelDataU16_noWorker(url: string) {
     const decoder = await getDecoder();
     let encodedBitstream: Uint8Array;
     if (url.startsWith("tile:")) {
@@ -147,39 +147,33 @@ export interface PixFrame {
   frameInfo: FrameInfo;
   pixData: Uint16Array;
 }
+export interface TexFrame {
+  frameInfo: FrameInfo;
+  texData: Uint16Array;
+}
 
 // worker implementation, not currently used.
 // extremely slow for some reason - probably because it allocates loads of memory.
 // also need to decide how to arrange serving files.
-// const workers = new WorkerPool(4);
-// export async function getPixelDataU16(url: string) : Promise<PixFrame> {
-//   const worker = await workers.getWorker();// new Worker('texture_worker.js');
-//   const promise = new Promise<PixFrame>(async (resolve) => {
-//     worker.onmessage = m => {
-//       workers.releaseWorker(worker);
-//       resolve(m.data as PixFrame);
-//     }
-//     worker.postMessage(url);
-//   });
-//   return promise;
-// }
+const workers = new WorkerPool(8);
+export async function getTexDataU16(url: string) : Promise<TexFrame> {
+  const worker = await workers.getWorker();// new Worker('texture_worker.js');
+  const promise = new Promise<TexFrame>(async (resolve) => {
+    worker.onmessage = m => {
+      workers.releaseWorker(worker);
+      resolve(m.data as TexFrame);
+    }
+    worker.postMessage(url);
+  });
+  return promise;
+}
 const textureCache = new Map<string, TextureTile>();
 
 export async function jp2Texture(url: string) {
   if (textureCache.has(url)) return textureCache.get(url) as TextureTile;
-  const result = await getPixelDataU16(url);
+  const result = await getTexDataU16(url);
   const frameInfo = result.frameInfo;
   // console.log(JSON.stringify(frameInfo, null, 2));
-  const data = result.pixData;
-
-  const splitData = new Uint8Array(data.length*3);
-  data.forEach((v, i) => {
-      const r = v >> 8;
-      const g = v - (r << 8);
-      splitData[3*i] = r;
-      splitData[3*i + 1] = g;
-      splitData[3*i + 2] = 0;
-  });
 
   //https://jsfiddle.net/f2Lommf5/1856/ - doesn't give errors but doesn't seem to load any meaningful data.
   //const texture = new THREE.DataTexture(data, frameInfo.width, frameInfo.height, THREE.LuminanceFormat, THREE.UnsignedShortType,
@@ -187,7 +181,7 @@ export async function jp2Texture(url: string) {
   //);
   //there is evidence the following work in WebGL2, need to translate to THREE.DataTexture:
   //internalFormat = gl.DEPTH_COMPONENT16; format = gl.DEPTH_COMPONENT; type = gl.UNSIGNED_SHORT; // OK, red    
-  const texture = new THREE.DataTexture(splitData, frameInfo.width, frameInfo.height, THREE.RGBFormat, THREE.UnsignedByteType);
+  const texture = new THREE.DataTexture(result.texData, frameInfo.width, frameInfo.height, THREE.RGBFormat, THREE.UnsignedByteType);
   texture.minFilter = texture.magFilter = THREE.LinearFilter;
   texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
   texture.generateMipmaps = true; //TODO: test & make sure full use being made...

@@ -27,7 +27,18 @@ async function decode(url) {
     const frameInfo = decoder.getFrameInfo();
     const decodedBuffer = decoder.getDecodedBuffer();
     const pixelData = getPixelData(frameInfo, decodedBuffer);
-    return { pixData: pixelData, frameInfo: frameInfo };
+    
+    const splitData = new Uint8Array(pixelData.length*3);
+    pixelData.forEach((v, i) => {
+        const r = v >> 8;
+        const g = v - (r << 8);
+        splitData[3*i] = r;
+        splitData[3*i + 1] = g;
+        splitData[3*i + 2] = 0;
+    });
+  
+    
+    return { texData: splitData, frameInfo: frameInfo };
 }
 
 onmessage = m => {

@@ -1,7 +1,6 @@
 import React from 'react';
 import './App.css';
 import { JP2HeightField, newGLContext } from './geo/TileLoaderUK';
-//import { OpenJ2KImage } from './openjpegjs/OpenJ2KImage';
 import { IThree, Threact } from './threact/threact';
 
 function App() {
