@@ -1,5 +1,7 @@
 This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
 
+It currently depends on local data in a hard-coded path, but I should get around to changing that soon hopefully.
+
 ## Available Scripts
 
 In the project directory, you can run:
