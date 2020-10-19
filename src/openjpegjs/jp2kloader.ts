@@ -149,24 +149,24 @@ export interface PixFrame {
 }
 
 // worker implementation, not currently used.
-// extremely slow for some reason???
+// extremely slow for some reason - probably because it allocates loads of memory.
 // also need to decide how to arrange serving files.
-const workers = new WorkerPool();
-export async function getPixelDataU16W(url: string) : Promise<PixFrame> {
-  const worker = await workers.getWorker();// new Worker('texture_worker.js');
-  const promise = new Promise<PixFrame>(async (resolve) => {
-    worker.onmessage = m => {
-      workers.releaseWorker(worker);
-      resolve(m.data as PixFrame);
-    }
-    worker.postMessage(url);
-  });
-  return promise;
-}
-//const textureCache = new Map<string, TextureTile>();
+// const workers = new WorkerPool(4);
+// export async function getPixelDataU16(url: string) : Promise<PixFrame> {
+//   const worker = await workers.getWorker();// new Worker('texture_worker.js');
+//   const promise = new Promise<PixFrame>(async (resolve) => {
+//     worker.onmessage = m => {
+//       workers.releaseWorker(worker);
+//       resolve(m.data as PixFrame);
+//     }
+//     worker.postMessage(url);
+//   });
+//   return promise;
+// }
+const textureCache = new Map<string, TextureTile>();
 
 export async function jp2Texture(url: string) {
-  //if (textureCache.has(url)) return textureCache.get(url) as TextureTile;
+  if (textureCache.has(url)) return textureCache.get(url) as TextureTile;
   const result = await getPixelDataU16(url);
   const frameInfo = result.frameInfo;
   // console.log(JSON.stringify(frameInfo, null, 2));
@@ -192,11 +192,11 @@ export async function jp2Texture(url: string) {
   texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
   texture.generateMipmaps = true; //TODO: test & make sure full use being made...
   const t = {texture, frameInfo};
-  //textureCache.set(url, t);
+  textureCache.set(url, t);
   return t;
 }
 
 export function newGLContext() {
   //TODO: formalise GL resource management with threact.
-  //textureCache.clear();
+  textureCache.clear();
 }

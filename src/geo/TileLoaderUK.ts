@@ -280,7 +280,7 @@ async function* generateTileMeshes(coord: EastNorth, numX: number, numY: number)
 
 class LazyTile {
     static loaderGeometry = new THREE.BoxBufferGeometry();
-    static loaderMat = new THREE.MeshBasicMaterial({transparent: true, color: 0x800000, opacity: 0.1, blending: THREE.AdditiveBlending});
+    static loaderMat = new THREE.MeshBasicMaterial({transparent: true, color: 0x800000, opacity: 0.5, blending: THREE.AdditiveBlending});
     object3D: THREE.Object3D;
     constructor(info: DsmCatItem, origin: EastNorth, parent: THREE.Object3D) {
         let obj = this.object3D = new THREE.Mesh(LazyTile.loaderGeometry, LazyTile.loaderMat);
@@ -294,7 +294,7 @@ class LazyTile {
         parent.add(obj);
         obj.onBeforeRender = () => {
             parent.remove(obj);
-            //TODO: add intermediate 'loading' graphic.
+            //TODO: add intermediate 'loading' graphic & 'error' debug info.
             getTileMesh(coord).then(m => {
                 m.mesh!.position.x = dx;
                 m.mesh!.position.y = dy;
@@ -340,7 +340,7 @@ export class JP2HeightField extends ThreactTrackballBase {
         this.camera.position.z = info.max_ele + 50;
         this.camera.lookAt(0, 0, info.max_ele);
         this.camera.near = 1;
-        this.camera.far = 100000;
+        this.camera.far = 200000;
         
         this.addMarker();
         this.makeTiles().then(v => {console.log('finished making tiles')});

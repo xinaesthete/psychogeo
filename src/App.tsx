@@ -10,12 +10,10 @@ function App() {
   //threeBits.push(new JP2HeightField("data/heightTileTest.jpx"));
   //448475 , 129631
   //320709 , 088243
-  const coord = {east: 320709, north: 88243};
-  threeBits.push(new JP2HeightField(coord));
-  // for (let i=0; i<3; i++) {
-  //   coord.east += 1000;
-  //   threeBits.push(new JP2HeightField(coord));
-  // }
+  const winchester = {east: 448475, north: 129631};
+  //const branscombe = {east: 320709, north: 88243};
+  threeBits.push(new JP2HeightField(winchester));
+  //threeBits.push(new JP2HeightField(branscombe));
   return (
     <div className="App">
       <header className="App-header">

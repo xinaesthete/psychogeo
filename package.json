@@ -4,6 +4,7 @@
   "private": true,
   "homepage": "./",
   "main": "src/start.js",
+  "proxy": "http://localhost:8080",
   "dependencies": {
     "@testing-library/jest-dom": "^4.2.4",
     "@testing-library/react": "^9.5.0",
@@ -27,7 +28,8 @@
     "eject": "react-scripts eject",
     "electron": "electron .",
     "react-start": "cross-env BROWSER=none react-scripts start",
-    "electron-start": "node src/start-react"
+    "electron-start": "node src/start-react",
+    "proxy-start": "node src/start-server"
   },
   "eslintConfig": {
     "extends": "react-app"
