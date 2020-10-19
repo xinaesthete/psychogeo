@@ -2,11 +2,11 @@ import * as THREE from 'three';
 import * as JP2 from '../openjpegjs/jp2kloader';
 import { globalUniforms } from '../threact/threact';
 import { computeTriangleGridIndices, ThreactTrackballBase, glsl } from '../threact/threexample';
-import * as dsm_cat from './dsm_catalog.json'
+import * as dsm_cat from './dsm_catalog.json' //pending rethink of API...
 
 
 const cat = (dsm_cat as any).default;
-
+type DsmSources = Partial<Record<"2000" | "1000" | "500", string>>;
 interface DsmCatItem {
     min_ele: number;
     max_ele: number;
@@ -16,6 +16,7 @@ interface DsmCatItem {
     nrows: number,
     ncols: number,
     source_filename: string,
+    sources: DsmSources,
     mesh?: THREE.Object3D //nb, one caveat is that having a given Object3D expects to appear once in one scenegraph
 }
 
@@ -189,7 +190,7 @@ tileGeometry2k.drawRange.count = 1999 * 1999 * 6;
 
 const nullInfo: DsmCatItem = {
     xllcorner:0, yllcorner: 0, min_ele:0, max_ele:0, ncols:0, nrows:0, 
-    source_filename: "no", valid_percent: 0, mesh: new THREE.Object3D()
+    source_filename: "no", sources: {"500": "no"}, valid_percent: 0, mesh: new THREE.Object3D()
 };
 nullInfo.mesh!.userData.isNull = true;
 
@@ -205,8 +206,12 @@ function getTileLOD(dist: number) {
 async function getTileMesh(coord: EastNorth) {
     let info = getTileProperties(coord) || nullInfo;
     //XXX: NO! when hot-module-replacement happens, keeping hold of WebGL context related resources is a problem.
-    if (info.mesh) return info; 
-    const url = getImageFilename(info.source_filename);
+    //(actually not sure in what case HMR ever would't completely replace everything here)
+    if (info.mesh) return info;
+    const sources = info.sources;
+    const source = sources[2000] || sources[1000] || sources[500]!;
+    const url = getImageFilename(source);
+    
     const {texture, frameInfo} = await JP2.jp2Texture(url);
     const w = frameInfo.width, h = frameInfo.height;
     const uniforms = {

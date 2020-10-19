@@ -155,7 +155,7 @@ export interface TexFrame {
 // worker implementation, not currently used.
 // extremely slow for some reason - probably because it allocates loads of memory.
 // also need to decide how to arrange serving files.
-const workers = new WorkerPool(8);
+const workers = new WorkerPool(20);
 export async function getTexDataU16(url: string) : Promise<TexFrame> {
   const worker = await workers.getWorker();// new Worker('texture_worker.js');
   const promise = new Promise<TexFrame>(async (resolve) => {
