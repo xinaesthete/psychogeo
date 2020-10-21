@@ -4,6 +4,7 @@ import { globalUniforms } from '../threact/threact';
 import { computeTriangleGridIndices, ThreactTrackballBase, glsl } from '../threact/threexample';
 import { EastNorth } from './Coordinates';
 import * as dsm_cat from './dsm_catalog.json' //pending rethink of API...
+import { patchShaderBeforeCompile } from './TileShader';
 import { loadGpxGeometry } from './TrackVis';
 
 
@@ -223,8 +224,11 @@ async function getTileMesh(coord: EastNorth) {
         gridSizeX: { value: w }, gridSizeY: { value: h },
         iTime: globalUniforms.iTime
     }
-    const mat = new THREE.ShaderMaterial({vertexShader: vert, fragmentShader: frag, uniforms: uniforms});
-    mat.extensions.derivatives = true;
+    // const mat = new THREE.ShaderMaterial({vertexShader: vert, fragmentShader: frag, uniforms: uniforms});
+    const mat = new THREE.MeshStandardMaterial();
+    //mat.map = uniforms.heightFeild.value;
+    mat.onBeforeCompile = patchShaderBeforeCompile(uniforms);
+    // mat.extensions.derivatives = true;
     mat.side = THREE.DoubleSide;
     let geo: THREE.BufferGeometry;
     if (w === 2000 &&  h === 2000) geo = tileGeometry2k;

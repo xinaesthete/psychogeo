@@ -32,7 +32,6 @@ export async function loadGpxGeometry(url: string, origin: EastNorth) {
     const pos = track.flatMap(tp => {
         const lat = tp.lat, lon = tp.lon;
         const en = convertWgsToOSGB({lat, lon});
-        //const v = new THREE.Vector3(en.east - origin.east, en.north - origin.north, tp.altitude)
         return [en.east - origin.east, en.north - origin.north, tp.altitude || 0];
     });
     const s = track[0].time!.getTime();
@@ -78,8 +77,6 @@ function trksegProcess(trkseg: Element): GpxTrackpoint[] {
     //https://stackoverflow.com/questions/53441292/why-downleveliteration-is-not-on-by-default
     const pointsRaw = [...trkseg.getElementsByTagName('trkpt')];
     const points: GpxTrackpoint[] = pointsRaw.map(p => {
-        const lat = F(p.attributes.getNamedItem('lat')!.value);
-        const lon = F(p.attributes.getNamedItem('lon')!.value);
         return {
             lat: F(p.attributes.getNamedItem('lat')!.value),
             lon: F(p.attributes.getNamedItem('lon')!.value),
