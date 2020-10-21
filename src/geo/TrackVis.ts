@@ -1,6 +1,29 @@
 import * as THREE from 'three'
+import { globalUniforms } from '../threact/threact';
+import { glsl } from '../threact/threexample';
 import { convertWgsToOSGB, EastNorth } from './Coordinates'
 import { GpxTrackpoint } from './gpxtypes';
+
+
+const lineVert = glsl`
+attribute float time;
+uniform float startTime;
+uniform float endTime;
+varying float vTime;
+void main() {
+    vTime = time / (endTime-startTime);
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`;
+
+const lineFrag = glsl`
+uniform float iTime;
+varying float vTime;
+void main() {
+    float v = smoothstep(0.9, 1.0, mod(vTime - (0.1*iTime), 1.0));
+    gl_FragColor = vec4(v, 0.4, 0.4, 1.);
+}
+`
 
 export async function loadGpxGeometry(url: string, origin: EastNorth) {
     const data = await fetch(url);
@@ -13,14 +36,21 @@ export async function loadGpxGeometry(url: string, origin: EastNorth) {
         return [en.east - origin.east, en.north - origin.north, tp.altitude || 0];
     });
     const s = track[0].time!.getTime();
-    const time = track.map(tp => s - tp.time!.getTime() || 0);
+    const time = track.map(tp => (tp.time!.getTime() - s)/1000 || 0);
     const posAttr = new THREE.BufferAttribute(new Float32Array(pos), 3);
     const timeAttr = new THREE.BufferAttribute(new Float32Array(time), 1);
 
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', posAttr);
     geo.setAttribute('time', timeAttr);
-    const lineGeo = new THREE.LineSegments(geo);
+    const uniforms = {
+        startTime: {value: 0},
+        endTime: {value: Math.max(...time)},
+        iTime: globalUniforms.iTime
+    }
+    const lineGeo = new THREE.LineSegments(geo, new THREE.ShaderMaterial({
+        vertexShader: lineVert, fragmentShader: lineFrag, uniforms: uniforms
+    }));
     return lineGeo;
 }
 
