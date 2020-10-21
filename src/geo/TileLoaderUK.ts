@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import * as JP2 from '../openjpegjs/jp2kloader';
 import { globalUniforms } from '../threact/threact';
 import { computeTriangleGridIndices, ThreactTrackballBase, glsl } from '../threact/threexample';
+import { EastNorth } from './Coordinates';
 import * as dsm_cat from './dsm_catalog.json' //pending rethink of API...
 
 
@@ -20,10 +21,6 @@ interface DsmCatItem {
     mesh?: THREE.Object3D //nb, one caveat is that having a given Object3D expects to appear once in one scenegraph
 }
 
-export interface EastNorth {
-    east: number;
-    north: number;
-}
 
 /** 
  * return the lower-left corner of the grid cell containing coord
