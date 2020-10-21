@@ -48,7 +48,7 @@ export async function loadGpxGeometry(url: string, origin: EastNorth) {
         endTime: {value: Math.max(...time)},
         iTime: globalUniforms.iTime
     }
-    const lineGeo = new THREE.LineSegments(geo, new THREE.ShaderMaterial({
+    const lineGeo = new THREE.LineLoop(geo, new THREE.ShaderMaterial({
         vertexShader: lineVert, fragmentShader: lineFrag, uniforms: uniforms
     }));
     return lineGeo;
