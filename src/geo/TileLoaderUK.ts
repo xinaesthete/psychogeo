@@ -4,6 +4,7 @@ import { globalUniforms } from '../threact/threact';
 import { computeTriangleGridIndices, ThreactTrackballBase, glsl } from '../threact/threexample';
 import { EastNorth } from './Coordinates';
 import * as dsm_cat from './dsm_catalog.json' //pending rethink of API...
+import { loadGpxGeometry } from './TrackVis';
 
 
 const cat = (dsm_cat as any).default;
@@ -329,6 +330,9 @@ export class JP2HeightField extends ThreactTrackballBase {
         m.scale.z = (info.max_ele - info.min_ele) / 10;
 
         this.scene.add(m);
+    }
+    async addTrack(url: string) {
+        this.scene.add(await loadGpxGeometry(url, this.coord));
     }
     addAxes() {
         const ax = new THREE.AxesHelper(100);

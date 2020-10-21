@@ -13,7 +13,9 @@ function App() {
   //const winchester = {east: 448475, north: 129631};
   const winchester = convertWgsToOSGB({lat: 51.064, lon: -1.3098227});
   //const branscombe = {east: 320709, north: 88243};
-  threeBits.push(new JP2HeightField(winchester));
+  const geoScene = new JP2HeightField(winchester);
+  geoScene.addTrack("data/palestine.gpx");
+  threeBits.push(geoScene);
   //threeBits.push(new JP2HeightField(branscombe));
   return (
     <div className="App">
