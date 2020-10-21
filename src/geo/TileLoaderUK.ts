@@ -59,6 +59,7 @@ const indicesAttribute500Grid = computeTriangleGridIndices(500, 500);
 
 const vert = glsl`
 //uniform mat4 projectionMatrix, modelViewMatrix;
+uniform float iTime;
 uniform uint gridSizeX, gridSizeY;
 uniform vec2 EPS;
 uniform float heightMin, heightMax;
@@ -232,7 +233,7 @@ async function getTileMesh(coord: EastNorth) {
     else if (w === 1000 &&  h === 1000) geo = tileGeometry1k;
     else if (w === 500 &&  h === 500) geo = tileGeometry500;
     else {
-        throw new Error('only working with 1k & 2k grid');
+        throw new Error('Invalid tile: check proxy is running, dimensions 500/1000/2000... also beware out of date error messages (sorry).');
         //grid = computeTriangleGridIndices(w, h);
     }
     const mesh = new THREE.Mesh(geo, mat);

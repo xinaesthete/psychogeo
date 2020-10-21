@@ -152,10 +152,7 @@ export interface TexFrame {
   texData: Uint16Array;
 }
 
-// worker implementation, not currently used.
-// extremely slow for some reason - probably because it allocates loads of memory.
-// also need to decide how to arrange serving files.
-const workers = new WorkerPool(20);
+const workers = new WorkerPool(8);
 export async function getTexDataU16(url: string) : Promise<TexFrame> {
   const worker = await workers.getWorker();// new Worker('texture_worker.js');
   const promise = new Promise<TexFrame>(async (resolve) => {
@@ -163,14 +160,25 @@ export async function getTexDataU16(url: string) : Promise<TexFrame> {
       workers.releaseWorker(worker);
       resolve(m.data as TexFrame);
     }
-    worker.postMessage(url);
+    worker.postMessage({cmd: "tex", url: url});
   });
   return promise;
 }
-const textureCache = new Map<string, TextureTile>();
+export async function getPixDataU16(url: string) : Promise<PixFrame> {
+  const worker = await workers.getWorker();// new Worker('texture_worker.js');
+  const promise = new Promise<PixFrame>(async (resolve) => {
+    worker.onmessage = m => {
+      workers.releaseWorker(worker);
+      resolve(m.data as PixFrame);
+    }
+    worker.postMessage({cmd: "pix", url: url});
+  });
+  return promise;
+}
+//const textureCache = new Map<string, TextureTile>();
 
 export async function jp2Texture(url: string) {
-  if (textureCache.has(url)) return textureCache.get(url) as TextureTile;
+  //if (textureCache.has(url)) return textureCache.get(url) as TextureTile;
   const result = await getTexDataU16(url);
   const frameInfo = result.frameInfo;
   // console.log(JSON.stringify(frameInfo, null, 2));
@@ -186,11 +194,11 @@ export async function jp2Texture(url: string) {
   texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
   texture.generateMipmaps = true; //TODO: test & make sure full use being made...
   const t = {texture, frameInfo};
-  textureCache.set(url, t);
+  //textureCache.set(url, t);
   return t;
 }
 
 export function newGLContext() {
   //TODO: formalise GL resource management with threact.
-  textureCache.clear();
+  //textureCache.clear();
 }

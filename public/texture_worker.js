@@ -16,7 +16,32 @@ function getPixelData(frameInfo, decodedBuffer) {
 }
 
 
-async function decode(url) {
+async function decodePix(url) {
+    if (!j) j = await OpenJPEGWASM();
+    const response = await fetch(url);
+    const encodedBitstream = new Uint8Array(await response.arrayBuffer());
+    const decoder = new j.J2KDecoder();
+    const encodedBuffer = decoder.getEncodedBuffer(encodedBitstream.length);
+    encodedBuffer.set(encodedBitstream);
+    decoder.decode();
+    const frameInfo = decoder.getFrameInfo();
+    const decodedBuffer = decoder.getDecodedBuffer();
+    const pixelData = getPixelData(frameInfo, decodedBuffer);
+    
+    const splitData = new Uint8Array(pixelData.length*3);
+    pixelData.forEach((v, i) => {
+        const r = v >> 8;
+        const g = v - (r << 8);
+        splitData[3*i] = r;
+        splitData[3*i + 1] = g;
+        splitData[3*i + 2] = 0;
+    });
+  
+    
+    return { texData: splitData, frameInfo: frameInfo };
+}
+
+async function decodeTex(url) {
     if (!j) j = await OpenJPEGWASM();
     const response = await fetch(url);
     const encodedBitstream = new Uint8Array(await response.arrayBuffer());
@@ -42,5 +67,14 @@ async function decode(url) {
 }
 
 onmessage = m => {
-    decode(m.data).then(postMessage);
+    switch (m.data.cmd) {
+        case "tex":
+            decodeTex(m.data.url).then(postMessage);
+            break;
+        case "pix":
+            decodePix(m.data.url).then(postMessage);
+            break;
+        default:
+            throw new Error(`texture_worker expects {cmd: "tex"|"pix", url: string }, got ${JSON.stringift(m.data)}`);
+    }
 }
