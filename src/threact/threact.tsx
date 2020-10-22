@@ -18,8 +18,11 @@ export const globalUniforms = {
 function init() {
     //NB:: I should consider the implications of having these values determined in a global GL context, 
     //and how they may be configured in an application (probably require app to call init with arguments).
+    //(may want multiple renderers sharing context)
     console.log('<< threact module init() >>');
     renderer = new THREE.WebGLRenderer({antialias: true, logarithmicDepthBuffer: true});
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     compositeScene = new THREE.Scene();
     const w = window.innerWidth, h = window.innerHeight;
     compositeCamera = new THREE.OrthographicCamera(0, w, h, 0);

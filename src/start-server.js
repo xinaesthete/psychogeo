@@ -1,6 +1,6 @@
 //https://dev.to/loujaybee/using-create-react-app-with-express
 const tileFolder = "C:/Users/peter/Dropbox/BlenderGIS/pyUtil/images/web/";
-const tileSuffix = "_normalised_60db.jpx";
+const tileSuffix = "_normalised_rate0.jpx";
 
 console.log('starting express server on port ' + process.env.PORT || 8080);
 const express = require('express');

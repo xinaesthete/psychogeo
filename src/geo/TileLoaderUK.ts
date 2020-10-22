@@ -4,12 +4,12 @@ import { globalUniforms } from '../threact/threact';
 import { computeTriangleGridIndices, ThreactTrackballBase, glsl } from '../threact/threexample';
 import { EastNorth } from './Coordinates';
 import * as dsm_cat from './dsm_catalog.json' //pending rethink of API...
-import { patchShaderBeforeCompile } from './TileShader';
+import { patchShaderBeforeCompile, tileLoadingMat } from './TileShader';
 import { loadGpxGeometry } from './TrackVis';
 
 
 const cat = (dsm_cat as any).default;
-type DsmSources = Partial<Record<"2000" | "1000" | "500", string>>;
+type DsmSources = Partial<Record<"500" | "1000" | "2000", string>>;
 interface DsmCatItem {
     min_ele: number;
     max_ele: number;
@@ -226,6 +226,7 @@ async function getTileMesh(coord: EastNorth) {
     }
     // const mat = new THREE.ShaderMaterial({vertexShader: vert, fragmentShader: frag, uniforms: uniforms});
     const mat = new THREE.MeshStandardMaterial();
+    mat.shadowSide = THREE.DoubleSide;
     //mat.map = uniforms.heightFeild.value;
     mat.onBeforeCompile = patchShaderBeforeCompile(uniforms);
     // mat.extensions.derivatives = true;
@@ -239,6 +240,8 @@ async function getTileMesh(coord: EastNorth) {
         //grid = computeTriangleGridIndices(w, h);
     }
     const mesh = new THREE.Mesh(geo, mat);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
     mesh.frustumCulled = true; //tileBSphere hopefully correct...
     mesh.scale.set(1000, 1000, info.max_ele-info.min_ele);
     mesh.position.z = info.min_ele;
@@ -247,6 +250,7 @@ async function getTileMesh(coord: EastNorth) {
     const dCam = new THREE.Vector3(), offset = new THREE.Vector3(500, 500, info.min_ele), pos = new THREE.Vector3();
     const fullLODCount = (w-1)*(h-1)*6;
     mesh.onBeforeRender = (r, s, cam, g, mat, group) => {
+        //TODO: different LOD for shadow vs view (I think this is only called once per frame, how do I intercept shadow pass?)
         pos.addVectors(mesh.position, offset);
         const dist = dCam.subVectors(pos, cam.position).length();
         const geo = g as THREE.BufferGeometry;
@@ -293,15 +297,23 @@ class LazyTile {
         const coord = {east: info.xllcorner, north: info.yllcorner};
         const dx = info.xllcorner - origin.east;
         const dy = info.yllcorner - origin.north;
-        obj.position.x = dx;
-        obj.position.y = dy;
+        obj.position.x = dx + 500;
+        obj.position.y = dy + 500;
         obj.position.z = info.min_ele;
         obj.scale.set(1000, 1000, info.max_ele-info.min_ele);
         parent.add(obj);
         obj.onBeforeRender = () => {
             parent.remove(obj);
+            const loadingMesh = new THREE.Mesh(obj.geometry, tileLoadingMat);
+            loadingMesh.position.x = dx + 500;
+            loadingMesh.position.y = dy + 500;
+            loadingMesh.position.z = info.min_ele;
+            loadingMesh.scale.set(1000, 1000, info.max_ele-info.min_ele);
+            parent.add(loadingMesh);
+    
             //TODO: add intermediate 'loading' graphic & 'error' debug info.
             getTileMesh(coord).then(m => {
+                parent.remove(loadingMesh);
                 m.mesh!.position.x = dx;
                 m.mesh!.position.y = dy;
                 this.object3D = m.mesh!;
@@ -333,7 +345,7 @@ export class JP2HeightField extends ThreactTrackballBase {
         m.position.z = info.min_ele;
         m.scale.z = (info.max_ele - info.min_ele) / 10;
 
-        this.scene.add(m);
+        //this.scene.add(m);
     }
     async addTrack(url: string) {
         this.scene.add(await loadGpxGeometry(url, this.coord));
