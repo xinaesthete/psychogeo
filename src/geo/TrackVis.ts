@@ -84,7 +84,7 @@ export async function loadGpxGeometry(url: string, context: JP2HeightField) {
     let debugStarted = false;
     l.shadow.camera.near = 1;
     //I actually want this to be much higher, but if it triggers in loading lots of tiles then we crash.
-    l.shadow.camera.far = 5000; 
+    l.shadow.camera.far = 500; 
     const helper = new THREE.CameraHelper( l.shadow.camera );
     g.add(helper);
     g.add(target);
@@ -103,8 +103,13 @@ export async function loadGpxGeometry(url: string, context: JP2HeightField) {
             debugStarted = true;
         }
         const t = globalUniforms.iTime.value * 0.1;
-        const i = Math.floor(n*t % n);
+        const iF = n*t % n;
+        const i = Math.floor(iF);
+        const a = iF - i;
+
         getPos(i, tPos);
+        getPos(i+1 % n, tNPos);
+        tPos.lerpVectors(tPos, tNPos, a);
         tNPos.set(0,0,0);
         const nSmooth = 4;
         for (let j=1; j<nSmooth; j++) {
