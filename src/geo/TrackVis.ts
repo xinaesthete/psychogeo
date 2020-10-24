@@ -15,7 +15,7 @@ void main() {
     vTime = time / (endTime-startTime);
     float v = smoothstep(0.9, 1.0, mod(vTime - (0.1*iTime), 1.0));
     vec3 p = vec3(position.xy, position.z + 100. * v);
-    p.z += 100.0;
+    //logDepth?
     gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
 }
 `;
@@ -59,8 +59,11 @@ export async function loadGpxGeometry(url: string, origin: EastNorth) {
     g.add(lineGeo);
     
     const l = new THREE.SpotLight();
+    const target = new THREE.Object3D();
+    l.target = target;
     //consider smaller vertical angle.
     l.up.set(0,0,1);
+    target.up.set(0,0,1);
     l.updateMatrix();
     l.updateMatrixWorld();
     g.add(l);
@@ -83,6 +86,7 @@ export async function loadGpxGeometry(url: string, origin: EastNorth) {
     l.shadow.camera.far = 5000; 
     const helper = new THREE.CameraHelper( l.shadow.camera );
     g.add(helper);
+    g.add(target);
     g.castShadow = true;
 
     //TODO interpolate, and look up based on time rather than index
@@ -91,22 +95,23 @@ export async function loadGpxGeometry(url: string, origin: EastNorth) {
         out.set(p[0], p[1], p[2]);
     }
 
-    const tPos = new THREE.Vector3(), tNPos = new THREE.Vector3();
+    const tPos = new THREE.Vector3(), tNPos = new THREE.Vector3(), tt = new THREE.Vector3();
     m.onBeforeRender = () => {
         const t = globalUniforms.iTime.value * 0.001;
         const i = Math.floor(n*t % n);
         getPos(i, tPos);
-        getPos(i+1 % n, tNPos);
+        tNPos.set(0,0,0);
+        for (let j=1; j<10; j++) {
+            getPos(i+j*3 % n, tt);
+            tNPos.add(tt);
+        }
+        tNPos.multiplyScalar(1/9);
         l.position.copy(tPos);
-        l.lookAt(tNPos);
-        l.updateMatrixWorld();
-        l.shadow.camera.position.copy(tPos);
-        l.shadow.camera.lookAt(tNPos);
-        l.shadow.camera.updateMatrixWorld();
+        target.position.copy(tNPos);
+        // target.updateMatrix();
+        l.updateMatrix();
+        //l.lookAt(tNPos); //no, it looks at its .target
         m.position.copy(tPos);
-        //helper looks sensible, but shadow doesn't.
-        // ----- let's get some more debug visuals going ----
-        helper.update();
 
         
         l.matrixWorldNeedsUpdate = true;

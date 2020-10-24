@@ -20,7 +20,7 @@ function init() {
     //and how they may be configured in an application (probably require app to call init with arguments).
     //(may want multiple renderers sharing context)
     console.log('<< threact module init() >>');
-    renderer = new THREE.WebGLRenderer({antialias: true, logarithmicDepthBuffer: true});
+    renderer = new THREE.WebGLRenderer({antialias: true, logarithmicDepthBuffer: false});
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFShadowMap;
     compositeScene = new THREE.Scene();
