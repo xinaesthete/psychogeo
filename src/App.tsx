@@ -19,9 +19,9 @@ function App() {
   //threeBits.push(new JP2HeightField(branscombe));
   return (
     <div className="App">
-      <header className="App-header">
+      {/* <header className="App-header">
         {JSON.stringify(winchester, undefined, 2)}
-      </header>
+      </header> */}
       {threeBits.map((t, i) => <Threact key={i} gfx={t} />)}
     </div>
   );

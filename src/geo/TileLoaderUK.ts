@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import * as JP2 from '../openjpegjs/jp2kloader';
 import { globalUniforms } from '../threact/threact';
-import { computeTriangleGridIndices, ThreactTrackballBase, glsl } from '../threact/threexample';
+import { computeTriangleGridIndices, ThreactTrackballBase } from '../threact/threexample';
 import { EastNorth } from './Coordinates';
 import * as dsm_cat from './dsm_catalog.json' //pending rethink of API...
 import { applyCustomDepth, getTileMaterial, tileLoadingMat } from './TileShader';
@@ -140,7 +140,6 @@ async function getTileMesh(coord: EastNorth) {
     mesh.scale.set(1000, 1000, info.max_ele-info.min_ele);
     mesh.position.z = info.min_ele;
 
-    // LOD hack-----------
     const dCam = new THREE.Vector3(), offset = new THREE.Vector3(500, 500, info.min_ele), pos = new THREE.Vector3();
     const fullLODCount = (w-1)*(h-1)*6;
     mesh.onBeforeRender = (r, s, cam, g, mat, group) => {
@@ -155,38 +154,25 @@ async function getTileMesh(coord: EastNorth) {
 
         mesh.userData.lastRender = Date.now();
         mesh.userData.lastLOD = lod;
-
-        // geo.drawRange.count = 18*(h-1);// fullLODCount/lod;
-        // const wa = window as any;
-        // if (!wa.EPS) wa.EPS = 1/3;
-        // uniforms.EPS.value.x = wa.EPS; //lod/w;
     }
     // --------------------
     info.mesh = mesh;
     return info;
 }
 
-async function* generateTileMeshes(coord: EastNorth, numX: number, numY: number) {
-    for (let i=0; i<numX; i++) {
-        const dx = -(numX*500) + i*1000;
-        const e = coord.east + dx;
-        for (let j=0; j<numY; j++) {
-            const dy = -(numY*500) + j*1000;
-            const n = coord.north + dy;
-            const m = await getTileMesh({east: e, north: n});
-            //TODO: more clarity about origin in scene etc.
-            m.mesh!.position.x = dx;
-            m.mesh!.position.y = dy;
-            yield m;
-        }
-    }
-    return;
-}
-
+//may consider throttling how many tiles load at a time & having a status to indicate that.
+enum TileStatus { UnTouched, Loading, Loaded } 
 class LazyTile {
     static loaderGeometry = new THREE.BoxBufferGeometry();
     static loaderMat = new THREE.MeshBasicMaterial({transparent: true, color: 0x800000, opacity: 0.5, blending: THREE.AdditiveBlending});
     object3D: THREE.Object3D;
+    status = TileStatus.UnTouched;
+    get lastRender(): number {
+        return this.object3D.userData.lastRender as number;
+    }
+    get lastLOD(): number {
+        return this.object3D.userData.lastLOD as number;
+    }
     constructor(info: DsmCatItem, origin: EastNorth, parent: THREE.Object3D) {
         let obj = this.object3D = new THREE.Mesh(LazyTile.loaderGeometry, LazyTile.loaderMat);
         const coord = {east: info.xllcorner, north: info.yllcorner};
@@ -198,6 +184,7 @@ class LazyTile {
         obj.scale.set(1000, 1000, info.max_ele-info.min_ele);
         parent.add(obj);
         obj.onBeforeRender = () => {
+            this.status = TileStatus.Loading;
             parent.remove(obj);
             const loadingMesh = new THREE.Mesh(obj.geometry, tileLoadingMat);
             loadingMesh.position.x = dx + 500;
@@ -208,6 +195,7 @@ class LazyTile {
     
             //TODO: add intermediate 'loading' graphic & 'error' debug info.
             getTileMesh(coord).then(m => {
+                this.status = TileStatus.Loaded;
                 parent.remove(loadingMesh);
                 m.mesh!.position.x = dx;
                 m.mesh!.position.y = dy;
@@ -218,11 +206,10 @@ class LazyTile {
     }
 }
 
-type TileGenerator = AsyncGenerator<DsmCatItem, void, unknown>;
 export class JP2HeightField extends ThreactTrackballBase {
     coord: EastNorth;
     tileProp: DsmCatItem;
-    //tileGen: TileGenerator;
+    tiles: LazyTile[] = [];
     constructor(coord: EastNorth) {
         super();
         this.coord = {...coord};
@@ -288,28 +275,23 @@ export class JP2HeightField extends ThreactTrackballBase {
     async makeTiles() {
         Object.entries(cat).forEach((k) => {
             const info = k[1] as DsmCatItem;
-            const t = new LazyTile(info, this.coord, this.scene);
+            this.tiles.push(new LazyTile(info, this.coord, this.scene));
         });
     }
-    async makeTilesX() {
-        const tileGen = generateTileMeshes(this.coord, 10000, 10000);
-        const t = Date.now();
-        let skipped = 0, tried = 0;
-        for await (const tile of tileGen) {
-            tried++;
-            const m = tile.mesh!;
-            if (m.userData.isNull) {
-                skipped++;
-                continue;
-            }
-            this.scene.add(tile.mesh!);
-        }
-        const dt = new Date(Date.now()-t).toLocaleTimeString();
-        console.log(`finished loading tile data in ${dt}`);
-        console.log(`skipped ${Math.floor(skipped*100/tried)}%`);
-    }
     update() {
+        this.updateTileStats();
         super.update();
+    }
+    updateTileStats() {
+        const loaded = this.tiles.filter(t => t.status === TileStatus.Loaded);
+        const now = Date.now();
+        const recentlySeen = loaded.filter(t => (now - t.lastRender) < 50);
+        const lodStats = new Map<number, number>();
+        recentlySeen.forEach(t => {
+            const lod = t.lastLOD;
+            const n = lodStats.get(lod) || 0;
+            lodStats.set(lod, n+1);       
+        });
     }
 }
 
