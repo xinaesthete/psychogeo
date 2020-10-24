@@ -4,7 +4,7 @@ import { globalUniforms } from '../threact/threact';
 import { computeTriangleGridIndices, ThreactTrackballBase, glsl } from '../threact/threexample';
 import { EastNorth } from './Coordinates';
 import * as dsm_cat from './dsm_catalog.json' //pending rethink of API...
-import { patchShaderBeforeCompile, tileLoadingMat } from './TileShader';
+import { applyCustomDepth, getTileMaterial, tileLoadingMat } from './TileShader';
 import { loadGpxGeometry } from './TrackVis';
 
 
@@ -52,141 +52,35 @@ export function getImageFilename(source_filename: string) {
 
 
 
-const indicesAttribute2kGrid = computeTriangleGridIndices(2000, 2000);
-const indicesAttribute1kGrid = computeTriangleGridIndices(1000, 1000);
-const indicesAttribute500Grid = computeTriangleGridIndices(500, 500);
-
-const vert = glsl`
-//uniform mat4 projectionMatrix, modelViewMatrix;
-uniform float iTime;
-uniform uint gridSizeX, gridSizeY;
-uniform vec2 EPS;
-uniform float heightMin, heightMax;
-uniform float horizontalScale;
-uniform sampler2D heightFeild;
-varying vec2 vUv;
-varying float normalisedHeight;
-varying vec3 v_modelSpacePosition;
-varying vec3 v_worldSpacePosition;
-varying vec3 v_viewSpacePosition;
-varying vec3 v_normal;
-float mapHeight(float h) {
-    return heightMin + h * (heightMax - heightMin);
-}
-float getNormalisedHeight(vec2 uv) {
-    uv.y = 1. - uv.y;
-    vec4 v = texture2D(heightFeild, uv);
-    float h = v.r + (v.g / 256.);
-    return h;
-}
-float getHeight(vec2 uv) {
-    return mapHeight(getNormalisedHeight(uv));
-}
-vec2 uvFromVertID() {
-    uint id = uint(gl_VertexID);
-    uint x = id / gridSizeY;
-    uint y = id % gridSizeX;
-    //NB: when I was doing this in OF, I didn't include the +0.5
-    //I think this version is correct... see some odd artefacts otherwise.
-    return vec2(float(x)+0.5, float(y)+0.5) * EPS;
-}
-vec4 computePos(vec2 uv) {
-    return vec4((uv) * horizontalScale, getNormalisedHeight(uv), 1.0);
-}
-vec3 computeNormal(vec2 uv, vec4 pos) {
-    //what about the edges?
-    vec3 p = pos.xyz;
-    vec3 dx = normalize(computePos(uv + vec2(EPS.x, 0.)).xyz - p);
-    vec3 dy = normalize(computePos(uv + vec2(0., EPS.y)).xyz - p);
-    return normalize(cross(dx, dy)).xyz;
-}
-void main() {
-    vec2 uv = uvFromVertID();
-    vUv = uv;
-    // float h = getNormalisedHeight(vUv);
-    // normalisedHeight = h;
-    vec4 p = computePos(vUv);
-    v_normal = computeNormal(uv, p);
-    normalisedHeight = p.z;
-    v_modelSpacePosition = p.xyz;
-    p = modelMatrix * p;
-    v_worldSpacePosition = p.xyz;
-    p = viewMatrix * p;
-    v_viewSpacePosition = p.xyz;
-    gl_Position = projectionMatrix * p;
-}
-`;
-const frag = glsl`//#version 300 es
-precision highp float;
-//out vec4 col;
-uniform sampler2D heightFeild;
-uniform float heightMin, heightMax;
-uniform float iTime;
-varying vec3 v_modelSpacePosition;
-varying vec3 v_worldSpacePosition;
-varying vec3 v_viewSpacePosition;
-varying vec2 vUv;
-varying float normalisedHeight;
-varying vec3 v_normal;
-float mapHeight(float h) {
-    return heightMin + h * (heightMax - heightMin);
-}
-float getNormalisedHeight(vec2 uv) {
-    uv.y = 1. - uv.y;
-    vec4 v = texture2D(heightFeild, uv);
-    float h = v.r + (v.g / 256.);
-    return h;
-}
-float getHeight(vec2 uv) {
-    return mapHeight(getNormalisedHeight(uv));
-}
-float aastep(float threshold, float value) {
-    float afwidth = length(vec2(dFdx(value), dFdy(value))) * 0.70710678118654757;
-    return smoothstep(threshold-afwidth, threshold+afwidth, value);
-}
-vec3 computeNormal() {
-    vec3 p = v_worldSpacePosition;
-    vec3 dx = dFdx(p);
-    vec3 dy = dFdy(p);
-    return normalize(cross(dx, dy));
-}
-//this function seems quite good at showing up certain artefacts...
-float computeSteepness() {
-    // return pow(1.-abs(dot(vec3(0.,0.,1.), computeNormal())), 0.5);
-    return pow(1.-abs(dot(vec3(0.,0.,1.), v_normal)), 0.5);
-}
-float computeContour() {
-    float h = getHeight(vUv);// v_worldSpacePosition.z;
-    h = mod(h-3.*iTime, 5.)/5.;
-    h = max(smoothstep(0.98, 1.0, h), smoothstep(0.02, 0., h));
-    //h = aastep(0.5, h);
-    return h;
-}
-void main() {
-    float h = computeContour();
-    float s = computeSteepness();
-    // float v = normalisedHeight;
-    float v = abs(getHeight(vUv) - v_worldSpacePosition.z);
-    vec4 col = vec4(vec3(0.2, s*0.7, v), 1.0);
-    col.rg *= vec2(h);
-    // col.rg = vUv;
-    gl_FragColor = col;
-}
-`;
-
 const tileBSphere = new THREE.Sphere(new THREE.Vector3(0.5, 0.5, 0.5), 0.8);
-const tileGeometry1k = new THREE.BufferGeometry();
-tileGeometry1k.setIndex(indicesAttribute1kGrid);
-tileGeometry1k.boundingSphere = tileBSphere;
-tileGeometry1k.drawRange.count = 999 * 999 * 6;
-const tileGeometry500 = new THREE.BufferGeometry();
-tileGeometry500.setIndex(indicesAttribute500Grid);
-tileGeometry500.boundingSphere = tileBSphere;
-tileGeometry500.drawRange.count = 499 * 499 * 6;
-const tileGeometry2k = new THREE.BufferGeometry();
-tileGeometry2k.setIndex(indicesAttribute2kGrid);
-tileGeometry2k.boundingSphere = tileBSphere;
-tileGeometry2k.drawRange.count = 1999 * 1999 * 6;
+const tileBBox = new THREE.Box3(new THREE.Vector3(), new THREE.Vector3(1, 1, 1));
+
+//make this false to use PlaneBufferGeometry
+//should allow us to use more standard shaders, with displacement map for terrain
+//but not working.
+const attributeless = true;
+
+function makeTileGeometry(w: number, h: number) {
+    let geo : THREE.BufferGeometry;
+    if (attributeless) {
+        geo = new THREE.BufferGeometry();
+        geo.drawRange.count = (w-1) * (h-1) * 6;
+        geo.setIndex(computeTriangleGridIndices(w, h));
+    } else {
+        geo = new THREE.PlaneBufferGeometry(1, 1, w, h);
+        geo.translate(0.5, 0.5, 0.5);
+        geo.computeVertexNormals();
+    }
+    //would these be able to account for displacement if computed automatically?
+    geo.boundingSphere = tileBSphere;
+    geo.boundingBox = tileBBox;
+    return geo;
+}
+
+const tileGeometry1k = makeTileGeometry(1000, 1000);
+const tileGeometry2k = makeTileGeometry(2000, 2000);
+const tileGeometry500 = makeTileGeometry(500, 500);
+
 
 const nullInfo: DsmCatItem = {
     xllcorner:0, yllcorner: 0, min_ele:0, max_ele:0, ncols:0, nrows:0, 
@@ -224,13 +118,6 @@ async function getTileMesh(coord: EastNorth) {
         gridSizeX: { value: w }, gridSizeY: { value: h },
         iTime: globalUniforms.iTime
     }
-    // const mat = new THREE.ShaderMaterial({vertexShader: vert, fragmentShader: frag, uniforms: uniforms});
-    const mat = new THREE.MeshStandardMaterial();
-    mat.shadowSide = THREE.DoubleSide;
-    //mat.map = uniforms.heightFeild.value;
-    mat.onBeforeCompile = patchShaderBeforeCompile(uniforms);
-    // mat.extensions.derivatives = true;
-    mat.side = THREE.DoubleSide;
     let geo: THREE.BufferGeometry;
     if (w === 2000 &&  h === 2000) geo = tileGeometry2k;
     else if (w === 1000 &&  h === 1000) geo = tileGeometry1k;
@@ -239,7 +126,14 @@ async function getTileMesh(coord: EastNorth) {
         throw new Error('Invalid tile: check proxy is running, dimensions 500/1000/2000... also beware out of date error messages (sorry).');
         //grid = computeTriangleGridIndices(w, h);
     }
+    const mat = attributeless ? getTileMaterial(uniforms) : new THREE.MeshStandardMaterial();
+    if (!attributeless) {
+        let material = mat as THREE.MeshStandardMaterial;
+        material.displacementMap = texture;
+        material.displacementScale = 1;//info.max_ele - info.min_ele; //handled by matrix (for now)
+    }
     const mesh = new THREE.Mesh(geo, mat);
+    if (attributeless) applyCustomDepth(mesh);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.frustumCulled = true; //tileBSphere hopefully correct...
@@ -251,6 +145,7 @@ async function getTileMesh(coord: EastNorth) {
     const fullLODCount = (w-1)*(h-1)*6;
     mesh.onBeforeRender = (r, s, cam, g, mat, group) => {
         //TODO: different LOD for shadow vs view (I think this is only called once per frame, how do I intercept shadow pass?)
+        //-- could have seperate LOD in MeshDepthMaterial / MeshDistanceMaterial I guess.
         pos.addVectors(mesh.position, offset);
         const dist = dCam.subVectors(pos, cam.position).length();
         const geo = g as THREE.BufferGeometry;
@@ -337,15 +232,14 @@ export class JP2HeightField extends ThreactTrackballBase {
     }
     addMarker() {
         const info = this.tileProp;
-        //const markerMat = new THREE.MeshBasicMaterial({transparent: true, opacity: 0.5, color: 0xff0000});
-        const m = new THREE.PointLight();// THREE.Mesh(new THREE.SphereBufferGeometry(5, 30, 30), markerMat);
-        m.castShadow = true;
-        m.position.x = this.coord.east - info.xllcorner;
-        m.position.y = this.coord.north - info.yllcorner;
+        const markerMat = new THREE.MeshBasicMaterial({transparent: true, opacity: 0.5, color: 0xffffff});
+        const m = new THREE.Mesh(new THREE.SphereBufferGeometry(5, 30, 30), markerMat);
+        // m.position.x = this.coord.east - info.xllcorner;
+        // m.position.y = this.coord.north - info.yllcorner;
         m.position.z = info.min_ele;
         m.scale.z = (info.max_ele - info.min_ele) / 10;
 
-        //this.scene.add(m);
+        this.scene.add(m);
     }
     async addTrack(url: string) {
         this.scene.add(await loadGpxGeometry(url, this.coord));
@@ -362,9 +256,34 @@ export class JP2HeightField extends ThreactTrackballBase {
         this.camera.lookAt(0, 0, info.max_ele);
         this.camera.near = 1;
         this.camera.far = 200000;
+
+        //this.planeBaseTest();
+        this.sunLight();
         
         this.addMarker();
         this.makeTiles().then(v => {console.log('finished making tiles')});
+    }
+    sunLight() {
+        //at some point I may want to have something more usefully resembling sun, just testing for now.
+        const sun = new THREE.DirectionalLight(0xa09080, 1);
+        sun.position.set(-10000, -3000, 400);
+        sun.up = new THREE.Vector3(0, 0.5, 0.5).normalize();
+        sun.castShadow = true;
+        this.scene.add(sun);
+    }
+    planeBaseTest() {
+        const geo = new THREE.PlaneBufferGeometry(10000, 10000, 2000, 2000);
+        const mat = new THREE.MeshStandardMaterial();
+        JP2.jp2Texture(getImageFilename(this.tileProp.source_filename)).then(({texture, frameInfo}) => {
+            mat.displacementMap = texture;
+            mat.displacementScale = (this.tileProp.max_ele - this.tileProp.min_ele) * 10;
+            const m = new THREE.Mesh(geo, mat);
+            m.frustumCulled = false;
+            m.receiveShadow = true;
+            m.castShadow = true;
+            m.position.z = -mat.displacementScale/2;
+            this.scene.add(m);
+        });
     }
     async makeTiles() {
         Object.entries(cat).forEach((k) => {
