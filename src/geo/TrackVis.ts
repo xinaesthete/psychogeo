@@ -3,6 +3,7 @@ import { globalUniforms } from '../threact/threact';
 import { glsl } from '../threact/threexample';
 import { convertWgsToOSGB, EastNorth } from './Coordinates'
 import { GpxTrackpoint } from './gpxtypes';
+import { JP2HeightField } from './TileLoaderUK';
 
 
 const lineVert = glsl`
@@ -29,7 +30,8 @@ void main() {
 }
 `
 
-export async function loadGpxGeometry(url: string, origin: EastNorth) {
+export async function loadGpxGeometry(url: string, context: JP2HeightField) {
+    const origin = context.coord;
     const data = await fetch(url);
     const track = parseGPX(await data.text());
     
@@ -81,6 +83,7 @@ export async function loadGpxGeometry(url: string, origin: EastNorth) {
     l.matrixAutoUpdate = true;
     //l.shadow.radius = 1000;
     l.angle = Math.PI / 4;
+    let debugStarted = false;
     l.shadow.camera.near = 1;
     //I actually want this to be much higher, but if it triggers in loading lots of tiles then we crash.
     l.shadow.camera.far = 5000; 
@@ -88,24 +91,29 @@ export async function loadGpxGeometry(url: string, origin: EastNorth) {
     g.add(helper);
     g.add(target);
     g.castShadow = true;
-
+    
     //TODO interpolate, and look up based on time rather than index
     function getPos(i: number, out: THREE.Vector3) {
         const p = pos.slice(i*3, i*3 + 3);
         out.set(p[0], p[1], p[2]);
     }
-
+    
     const tPos = new THREE.Vector3(), tNPos = new THREE.Vector3(), tt = new THREE.Vector3();
     m.onBeforeRender = () => {
+        if (!debugStarted) {
+            context.debugTexture((l.shadow.map as any).texture);
+            debugStarted = true;
+        }
         const t = globalUniforms.iTime.value * 0.001;
         const i = Math.floor(n*t % n);
         getPos(i, tPos);
         tNPos.set(0,0,0);
-        for (let j=1; j<10; j++) {
+        const nSmooth = 4;
+        for (let j=1; j<nSmooth; j++) {
             getPos(i+j*3 % n, tt);
             tNPos.add(tt);
         }
-        tNPos.multiplyScalar(1/9);
+        tNPos.multiplyScalar(1/(nSmooth-1));
         l.position.copy(tPos);
         target.position.copy(tNPos);
         // target.updateMatrix();

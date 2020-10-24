@@ -1,5 +1,6 @@
 import React from 'react'
 import * as THREE from 'three'
+import { WebGLRenderer } from 'three';
 import './threact.css'
 
 declare const window: Window;
@@ -32,7 +33,7 @@ function init() {
     renderer.setSize(w, h);
     const el = renderer.domElement;
     document.body.appendChild(el);
-    el.id = "threact_main_canvas";
+    el.id = "threact_backing_canvas";
 
     animate();
 }
@@ -62,10 +63,11 @@ function animate() {
 init();
 
 export interface IThree {
-    scene: THREE.Scene;
-    camera: THREE.Camera;
+    //scene: THREE.Scene;
+    //camera: THREE.Camera;
     initThree(dom: HTMLElement): void;
     update(): void;
+    render(renderer: WebGLRenderer): void;
     resize(rect: DOMRect): void;
     disposeThree(): void;
 }
@@ -73,11 +75,16 @@ export interface IThree {
 
 export interface IThreact {
     gfx: IThree;
+    
+    //reactChildren?: React.Component[]; //React components already have children.
 }
 
 const basePlane = new THREE.PlaneBufferGeometry(1, 1, 1, 1);
 
 /**
+ * XXX: Really need to use this a bit to figure out how it should work...
+ * 
+ * 
  * React documentation & general conventions strongly favour composition over inheritence, for sound reasons.
  * However, it seems as though this represents a sufficiently different kind of component that it may make sense
  * to make the parts responsible for compositing related boilerplate abstract.
@@ -158,7 +165,13 @@ export class Threact extends React.Component<IThreact, any> {
         renderer.setClearColor(this.color);
         renderer.clear();
         this.props.gfx.update();
-        renderer.render(this.props.gfx.scene, this.props.gfx.camera);
+        //we may want to do things like handle multi-pass configurations, as well as debug overlays etc etc (that's what I want right now).
+        //rather than assume gfx has a single 'scene' and 'camera' and that rendering the scene with the camera will get the right result,
+        //it should have a render method where it can do what it likes, including changing render target etc safe in the knowledge that the
+        //calling function (this one) will take care of setting up & restoring that kind of state.
+        //renderer.render(this.props.gfx.scene, this.props.gfx.camera);
+        this.props.gfx.render(renderer);
+
         renderer.setRenderTarget(rt);
     }
     render() {

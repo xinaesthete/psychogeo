@@ -133,7 +133,7 @@ async function getTileMesh(coord: EastNorth) {
         material.displacementScale = 1;//info.max_ele - info.min_ele; //handled by matrix (for now)
     }
     const mesh = new THREE.Mesh(geo, mat);
-    if (attributeless) applyCustomDepth(mesh);
+    applyCustomDepth(mesh);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.frustumCulled = true; //tileBSphere hopefully correct...
@@ -215,7 +215,6 @@ export class JP2HeightField extends ThreactTrackballBase {
         this.coord = {...coord};
         this.tileProp = getTileProperties(coord);
         this.addAxes();
-        //this.tileGen = generateTileMeshes(this.coord, 2, 2);
     }
     addMarker() {
         const info = this.tileProp;
@@ -229,7 +228,7 @@ export class JP2HeightField extends ThreactTrackballBase {
         this.scene.add(m);
     }
     async addTrack(url: string) {
-        this.scene.add(await loadGpxGeometry(url, this.coord));
+        this.scene.add(await loadGpxGeometry(url, this));
     }
     addAxes() {
         const ax = new THREE.AxesHelper(100);
@@ -244,11 +243,11 @@ export class JP2HeightField extends ThreactTrackballBase {
         this.camera.near = 1;
         this.camera.far = 200000;
 
-        //this.planeBaseTest();
+        this.planeBaseTest();
         this.sunLight();
         
         this.addMarker();
-        this.makeTiles().then(v => {console.log('finished making tiles')});
+        // this.makeTiles().then(v => {console.log('finished making tiles')});
     }
     sunLight() {
         //at some point I may want to have something more usefully resembling sun, just testing for now.
@@ -269,6 +268,7 @@ export class JP2HeightField extends ThreactTrackballBase {
             m.receiveShadow = true;
             m.castShadow = true;
             m.position.z = -mat.displacementScale/2;
+            applyCustomDepth(m);
             this.scene.add(m);
         });
     }

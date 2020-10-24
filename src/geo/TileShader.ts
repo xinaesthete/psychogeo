@@ -21,6 +21,7 @@ export const tileLoadingMat = new THREE.ShaderMaterial({
 
 //currently debugging, 'frankenShader' here means start with StandardMaterial & modify
 //false for ShaderMaterial (not Raw, but not Standard)
+//see also 'attributeless' in TileLoaderUK for using standard displacement map.
 const frankenShader = true;
 
 export function getTileMaterial(uniforms: any) {
@@ -222,15 +223,24 @@ function patchFragmentShader(fragmentShader: string) {
 
 }
 
-export function applyCustomDepth(mesh: THREE.Object3D) {
-    mesh.customDepthMaterial = new THREE.MeshDepthMaterial();
-    mesh.customDepthMaterial.onBeforeCompile = (shader) => {
-        //what about <logdepth_vertex>?
-        shader.vertexShader = patchVertexShader(shader.vertexShader);
-    }
-    mesh.customDistanceMaterial = new THREE.MeshDistanceMaterial();
-    mesh.customDistanceMaterial.onBeforeCompile = (shader) => {
-        shader.vertexShader = patchVertexShader(shader.vertexShader);
+export function applyCustomDepth(mesh: THREE.Mesh) {
+    const mat = mesh.material as THREE.MeshStandardMaterial;
+    const depth = mesh.customDepthMaterial = new THREE.MeshDepthMaterial();
+    const dist = mesh.customDistanceMaterial = new THREE.MeshDistanceMaterial();
+    if (mat && mat.displacementMap !== null) {
+        depth.displacementMap = dist.displacementMap = mat.displacementMap;
+        depth.displacementScale = dist.displacementScale = mat.displacementScale;
+        depth.displacementBias = dist.displacementBias = mat.displacementBias;
+    } else {
+        depth.onBeforeCompile = patchShaderBeforeCompile;
+        dist.onBeforeCompile = patchShaderBeforeCompile;
+        // depth.onBeforeCompile = (shader) => {
+        //     //what about <logdepth_vertex>?
+        //     shader.vertexShader = patchVertexShader(shader.vertexShader);
+        // }
+        // dist.onBeforeCompile = (shader) => {
+        //     shader.vertexShader = patchVertexShader(shader.vertexShader);
+        // }
     }
 }
 

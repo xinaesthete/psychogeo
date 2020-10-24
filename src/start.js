@@ -9,6 +9,7 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1000,
     height: 800,
+    autoHideMenuBar: true,
     webPreferences: {
       //NB: Now using WebPack target: web, so we don't need nodeIntegration here.
       //any interface with node modules should be established in electron-preload.js
