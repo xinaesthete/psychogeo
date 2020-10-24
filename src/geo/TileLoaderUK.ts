@@ -58,7 +58,7 @@ const tileBBox = new THREE.Box3(new THREE.Vector3(), new THREE.Vector3(1, 1, 1))
 //make this false to use PlaneBufferGeometry
 //should allow us to use more standard shaders, with displacement map for terrain
 //but not working.
-const attributeless = true;
+const attributeless = true, onlyDebugGeometry = false;
 
 function makeTileGeometry(w: number, h: number) {
     let geo : THREE.BufferGeometry;
@@ -133,7 +133,7 @@ async function getTileMesh(coord: EastNorth) {
         material.displacementScale = 1;//info.max_ele - info.min_ele; //handled by matrix (for now)
     }
     const mesh = new THREE.Mesh(geo, mat);
-    applyCustomDepth(mesh);
+    applyCustomDepth(mesh, uniforms);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.frustumCulled = true; //tileBSphere hopefully correct...
@@ -243,11 +243,11 @@ export class JP2HeightField extends ThreactTrackballBase {
         this.camera.near = 1;
         this.camera.far = 200000;
 
-        this.planeBaseTest();
         this.sunLight();
         
         this.addMarker();
-        // this.makeTiles().then(v => {console.log('finished making tiles')});
+        if (onlyDebugGeometry) this.planeBaseTest();
+        if (!onlyDebugGeometry) this.makeTiles().then(v => {console.log('finished making tiles')});
     }
     sunLight() {
         //at some point I may want to have something more usefully resembling sun, just testing for now.
@@ -268,7 +268,7 @@ export class JP2HeightField extends ThreactTrackballBase {
             m.receiveShadow = true;
             m.castShadow = true;
             m.position.z = -mat.displacementScale/2;
-            applyCustomDepth(m);
+            applyCustomDepth(m, null);
             this.scene.add(m);
         });
     }

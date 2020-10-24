@@ -64,8 +64,6 @@ export async function loadGpxGeometry(url: string, context: JP2HeightField) {
     const target = new THREE.Object3D();
     l.target = target;
     //consider smaller vertical angle.
-    l.up.set(0,0,1);
-    target.up.set(0,0,1);
     l.updateMatrix();
     l.updateMatrixWorld();
     g.add(l);
@@ -77,12 +75,12 @@ export async function loadGpxGeometry(url: string, context: JP2HeightField) {
     m.matrixAutoUpdate = true;
     l.matrixAutoUpdate = true;
     l.castShadow = true;
-    l.shadow.mapSize.width = 4096;
-    l.shadow.mapSize.height = 4096;
+    l.shadow.mapSize.width = 1024;
+    l.shadow.mapSize.height = 1024;
     l.shadow.camera.matrixAutoUpdate = true;
     l.matrixAutoUpdate = true;
     //l.shadow.radius = 1000;
-    l.angle = Math.PI / 4;
+    // l.angle = Math.PI / 4;
     let debugStarted = false;
     l.shadow.camera.near = 1;
     //I actually want this to be much higher, but if it triggers in loading lots of tiles then we crash.
@@ -104,7 +102,7 @@ export async function loadGpxGeometry(url: string, context: JP2HeightField) {
             context.debugTexture((l.shadow.map as any).texture);
             debugStarted = true;
         }
-        const t = globalUniforms.iTime.value * 0.001;
+        const t = globalUniforms.iTime.value * 0.1;
         const i = Math.floor(n*t % n);
         getPos(i, tPos);
         tNPos.set(0,0,0);

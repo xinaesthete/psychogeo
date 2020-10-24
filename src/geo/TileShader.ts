@@ -135,6 +135,8 @@ const uv_vertexChunk = glsl`
     vec4 p = computePos(vUv);
 `;
 
+//when we don't have vertex attribute 'normal', we prepend this to beginnormal_vertex
+//everything else to do with normals should then behave as-per standard shader.
 const beginnormal_vertexChunk = glsl`
     vec3 normal = computeNormal(vUv, p);
 `;
@@ -150,8 +152,6 @@ const project_vertexChunk = glsl`
 
 //Do I actually need to change anything in here if all relevant variables are set in the way it expects?
 //We need to account for "transformedNormal" & "worldPosition"
-
-//poking around with a fiddle https://jsfiddle.net/o2p3sg2u/1/, I notice that a MeshDistanceMaterial 
 
 //https://github.com/mrdoob/three.js/blob/dev/src/renderers/shaders/ShaderChunk/shadowmap_vertex.glsl.js
 const shadowmap_vertexChunk = glsl`
@@ -203,7 +203,9 @@ function patchFragmentShader(fragmentShader: string) {
     //this function seems quite good at showing up certain artefacts...
     float computeSteepness() {
         // return pow(1.-abs(dot(vec3(0.,0.,1.), computeNormal())), 0.5);
-        return pow(1.-abs(dot(vec3(0.,0.,1.), vNormal)), 0.5);
+        //XXX: copying this into depth/distance shader (where it's not used) lead to compiler error
+        //vNormal not defined.
+        return 0.; //pow(1.-abs(dot(vec3(0.,0.,1.), vNormal)), 0.5);
     }
     float computeContour() {
         float h = getHeight(vUv);
@@ -223,7 +225,7 @@ function patchFragmentShader(fragmentShader: string) {
 
 }
 
-export function applyCustomDepth(mesh: THREE.Mesh) {
+export function applyCustomDepth(mesh: THREE.Mesh, uniforms: any) {
     const mat = mesh.material as THREE.MeshStandardMaterial;
     const depth = mesh.customDepthMaterial = new THREE.MeshDepthMaterial();
     const dist = mesh.customDistanceMaterial = new THREE.MeshDistanceMaterial();
@@ -232,8 +234,8 @@ export function applyCustomDepth(mesh: THREE.Mesh) {
         depth.displacementScale = dist.displacementScale = mat.displacementScale;
         depth.displacementBias = dist.displacementBias = mat.displacementBias;
     } else {
-        depth.onBeforeCompile = patchShaderBeforeCompile;
-        dist.onBeforeCompile = patchShaderBeforeCompile;
+        depth.onBeforeCompile = patchShaderBeforeCompile(uniforms);
+        dist.onBeforeCompile = patchShaderBeforeCompile(uniforms);
         // depth.onBeforeCompile = (shader) => {
         //     //what about <logdepth_vertex>?
         //     shader.vertexShader = patchVertexShader(shader.vertexShader);
