@@ -30,7 +30,7 @@ void main() {
 }
 `
 
-export async function loadGpxGeometry(url: string, context: JP2HeightField) {
+export async function loadGpxGeometry(url: string, context: JP2HeightField, eleOffset = 2) {
     const origin = context.coord;
     const data = await fetch(url);
     const track = parseGPX(await data.text());
@@ -38,7 +38,7 @@ export async function loadGpxGeometry(url: string, context: JP2HeightField) {
     const pos = track.flatMap(tp => {
         const lat = tp.lat, lon = tp.lon;
         const en = convertWgsToOSGB({lat, lon});
-        return [en.east - origin.east, en.north - origin.north, 2 + (tp.altitude || 0)];
+        return [en.east - origin.east, en.north - origin.north, eleOffset + (tp.altitude || 0)];
     });
     const s = track[0].time!.getTime();
     const time = track.map(tp => (tp.time!.getTime() - s)/1000 || 0);
@@ -82,9 +82,9 @@ export async function loadGpxGeometry(url: string, context: JP2HeightField) {
     //l.shadow.radius = 1000;
     // l.angle = Math.PI / 4;
     let debugStarted = false;
-    l.shadow.camera.near = 1;
+    l.shadow.camera.near = 0.1;
     //I actually want this to be much higher, but if it triggers in loading lots of tiles then we crash.
-    l.shadow.camera.far = 500; 
+    l.shadow.camera.far = 50000; 
     const helper = new THREE.CameraHelper( l.shadow.camera );
     g.add(helper);
     g.add(target);
@@ -102,7 +102,7 @@ export async function loadGpxGeometry(url: string, context: JP2HeightField) {
             context.debugTexture((l.shadow.map as any).texture);
             debugStarted = true;
         }
-        const t = globalUniforms.iTime.value * 0.1;
+        const t = globalUniforms.iTime.value * 0.02;
         const iF = n*t % n;
         const i = Math.floor(iF);
         const a = iF - i;
@@ -111,7 +111,7 @@ export async function loadGpxGeometry(url: string, context: JP2HeightField) {
         getPos(i+1 % n, tNPos);
         tPos.lerpVectors(tPos, tNPos, a);
         tNPos.set(0,0,0);
-        const nSmooth = 4;
+        const nSmooth = 10;
         for (let j=1; j<nSmooth; j++) {
             getPos(i+j*3 % n, tt);
             tNPos.add(tt);

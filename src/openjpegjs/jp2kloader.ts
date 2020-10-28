@@ -149,36 +149,26 @@ export interface PixFrame {
 }
 export interface TexFrame {
   frameInfo: FrameInfo;
-  texData: Uint16Array;
+  texData: Uint16Array; //<-- ?
 }
 
 const workers = new WorkerPool(8);
-export async function getTexDataU16(url: string) : Promise<TexFrame> {
+export async function getTexDataU16(url: string, compressionRatio = 1) : Promise<TexFrame> {
   const worker = await workers.getWorker();// new Worker('texture_worker.js');
   const promise = new Promise<TexFrame>(async (resolve) => {
     worker.onmessage = m => {
       workers.releaseWorker(worker);
       resolve(m.data as TexFrame);
     }
-    worker.postMessage({cmd: "tex", url: url});
+    if (compressionRatio === 1) worker.postMessage({cmd: "tex", url: url});
+    else worker.postMessage({cmd: "recode", url: url, compressionRatio: compressionRatio});
   });
   return promise;
 }
-export async function getPixDataU16(url: string) : Promise<PixFrame> {
-  const worker = await workers.getWorker();// new Worker('texture_worker.js');
-  const promise = new Promise<PixFrame>(async (resolve) => {
-    worker.onmessage = m => {
-      workers.releaseWorker(worker);
-      resolve(m.data as PixFrame);
-    }
-    worker.postMessage({cmd: "pix", url: url});
-  });
-  return promise;
-}
-//const textureCache = new Map<string, TextureTile>();
+const textureCache = new Map<string, TextureTile>();
 
 export async function jp2Texture(url: string) {
-  //if (textureCache.has(url)) return textureCache.get(url) as TextureTile;
+  if (textureCache.has(url)) return textureCache.get(url) as TextureTile;
   const result = await getTexDataU16(url);
   const frameInfo = result.frameInfo;
   // console.log(JSON.stringify(frameInfo, null, 2));
@@ -194,11 +184,11 @@ export async function jp2Texture(url: string) {
   texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
   texture.generateMipmaps = true; //TODO: test & make sure full use being made...
   const t = {texture, frameInfo};
-  //textureCache.set(url, t);
+  textureCache.set(url, t);
   return t;
 }
 
 export function newGLContext() {
   //TODO: formalise GL resource management with threact.
-  //textureCache.clear();
+  textureCache.clear();
 }

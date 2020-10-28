@@ -36,8 +36,9 @@ export function getTileMaterial(uniforms: any) {
 }
 export function getTileMaterialX(uniforms: any) {
     const mat = new THREE.MeshStandardMaterial();
-    mat.side = THREE.DoubleSide; //probably not really needed
-    mat.shadowSide = THREE.DoubleSide;
+    // --- note: having these may have detrimental effect on shadows (& is pointless).
+    // mat.side = THREE.DoubleSide; //probably not really needed
+    // mat.shadowSide = THREE.DoubleSide;
     mat.onBeforeCompile = patchShaderBeforeCompile(uniforms);
     return mat;
 }
@@ -74,8 +75,9 @@ function substituteInclude(sectionName: string, newCode: string, code: string, b
         case SubstitutionType.REPLACE:
             break;
     }
+    //thought that maybe whitespace before #include was stopping three preprocessor from working, doesn't seem to be the case.
     newCode = `// ---------------------- <${sectionName}> -------------------
-    ${newCode}
+${newCode}
     // -----------------</${sectionName}> --------------------`;
     return code.replace(toReplace, newCode);
 }
@@ -169,6 +171,11 @@ function patchVertexShader(vertexShader: string) {
     //replace standard vertex-attribute based position with our code to synthesise from gl_VertexID.
     //pretty rough hack, if following this path need to consider more importantly other parts of shader.
     //<shadowmap_vertex>, <fog_vertex> etc.
+    
+    //more logical way of replacing attributes with attributu-less: replace the chunk where the attributes are declared.
+    //Declare & initialise them in 'uv_vertex', fairly similar to now, but in a way that means other parts of code need less change.
+    //however, since there are lots of <*_pars_vertex>, it's a bit long-winded.
+
     vertexShader = substituteInclude('uv_vertex', uv_vertexChunk, vertexShader);
     vertexShader = substituteInclude('beginnormal_vertex', beginnormal_vertexChunk, vertexShader, SubstitutionType.PREPEND);
     vertexShader = substituteInclude('project_vertex', project_vertexChunk, vertexShader);

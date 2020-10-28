@@ -135,7 +135,7 @@ async function getTileMesh(coord: EastNorth) {
     const mesh = new THREE.Mesh(geo, mat);
     applyCustomDepth(mesh, uniforms);
     mesh.castShadow = true;
-    mesh.receiveShadow = true;
+    mesh.receiveShadow = true; //unfortunately, I don't see them...
     mesh.frustumCulled = true; //tileBSphere hopefully correct...
     mesh.scale.set(1000, 1000, info.max_ele-info.min_ele);
     mesh.position.z = info.min_ele;
@@ -251,7 +251,7 @@ export class JP2HeightField extends ThreactTrackballBase {
     }
     sunLight() {
         //at some point I may want to have something more usefully resembling sun, just testing for now.
-        const sun = new THREE.DirectionalLight(0xa09080, 1);
+        const sun = new THREE.DirectionalLight(0xa09080, 0.9);
         sun.position.set(-10000, -3000, 400);
         sun.up = new THREE.Vector3(0, 0.5, 0.5).normalize();
         sun.castShadow = true;
@@ -265,6 +265,9 @@ export class JP2HeightField extends ThreactTrackballBase {
             mat.displacementScale = (this.tileProp.max_ele - this.tileProp.min_ele) * 10;
             const m = new THREE.Mesh(geo, mat);
             m.frustumCulled = false;
+            //this is interesting: shadows definitely not working with either / both DoubleSide
+            // mat.side = THREE.DoubleSide;
+            // mat.shadowSide = THREE.DoubleSide;
             m.receiveShadow = true;
             m.castShadow = true;
             m.position.z = -mat.displacementScale/2;
