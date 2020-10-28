@@ -3,9 +3,10 @@ export class WorkerPool {
     idle: Worker[] = [];
     backlog: Backlog[] = [];
     workerAge: Map<Worker, number>;
-    scriptName = 'texture_worker.js';
+    scriptName: string;
     maxAge = 10;
-    constructor(numWorkers = 4) {
+    constructor(numWorkers = 4, scriptName = 'texture_worker.js') {
+        this.scriptName = scriptName;
         this.workerAge = new Map();
         for (let i=0; i<numWorkers; i++) {
             const w = this.newWorker();
