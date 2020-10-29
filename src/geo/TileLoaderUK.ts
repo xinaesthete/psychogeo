@@ -4,6 +4,7 @@ import { globalUniforms } from '../threact/threact';
 import { computeTriangleGridIndices, ThreactTrackballBase } from '../threact/threexample';
 import { EastNorth } from './Coordinates';
 import * as dsm_cat from './dsm_catalog.json' //pending rethink of API...
+import { threeGeometryFromShpZip } from './ShpProcessor';
 import { applyCustomDepth, getTileMaterial, tileLoadingMat } from './TileShader';
 import { loadGpxGeometry } from './TrackVis';
 
@@ -247,6 +248,7 @@ export class JP2HeightField extends ThreactTrackballBase {
         
         this.addMarker();
         if (onlyDebugGeometry) this.planeBaseTest();
+        this.shpTest();
         if (!onlyDebugGeometry) this.makeTiles().then(v => {console.log('finished making tiles')});
     }
     sunLight() {
@@ -274,6 +276,15 @@ export class JP2HeightField extends ThreactTrackballBase {
             applyCustomDepth(m, null);
             this.scene.add(m);
         });
+    }
+    async shpTest() {
+        const geo = await threeGeometryFromShpZip('/data/su42_OST50CONT_20190530.zip');
+        geo.computeVertexNormals();
+        const mat = new THREE.MeshBasicMaterial({wireframe: true, color: 0xffffff});
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.x = -this.coord.east;
+        mesh.position.y = -this.coord.north;
+        this.scene.add(mesh);
     }
     async makeTiles() {
         Object.entries(cat).forEach((k) => {

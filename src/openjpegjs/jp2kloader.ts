@@ -154,7 +154,7 @@ export interface TexFrame {
 
 const workers = new WorkerPool(8);
 export async function getTexDataU16(url: string, compressionRatio = 1) : Promise<TexFrame> {
-  const worker = await workers.getWorker();// new Worker('texture_worker.js');
+  const worker = await workers.getWorker();
   const promise = new Promise<TexFrame>(async (resolve) => {
     worker.onmessage = m => {
       workers.releaseWorker(worker);

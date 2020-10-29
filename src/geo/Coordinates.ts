@@ -27,4 +27,18 @@ export function convertWgsToOSGB(merc: LatLon) {
     const grid = ll.toOsGrid();
     return {east: grid.easting, north: grid.northing}
 }
-
+/**
+ * Given an array of WGS coordinates, return array of OSGB.
+ * @param points an array of points, each of which is [lat, long]
+ */
+export function convertWgsArray(points: number[][]) {
+    return points.map(p => {
+        const en = convertWgsToOSGB({lon: p[0], lat: p[1]});
+        return [en.east, en.north];
+    });
+}
+export function convertWgsPointToOSGB(p: number[]){ //[number, number] | [number, number, number]) {
+    const en = convertWgsToOSGB({lon: p[0], lat: p[1]});
+    if (p[2] !== undefined) return [en.east, en.north, p[2]];
+    return [en.east, en.north];
+}
