@@ -1,7 +1,7 @@
 import React from 'react';
 import './App.css';
 import { convertWgsToOSGB } from './geo/Coordinates';
-import { JP2HeightField, newGLContext } from './geo/TileLoaderUK';
+import { TerrainRenderer, newGLContext } from './geo/TileLoaderUK';
 import { IThree, Threact } from './threact/threact';
 
 function App() {
@@ -13,7 +13,7 @@ function App() {
   //const winchester = {east: 448475, north: 129631};
   const winchester = convertWgsToOSGB({lat: 51.064, lon: -1.3098227});
   //const branscombe = {east: 320709, north: 88243};
-  const geoScene = new JP2HeightField(winchester);
+  const geoScene = new TerrainRenderer(winchester);
   geoScene.addTrack("data/stgiles.gpx");
   threeBits.push(geoScene);
   //threeBits.push(new JP2HeightField(branscombe));

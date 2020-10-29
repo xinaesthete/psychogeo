@@ -207,7 +207,50 @@ class LazyTile {
     }
 }
 
-export class JP2HeightField extends ThreactTrackballBase {
+class LazyTileOS {
+    static loaderGeometry = new THREE.BoxBufferGeometry(10000, 10000, 200);
+    object3D: THREE.Object3D;
+    status = TileStatus.UnTouched;
+    constructor(coord: EastNorth, origin: EastNorth, parent: THREE.Object3D) {
+        let obj = this.object3D = new THREE.Mesh(LazyTileOS.loaderGeometry, LazyTile.loaderMat);
+        const dx = coord.east - origin.east;
+        const dy = coord.north - origin.north;
+        obj.position.x = dx + 5000;
+        obj.position.y = dy + 5000;
+        parent.add(obj);
+        obj.onBeforeRender = () => {
+            this.status = TileStatus.Loading;
+            parent.remove(obj);
+            const loadingMesh = new THREE.Mesh(obj.geometry, tileLoadingMat);
+            loadingMesh.position.copy(obj.position);
+            parent.add(loadingMesh);
+            getOSDelaunayMesh(coord, origin).then(mesh => {
+                this.status = TileStatus.Loaded;
+                parent.remove(loadingMesh);
+                this.object3D = mesh;
+                parent.add(mesh);
+            });
+        }
+    }
+}
+async function getOSDelaunayMesh(coord: EastNorth, origin: EastNorth) {
+    try {
+        const os = gridRefString(coord, 2); //"su" + i + j
+        const shp = await fetch("/os/" + os);
+        const shpBuff = await shp.arrayBuffer();
+        const geo = await threeGeometryFromShpZip(shpBuff);
+        //geo.computeVertexNormals();
+        const mat = new THREE.MeshBasicMaterial({wireframe: true, color: 0xffffff});
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.x = -origin.east;
+        mesh.position.y = -origin.north;
+        return mesh;
+    } catch (e) {
+        console.error(e);
+    }
+    return nullInfo.mesh!;
+}
+export class TerrainRenderer extends ThreactTrackballBase {
     coord: EastNorth;
     tileProp: DsmCatItem;
     tiles: LazyTile[] = [];
@@ -249,8 +292,9 @@ export class JP2HeightField extends ThreactTrackballBase {
         
         this.addMarker();
         if (onlyDebugGeometry) this.planeBaseTest();
-        this.shpTest();
-        if (!onlyDebugGeometry) this.makeTiles().then(v => {console.log('finished making tiles')});
+        //this.shpTest();
+        this.bigShpTest();
+        // if (!onlyDebugGeometry) this.makeTiles().then(v => {console.log('finished making tiles')});
     }
     sunLight() {
         //at some point I may want to have something more usefully resembling sun, just testing for now.
@@ -289,6 +333,15 @@ export class JP2HeightField extends ThreactTrackballBase {
         mesh.position.x = -this.coord.east;
         mesh.position.y = -this.coord.north;
         this.scene.add(mesh);
+    }
+    async bigShpTest() {
+        const o = this.coord;
+        for (let i=-30; i<30; i++) {
+            for (let j=-10; j<100; j++) {
+                const coord = {east: o.east + 10000 * i, north: o.north + 10000 * j};
+                new LazyTileOS(coord, o, this.scene);
+            }
+        }
     }
     async makeTiles() {
         Object.entries(cat).forEach((k) => {

@@ -3,7 +3,7 @@ import { globalUniforms } from '../threact/threact';
 import { glsl } from '../threact/threexample';
 import { convertWgsToOSGB, EastNorth } from './Coordinates'
 import { GpxTrackpoint } from './gpxtypes';
-import { JP2HeightField } from './TileLoaderUK';
+import { TerrainRenderer } from './TileLoaderUK';
 
 
 const lineVert = glsl`
@@ -30,7 +30,7 @@ void main() {
 }
 `
 
-export async function loadGpxGeometry(url: string, context: JP2HeightField, eleOffset = 2) {
+export async function loadGpxGeometry(url: string, context: TerrainRenderer, eleOffset = 2) {
     const origin = context.coord;
     const data = await fetch(url);
     const track = parseGPX(await data.text());
