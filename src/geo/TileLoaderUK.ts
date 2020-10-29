@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import * as JP2 from '../openjpegjs/jp2kloader';
 import { globalUniforms } from '../threact/threact';
 import { computeTriangleGridIndices, ThreactTrackballBase } from '../threact/threexample';
-import { EastNorth } from './Coordinates';
+import { EastNorth, gridRefString } from './Coordinates';
 import * as dsm_cat from './dsm_catalog.json' //pending rethink of API...
 import { threeGeometryFromShpZip } from './ShpProcessor';
 import { applyCustomDepth, getTileMaterial, tileLoadingMat } from './TileShader';
@@ -243,6 +243,7 @@ export class JP2HeightField extends ThreactTrackballBase {
         this.camera.lookAt(0, 0, info.max_ele);
         this.camera.near = 1;
         this.camera.far = 200000;
+        console.log(gridRefString(this.coord, 2));
 
         this.sunLight();
         
@@ -278,7 +279,10 @@ export class JP2HeightField extends ThreactTrackballBase {
         });
     }
     async shpTest() {
-        const geo = await threeGeometryFromShpZip('/data/su42_OST50CONT_20190530.zip');
+        //const geo = await threeGeometryFromShpZip('/data/su42_OST50CONT_20190530.zip');
+        const shp = await fetch("/os/" + gridRefString(this.coord, 2));
+        const shpBuff = await shp.arrayBuffer();
+        const geo = await threeGeometryFromShpZip(shpBuff);
         geo.computeVertexNormals();
         const mat = new THREE.MeshBasicMaterial({wireframe: true, color: 0xffffff});
         const mesh = new THREE.Mesh(geo, mat);

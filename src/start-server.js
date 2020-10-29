@@ -1,6 +1,4 @@
 //https://dev.to/loujaybee/using-create-react-app-with-express
-const tileFolder = "C:/Users/peter/Dropbox/BlenderGIS/pyUtil/images/web/";
-const tileSuffix = "_normalised_rate0.jpx";
 
 console.log('starting express server on port ' + process.env.PORT || 8080);
 const express = require('express');
@@ -15,9 +13,19 @@ app.get('/ping', function (req, res) {
   return res.send('pong ' + req.path);
 });
 
+const tileFolder = "C:/Users/peter/Dropbox/BlenderGIS/pyUtil/images/web/";
+const tileSuffix = "_normalised_rate0.jpx";
 app.get('/tile*', function(req, res) {
   const name = req.url.substring(6);
   const p = path.join(tileFolder, name + tileSuffix);
+  res.sendFile(p);
+});
+const osFolder = "G:/GIS/OS terr50/data/";
+const osSuffix = "_OST50CONT_20190530.zip";
+app.get('/os*', function(req, res) {
+  const name = req.url.substring(4);
+  const letters = name.substring(0, 2);
+  const p = path.join(osFolder, letters, name + osSuffix);
   res.sendFile(p);
 });
 

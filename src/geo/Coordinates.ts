@@ -1,4 +1,4 @@
-import { LatLon as gLatLon_OsGridRef } from 'geodesy/osgridref'
+import { LatLon as gLatLon_OsGridRef, default as OsGridRef } from 'geodesy/osgridref'
 
 
 export interface EastNorth {
@@ -41,4 +41,8 @@ export function convertWgsPointToOSGB(p: number[]){ //[number, number] | [number
     const en = convertWgsToOSGB({lon: p[0], lat: p[1]});
     if (p[2] !== undefined) return [en.east, en.north, p[2]];
     return [en.east, en.north];
+}
+export function gridRefString(coord: EastNorth, digits?: number) {
+    const g = new OsGridRef(coord.east, coord.north);
+    return g.toString(digits).replace(/ /g, '');
 }
