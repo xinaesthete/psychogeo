@@ -3,10 +3,12 @@ importScripts('delaunator.min.js', 'shp.js');
 async function delaunayFromShpZip(url) {
     const file = await fetch(url);
     const shpBuff = await file.arrayBuffer();
-    const s = await shp(shpBuff);
+    let s = await shp(shpBuff); //swallows errors in its "safelyResolveThenable"... what can we then do?
+    if (!s) throw new Error(`failed to parse shp '${url}'`);
     let points;
     if (Array.isArray(s)) points = s.flatMap(getPoints);
     else points = getPoints(s);
+    if (!points.length) throw new Error(`no geometry found from shp '${url}'`);
     //points = points.map(convertWgsPointToOSGB); //do this on the receiving end
     //(except that at time of writing, I'm doing "PROJ-bypass surgery")
     const delaunay = Delaunator.from(points);
@@ -35,9 +37,5 @@ function getPoints(featureCol) {
 }
 
 onmessage = async m => {
-    try {
-        delaunayFromShpZip(m.data.url).then(postMessage);
-    } catch (e) {
-        postMessage(e);
-    }
+    delaunayFromShpZip(m.data.url).then(postMessage).catch(postMessage);
 }

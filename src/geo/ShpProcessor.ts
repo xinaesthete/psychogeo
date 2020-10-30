@@ -35,6 +35,10 @@ export async function threeGeometryFromShpZip(coord: EastNorth) {
     const url = "/os/" + os;
     const worker = await workers.getWorker();
     const promise = new Promise<Delaun>(async (resolve, reject) => {
+        // setTimeout(()=>{
+        //     workers.terminateWorker(worker);
+        //     reject("timeout");
+        // }, 20000);
         worker.onmessage = m => {
             workers.releaseWorker(worker);
             const data = m.data as Delaun;

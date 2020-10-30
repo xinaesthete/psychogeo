@@ -41,12 +41,18 @@ export class WorkerPool {
     private maybeRetireWorker(worker: Worker) {
         const age = this.workerAge.get(worker)! + 1;
         if (age > this.maxAge) {
-            worker.terminate();
-            this.workerAge.delete(worker);
-            return this.newWorker();
+            return this.terminateWorker(worker);
         }
         this.workerAge.set(worker, age);
         return worker;
+    }
+    /**might want to call this from outside if we have reason to believe internal state is compromised.
+     * -- if doing so *DON'T* use the returned newWorker --
+    */
+    terminateWorker(worker: Worker) {
+        worker.terminate();
+        this.workerAge.delete(worker);
+        return this.newWorker();
     }
 }
 
