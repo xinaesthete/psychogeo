@@ -268,6 +268,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
     }
     addMarker() {
         const info = this.tileProp;
+        if (!info) return;
         const markerMat = new THREE.MeshBasicMaterial({transparent: true, opacity: 0.5, color: 0xffffff});
         const m = new THREE.Mesh(new THREE.SphereBufferGeometry(5, 30, 30), markerMat);
         // m.position.x = this.coord.east - info.xllcorner;
@@ -282,14 +283,14 @@ export class TerrainRenderer extends ThreactTrackballBase {
     }
     addAxes() {
         const ax = new THREE.AxesHelper(100);
-        ax.position.set(0, 0, this.tileProp.min_ele);
+        ax.position.set(0, 0, 0);//this.tileProp.min_ele);
         this.scene.add(ax);
     }
     init() {
-        const info = this.tileProp;
+        //const info = this.tileProp;
         this.camera.position.y = -100;
-        this.camera.position.z = info.max_ele + 50;
-        this.camera.lookAt(0, 0, info.max_ele);
+        this.camera.position.z = 15000; //info.max_ele + 50;
+        this.camera.lookAt(0, 0, 0); //info.max_ele);
         this.camera.near = 1;
         this.camera.far = 2000000;
 

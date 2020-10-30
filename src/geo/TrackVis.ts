@@ -14,7 +14,7 @@ uniform float iTime;
 varying float vTime;
 void main() {
     vTime = time / (endTime-startTime);
-    float v = smoothstep(0.9, 1.0, mod(vTime - (0.1*iTime), 1.0));
+    float v = smoothstep(0.9, 1.0, mod(vTime - (0.02*iTime), 1.0));
     vec3 p = vec3(position.xy, position.z + 100. * v);
     //logDepth?
     gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
@@ -87,7 +87,7 @@ export async function loadGpxGeometry(url: string, context: TerrainRenderer, ele
     // l.angle = Math.PI / 4;
     let debugStarted = false;
     l.shadow.camera.near = 1;
-    l.shadow.bias = -0.1;
+    l.shadow.bias = -0.005; //large values result in near objects being lit when they shouldn't
     //I actually want this to be much higher, but if it triggers in loading lots of tiles then we crash.
     l.shadow.camera.far = 100000; 
     const helper = new THREE.CameraHelper( l.shadow.camera );
@@ -104,7 +104,7 @@ export async function loadGpxGeometry(url: string, context: TerrainRenderer, ele
     const tPos = new THREE.Vector3(), tNPos = new THREE.Vector3(), tt = new THREE.Vector3();
     m.onBeforeRender = () => {
         if (!debugStarted) {
-            context.debugTexture((l.shadow.map as any).texture);
+            //context.debugTexture((l.shadow.map as any).texture);
             debugStarted = true;
         }
         const t = globalUniforms.iTime.value * 0.02;
