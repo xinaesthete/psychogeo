@@ -206,6 +206,10 @@ class LazyTile {
         }
     }
 }
+const osTerrainMat = new THREE.MeshStandardMaterial({
+    wireframe: false, color: 0x60e580, flatShading: true
+});
+osTerrainMat.side = THREE.DoubleSide;
 
 class LazyTileOS {
     static loaderGeometry = new THREE.BoxBufferGeometry(10000, 10000, 200);
@@ -213,8 +217,10 @@ class LazyTileOS {
     status = TileStatus.UnTouched;
     constructor(coord: EastNorth, origin: EastNorth, parent: THREE.Object3D) {
         let obj = this.object3D = new THREE.Mesh(LazyTileOS.loaderGeometry, LazyTile.loaderMat);
-        const dx = coord.east - origin.east;
-        const dy = coord.north - origin.north;
+        const xll = Math.floor(coord.east / 10000) * 10000;
+        const yll = Math.floor(coord.north / 10000) * 10000;
+        const dx = xll - origin.east;
+        const dy = yll - origin.north;
         obj.position.x = dx + 5000;
         obj.position.y = dy + 5000;
         parent.add(obj);
@@ -235,13 +241,13 @@ class LazyTileOS {
 }
 async function getOSDelaunayMesh(coord: EastNorth, origin: EastNorth) {
     try {
-        const os = gridRefString(coord, 2); //"su" + i + j
-        const shp = await fetch("/os/" + os);
-        const shpBuff = await shp.arrayBuffer();
-        const geo = await threeGeometryFromShpZip(shpBuff);
-        //geo.computeVertexNormals();
-        const mat = new THREE.MeshBasicMaterial({wireframe: true, color: 0xffffff});
+        const geo = await threeGeometryFromShpZip(coord);
+        geo.computeVertexNormals();
+        const mat = osTerrainMat;
         const mesh = new THREE.Mesh(geo, mat);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        
         mesh.position.x = -origin.east;
         mesh.position.y = -origin.north;
         return mesh;
@@ -285,8 +291,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
         this.camera.position.z = info.max_ele + 50;
         this.camera.lookAt(0, 0, info.max_ele);
         this.camera.near = 1;
-        this.camera.far = 200000;
-        console.log(gridRefString(this.coord, 2));
+        this.camera.far = 2000000;
 
         this.sunLight();
         
@@ -324,9 +329,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
     }
     async shpTest() {
         //const geo = await threeGeometryFromShpZip('/data/su42_OST50CONT_20190530.zip');
-        const shp = await fetch("/os/" + gridRefString(this.coord, 2));
-        const shpBuff = await shp.arrayBuffer();
-        const geo = await threeGeometryFromShpZip(shpBuff);
+        const geo = await threeGeometryFromShpZip(this.coord);
         geo.computeVertexNormals();
         const mat = new THREE.MeshBasicMaterial({wireframe: true, color: 0xffffff});
         const mesh = new THREE.Mesh(geo, mat);

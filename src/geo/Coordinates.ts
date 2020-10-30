@@ -1,5 +1,5 @@
 import { LatLon as gLatLon_OsGridRef, default as OsGridRef } from 'geodesy/osgridref'
-
+//consider using Proj4 instead (in common with shpjs)?
 
 export interface EastNorth {
     east: number;
@@ -38,6 +38,7 @@ export function convertWgsArray(points: number[][]) {
     });
 }
 export function convertWgsPointToOSGB(p: number[]){ //[number, number] | [number, number, number]) {
+    if (p.length < 2) throw new Error("input too short");
     const en = convertWgsToOSGB({lon: p[0], lat: p[1]});
     if (p[2] !== undefined) return [en.east, en.north, p[2]];
     return [en.east, en.north];
