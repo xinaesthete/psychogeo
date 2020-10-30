@@ -82,9 +82,10 @@ function makeTileGeometry(s: number) {
 const tileGeometry1k = makeTileGeometry(1000);
 const tileGeometry2k = makeTileGeometry(2000);
 const tileGeometry500 = makeTileGeometry(500);
+const LOD_LEVELS = 8;
 /** by LOD, 0 is 2k, 1 is 1k, 2 is 500... powers of 2 might've been nice if the original data was like that */
 const tileGeom: THREE.BufferGeometry[] = [];
-for (let i=0; i<8; i++) {
+for (let i=0; i<LOD_LEVELS; i++) {
     tileGeom.push(makeTileGeometry(Math.floor(2000 / Math.pow(2, i))));
 }
 
@@ -96,12 +97,13 @@ const nullInfo: DsmCatItem = {
 nullInfo.mesh!.userData.isNull = true;
 
 function getTileLOD(dist: number) {
-    //TODO: work out a proper formula, change effect...
-    if (dist < 2000) return 1;
-    if (dist > 20000) return 64;
-    if (dist > 10000) return 32;
-    if (dist > 5000) return 16;
-    return 8;
+    //TODO: work out a more proper formula, change effect...
+    return Math.pow(2, Math.min(LOD_LEVELS-1, Math.round(Math.sqrt(dist/2000))));
+    // if (dist < 2000) return 1;
+    // if (dist > 20000) return 64;
+    // if (dist > 10000) return 32;
+    // if (dist > 5000) return 16;
+    // return 8;
 }
 
 async function getTileMesh(coord: EastNorth) {
@@ -150,10 +152,14 @@ async function getTileMesh(coord: EastNorth) {
     const dCam = new THREE.Vector3(), offset = new THREE.Vector3(500, 500, info.min_ele), pos = new THREE.Vector3();
     const fullLODCount = (w-1)*(h-1)*6;
     mesh.onBeforeRender = (r, s, cam, g, mat, group) => {
+        mesh.userData.lastRender = Date.now();
+    }
+    mesh.userData.updateLOD = (otherPos: THREE.Vector3) => {
         //TODO: different LOD for shadow vs view (I think this is only called once per frame, how do I intercept shadow pass?)
         //-- could have seperate LOD in MeshDepthMaterial / MeshDistanceMaterial I guess.
         pos.addVectors(mesh.position, offset);
-        const dist = dCam.subVectors(pos, cam.position).length();
+        //const otherPos = cam.position;
+        const dist = dCam.subVectors(pos, otherPos).length();
         // const geo = g as THREE.BufferGeometry;
         // const lod = getTileLOD(dist);
         // geo.drawRange.count = fullLODCount/lod;
@@ -162,6 +168,7 @@ async function getTileMesh(coord: EastNorth) {
         const lod = getTileLOD(dist);
         const lodIndex = Math.log2(lod);
         const geo = tileGeom[lodIndex];
+        if (!geo) debugger;
         mesh.geometry = geo;
         const v = Math.floor(2000 / lod);
         //-- it should be that with current calculation, LOD may choose geometry with a higher resolution than tile data
@@ -172,7 +179,6 @@ async function getTileMesh(coord: EastNorth) {
         uniforms.gridSizeY.value = v;
         
 
-        mesh.userData.lastRender = Date.now();
         mesh.userData.lastLOD = lod;
     }
     // --------------------
@@ -192,6 +198,11 @@ class LazyTile {
     }
     get lastLOD(): number {
         return this.object3D.userData.lastLOD as number;
+    }
+    updateLOD(otherPos: THREE.Vector3) {
+        const mesh = this.object3D as THREE.Mesh;
+        if (!mesh.userData.updateLOD) return;
+        mesh.userData.updateLOD(otherPos);
     }
     constructor(info: DsmCatItem, origin: EastNorth, parent: THREE.Object3D) {
         let obj = this.object3D = new THREE.Mesh(LazyTile.loaderGeometry, LazyTile.loaderMat);
@@ -386,8 +397,14 @@ export class TerrainRenderer extends ThreactTrackballBase {
         recentlySeen.forEach(t => {
             const lod = t.lastLOD;
             const n = lodStats.get(lod) || 0;
-            lodStats.set(lod, n+1);       
+            lodStats.set(lod, n+1);
+
+            //premature optimisation?
+            //don't want to do this to all tiles, this isn't probably most correct way, 
+            //but should get it done for approximately correct set of tiles before (not during) next render
+            t.updateLOD(this.camera.position);
         });
+        // this.tiles.forEach(t => t.updateLOD(this.camera.position));
     }
 }
 
