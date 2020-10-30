@@ -209,7 +209,6 @@ class LazyTile {
 const osTerrainMat = new THREE.MeshStandardMaterial({
     wireframe: false, color: 0x60e580, flatShading: true
 });
-osTerrainMat.side = THREE.DoubleSide;
 
 class LazyTileOS {
     static loaderGeometry = new THREE.BoxBufferGeometry(10000, 10000, 200);

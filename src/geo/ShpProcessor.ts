@@ -62,7 +62,7 @@ export async function threeGeometryFromShpZip(coord: EastNorth) {
     
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.BufferAttribute(pArr, 3));
-    geo.setIndex(new THREE.BufferAttribute(delaunay.triangles, 1));
+    geo.setIndex(new THREE.BufferAttribute(reverseWinding(delaunay.triangles), 1));
     return geo;
 }
 
@@ -70,7 +70,7 @@ export async function threeGeometryFromShpZip(coord: EastNorth) {
 function reverseWinding(indices: Uint32Array) {
     const newIndices = new Uint32Array(indices.length);
     for (let i=0; i<indices.length/3; i++) {
-        newIndices.set(indices.slice(i*3, 2+(i*3)).reverse(), i*3);
+        newIndices.set(indices.slice(i*3, 3+(i*3)).reverse(), i*3);
     }
     return newIndices;
 }
