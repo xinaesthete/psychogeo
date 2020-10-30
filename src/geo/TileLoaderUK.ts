@@ -277,8 +277,8 @@ export class TerrainRenderer extends ThreactTrackballBase {
 
         this.scene.add(m);
     }
-    async addTrack(url: string) {
-        this.scene.add(await loadGpxGeometry(url, this));
+    async addTrack(url: string, eleOffset = 2, color = 0xffffff) {
+        this.scene.add(await loadGpxGeometry(url, this, eleOffset, color));
     }
     addAxes() {
         const ax = new THREE.AxesHelper(100);

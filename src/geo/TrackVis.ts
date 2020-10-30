@@ -30,7 +30,7 @@ void main() {
 }
 `
 
-export async function loadGpxGeometry(url: string, context: TerrainRenderer, eleOffset = 2) {
+export async function loadGpxGeometry(url: string, context: TerrainRenderer, eleOffset = 30, color = 0xffffff) {
     const origin = context.coord;
     const data = await fetch(url);
     const track = parseGPX(await data.text());
@@ -60,16 +60,20 @@ export async function loadGpxGeometry(url: string, context: TerrainRenderer, ele
     const g = new  THREE.Group();
     g.add(lineGeo);
     
-    const l = new THREE.SpotLight();
+    const l = new THREE.PointLight(color);
     const target = new THREE.Object3D();
-    l.target = target;
+    l.intensity = 3;
+    l.power = 100;
+    l.decay = 0.1;
+    // l.target = target;
     //consider smaller vertical angle.
+    // l.shadow.radius = 0.5;
     l.updateMatrix();
     l.updateMatrixWorld();
     g.add(l);
     const n = track.length;
     
-    const m = new THREE.Mesh(new THREE.SphereBufferGeometry(15, 15, 30, 30), new THREE.MeshBasicMaterial({transparent: true, opacity: 0.6, color: 0x00FFFF}));
+    const m = new THREE.Mesh(new THREE.SphereBufferGeometry(15, 15, 30, 30), new THREE.MeshBasicMaterial({transparent: true, opacity: 0.6, color: color}));
     m.frustumCulled = false;
     g.add(m);
     m.matrixAutoUpdate = true;
@@ -82,11 +86,12 @@ export async function loadGpxGeometry(url: string, context: TerrainRenderer, ele
     //l.shadow.radius = 1000;
     // l.angle = Math.PI / 4;
     let debugStarted = false;
-    l.shadow.camera.near = 0.1;
+    l.shadow.camera.near = 1;
+    l.shadow.bias = -0.1;
     //I actually want this to be much higher, but if it triggers in loading lots of tiles then we crash.
-    l.shadow.camera.far = 50000; 
+    l.shadow.camera.far = 100000; 
     const helper = new THREE.CameraHelper( l.shadow.camera );
-    g.add(helper);
+    // g.add(helper);
     g.add(target);
     g.castShadow = true;
     
