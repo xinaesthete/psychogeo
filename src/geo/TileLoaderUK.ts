@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { getLeadingCommentRanges } from 'typescript';
 import * as JP2 from '../openjpegjs/jp2kloader';
 import { globalUniforms } from '../threact/threact';
 import { computeTriangleGridIndices, ThreactTrackballBase } from '../threact/threexample';
@@ -61,14 +62,14 @@ const tileBBox = new THREE.Box3(new THREE.Vector3(), new THREE.Vector3(1, 1, 1))
 //but not working.
 const attributeless = true, onlyDebugGeometry = false;
 
-function makeTileGeometry(w: number, h: number) {
+function makeTileGeometry(s: number) {
     let geo : THREE.BufferGeometry;
     if (attributeless) {
         geo = new THREE.BufferGeometry();
-        geo.drawRange.count = (w-1) * (h-1) * 6;
-        geo.setIndex(computeTriangleGridIndices(w, h));
+        geo.drawRange.count = (s-1) * (s-1) * 6;
+        geo.setIndex(computeTriangleGridIndices(s, s));
     } else {
-        geo = new THREE.PlaneBufferGeometry(1, 1, w, h);
+        geo = new THREE.PlaneBufferGeometry(1, 1, s, s);
         geo.translate(0.5, 0.5, 0.5);
         geo.computeVertexNormals();
     }
@@ -78,9 +79,14 @@ function makeTileGeometry(w: number, h: number) {
     return geo;
 }
 
-const tileGeometry1k = makeTileGeometry(1000, 1000);
-const tileGeometry2k = makeTileGeometry(2000, 2000);
-const tileGeometry500 = makeTileGeometry(500, 500);
+const tileGeometry1k = makeTileGeometry(1000);
+const tileGeometry2k = makeTileGeometry(2000);
+const tileGeometry500 = makeTileGeometry(500);
+/** by LOD, 0 is 2k, 1 is 1k, 2 is 500... powers of 2 might've been nice if the original data was like that */
+const tileGeom: THREE.BufferGeometry[] = [];
+for (let i=0; i<8; i++) {
+    tileGeom.push(makeTileGeometry(Math.floor(2000 / Math.pow(2, i))));
+}
 
 
 const nullInfo: DsmCatItem = {
@@ -148,10 +154,23 @@ async function getTileMesh(coord: EastNorth) {
         //-- could have seperate LOD in MeshDepthMaterial / MeshDistanceMaterial I guess.
         pos.addVectors(mesh.position, offset);
         const dist = dCam.subVectors(pos, cam.position).length();
-        const geo = g as THREE.BufferGeometry;
+        // const geo = g as THREE.BufferGeometry;
+        // const lod = getTileLOD(dist);
+        // geo.drawRange.count = fullLODCount/lod;
+        // uniforms.EPS.value.x = lod/w;
+
         const lod = getTileLOD(dist);
-        geo.drawRange.count = fullLODCount/lod;
-        uniforms.EPS.value.x = lod/w;
+        const lodIndex = Math.log2(lod);
+        const geo = tileGeom[lodIndex];
+        mesh.geometry = geo;
+        const v = Math.floor(2000 / lod);
+        //-- it should be that with current calculation, LOD may choose geometry with a higher resolution than tile data
+        //but that shouldn't matter for EPS values, or anything else(?)
+        uniforms.EPS.value.x = 1/(v-1);
+        uniforms.EPS.value.y = 1/(v-1);
+        uniforms.gridSizeX.value = v;
+        uniforms.gridSizeY.value = v;
+        
 
         mesh.userData.lastRender = Date.now();
         mesh.userData.lastLOD = lod;
