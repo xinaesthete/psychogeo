@@ -14911,15 +14911,16 @@ module.exports = function(buffer, encoding) {
       }
       toProj = checkProj(toProj);
       //PJT "PROJ-bypass surgery"
+      const bypass = true;
       if (coord) {
-        return coord; //transformer(fromProj, toProj, coord);
+        return bypass ? coord : transformer(fromProj, toProj, coord);
       } else {
         obj = {
           forward: function (coords) {
-            return coords; //transformer(fromProj, toProj, coords);
+            return bypass ? coords : transformer(fromProj, toProj, coords);
           },
           inverse: function (coords) {
-            return coords; //transformer(toProj, fromProj, coords);
+            return bypass ? coords : transformer(toProj, fromProj, coords);
           }
         };
         if (single) {

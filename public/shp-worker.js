@@ -21,6 +21,8 @@ function getPoints(featureCol) {
     return featureCol.features.flatMap(f => {
         const height = f.properties['PROP_VALUE'];
         switch(f.geometry.type) {
+            case "Point":
+                return [f.geometry.coordinates.concat(height)];
             case "MultiLineString":
                 return f.geometry.coordinates.flatMap(cA=>cA.map(c=>c.concat(height)));
             case "MultiPoint":
