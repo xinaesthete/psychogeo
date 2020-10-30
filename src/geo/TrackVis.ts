@@ -25,7 +25,7 @@ const lineFrag = glsl`
 uniform float iTime;
 varying float vTime;
 void main() {
-    float v = smoothstep(0.9, 1.0, mod(vTime - (0.1*iTime), 1.0));
+    float v = smoothstep(0.9, 1.0, mod(vTime - (0.02*iTime), 1.0));
     gl_FragColor = vec4(v, 0.4, 0.4, 1.);
 }
 `

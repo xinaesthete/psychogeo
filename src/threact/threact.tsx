@@ -40,7 +40,8 @@ function init() {
 
 
 function resize() {
-    const w = window.innerWidth, h = window.innerHeight;
+    const r = window.devicePixelRatio;
+    const w = window.innerWidth*r, h = window.innerHeight*r;
     compositeCamera.right = w;
     compositeCamera.top = h;
     compositeCamera.updateProjectionMatrix();
@@ -143,8 +144,9 @@ export class Threact extends React.Component<IThreact, any> {
         this.renderGL();
     }
     resize(rect: DOMRect) {
-        const w = rect.width;
-        const h = rect.height;
+        const r = window.devicePixelRatio;
+        const w = rect.width * r;
+        const h = rect.height * r;
         let dirty = (w !== this.lastW) || (h !== this.lastH);
         if (!dirty) return;
         this.renderTarget.setSize(w, h);

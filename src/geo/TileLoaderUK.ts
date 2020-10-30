@@ -257,15 +257,25 @@ async function getOSDelaunayMesh(coord: EastNorth, origin: EastNorth) {
     }
     return nullInfo.mesh!;
 }
+//TODO learn react, refactor, build gui.
+export interface TerrainOptions {
+    osTerr50Layer?: boolean;
+    defraDSMLayer?: boolean;
+    camZ: number;
+}
 export class TerrainRenderer extends ThreactTrackballBase {
     coord: EastNorth;
     tileProp: DsmCatItem;
     tiles: LazyTile[] = [];
-    constructor(coord: EastNorth) {
+    options: TerrainOptions;
+    constructor(coord: EastNorth, options: TerrainOptions = {
+        osTerr50Layer: true, defraDSMLayer: false, camZ: 15000
+    }) {
         super();
         this.coord = {...coord};
         this.tileProp = getTileProperties(coord);
         this.addAxes();
+        this.options = options; //AKA props
     }
     addMarker() {
         const info = this.tileProp;
@@ -290,7 +300,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
     init() {
         //const info = this.tileProp;
         this.camera.position.y = -100;
-        this.camera.position.z = 15000; //info.max_ele + 50;
+        this.camera.position.z = this.options.camZ; //info.max_ele + 50;
         this.camera.lookAt(0, 0, 0); //info.max_ele);
         this.camera.near = 1;
         this.camera.far = 2000000;
@@ -300,8 +310,8 @@ export class TerrainRenderer extends ThreactTrackballBase {
         this.addMarker();
         if (onlyDebugGeometry) this.planeBaseTest();
         //this.shpTest();
-        this.bigShpTest();
-        // if (!onlyDebugGeometry) this.makeTiles().then(v => {console.log('finished making tiles')});
+        if (this.options.osTerr50Layer) this.bigShpTest();
+        if (this.options.defraDSMLayer && !onlyDebugGeometry) this.makeTiles().then(v => {console.log('finished making tiles')});
     }
     sunLight() {
         //at some point I may want to have something more usefully resembling sun, just testing for now.
@@ -329,16 +339,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
             this.scene.add(m);
         });
     }
-    async shpTest() {
-        //const geo = await threeGeometryFromShpZip('/data/su42_OST50CONT_20190530.zip');
-        const geo = await threeGeometryFromShpZip(this.coord);
-        geo.computeVertexNormals();
-        const mat = new THREE.MeshBasicMaterial({wireframe: true, color: 0xffffff});
-        const mesh = new THREE.Mesh(geo, mat);
-        mesh.position.x = -this.coord.east;
-        mesh.position.y = -this.coord.north;
-        this.scene.add(mesh);
-    }
+    //TODO: manage tiles differently, particularly LOD.
     async bigShpTest() {
         const o = this.coord;
         for (let i=-30; i<30; i++) {
