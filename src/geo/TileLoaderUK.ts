@@ -1,12 +1,11 @@
 import * as THREE from 'three';
-import { getLeadingCommentRanges } from 'typescript';
 import * as JP2 from '../openjpegjs/jp2kloader';
 import { globalUniforms } from '../threact/threact';
 import { computeTriangleGridIndices, ThreactTrackballBase } from '../threact/threexample';
-import { EastNorth, gridRefString } from './Coordinates';
+import { EastNorth } from './Coordinates';
 import * as dsm_cat from './dsm_catalog.json' //pending rethink of API...
 import { threeGeometryFromShpZip } from './ShpProcessor';
-import { applyCustomDepth, getTileMaterial, tileLoadingMat } from './TileShader';
+import { applyCustomDepth, applyCustomDepthForViewshed, getTileMaterial, tileLoadingMat } from './TileShader';
 import { loadGpxGeometry } from './TrackVis';
 
 
@@ -79,14 +78,14 @@ function makeTileGeometry(s: number) {
     return geo;
 }
 
-const tileGeometry1k = makeTileGeometry(1000);
-const tileGeometry2k = makeTileGeometry(2000);
-const tileGeometry500 = makeTileGeometry(500);
 const LOD_LEVELS = 8;
 /** by LOD, 0 is 2k, 1 is 1k, 2 is 500... powers of 2 might've been nice if the original data was like that */
 const tileGeom: THREE.BufferGeometry[] = [];
 for (let i=0; i<LOD_LEVELS; i++) {
     tileGeom.push(makeTileGeometry(Math.floor(2000 / Math.pow(2, i))));
+}
+function getTileLOD(dist: number) {
+    return Math.pow(2, Math.min(LOD_LEVELS-1, Math.round(Math.sqrt(dist/2000))));
 }
 
 
@@ -96,15 +95,6 @@ const nullInfo: DsmCatItem = {
 };
 nullInfo.mesh!.userData.isNull = true;
 
-function getTileLOD(dist: number) {
-    //TODO: work out a more proper formula, change effect...
-    return Math.pow(2, Math.min(LOD_LEVELS-1, Math.round(Math.sqrt(dist/2000))));
-    // if (dist < 2000) return 1;
-    // if (dist > 20000) return 64;
-    // if (dist > 10000) return 32;
-    // if (dist > 5000) return 16;
-    // return 8;
-}
 
 async function getTileMesh(coord: EastNorth) {
     let info = getTileProperties(coord) || nullInfo;
@@ -127,14 +117,8 @@ async function getTileMesh(coord: EastNorth) {
         gridSizeX: { value: w }, gridSizeY: { value: h },
         iTime: globalUniforms.iTime
     }
-    let geo: THREE.BufferGeometry;
-    if (w === 2000 &&  h === 2000) geo = tileGeometry2k;
-    else if (w === 1000 &&  h === 1000) geo = tileGeometry1k;
-    else if (w === 500 &&  h === 500) geo = tileGeometry500;
-    else {
-        throw new Error('Invalid tile: check proxy is running, dimensions 500/1000/2000... also beware out of date error messages (sorry).');
-        //grid = computeTriangleGridIndices(w, h);
-    }
+    const geo = tileGeom[0]; //regardless of image geom, for now
+    
     const mat = attributeless ? getTileMaterial(uniforms) : new THREE.MeshStandardMaterial();
     if (!attributeless) {
         let material = mat as THREE.MeshStandardMaterial;
@@ -145,25 +129,22 @@ async function getTileMesh(coord: EastNorth) {
     applyCustomDepth(mesh, uniforms);
     mesh.castShadow = true;
     mesh.receiveShadow = true; //unfortunately, I don't see them...
-    mesh.frustumCulled = true; //tileBSphere hopefully correct...
     mesh.scale.set(1000, 1000, info.max_ele-info.min_ele);
     mesh.position.z = info.min_ele;
 
-    const dCam = new THREE.Vector3(), offset = new THREE.Vector3(500, 500, info.min_ele), pos = new THREE.Vector3();
-    const fullLODCount = (w-1)*(h-1)*6;
     mesh.onBeforeRender = (r, s, cam, g, mat, group) => {
         mesh.userData.lastRender = Date.now();
     }
+    const dCam = new THREE.Vector3(), offset = new THREE.Vector3(500, 500, info.min_ele), pos = new THREE.Vector3();
     mesh.userData.updateLOD = (otherPos: THREE.Vector3) => {
         //TODO: different LOD for shadow vs view (I think this is only called once per frame, how do I intercept shadow pass?)
         //-- could have seperate LOD in MeshDepthMaterial / MeshDistanceMaterial I guess.
         pos.addVectors(mesh.position, offset);
         //const otherPos = cam.position;
         const dist = dCam.subVectors(pos, otherPos).length();
-        // const geo = g as THREE.BufferGeometry;
-        // const lod = getTileLOD(dist);
-        // geo.drawRange.count = fullLODCount/lod;
-        // uniforms.EPS.value.x = lod/w;
+        //could still be something to be said for changing drawRange vs switching geometry,
+        //but this was half-baked, and switching geometry seems ok (as long as not done in onBeforeRender)
+        // geo.drawRange.count = fullLODCount/lod; //this version would *have* to be onBeforeRender
 
         const lod = getTileLOD(dist);
         const lodIndex = Math.log2(lod);
@@ -172,7 +153,7 @@ async function getTileMesh(coord: EastNorth) {
         mesh.geometry = geo;
         const v = Math.floor(2000 / lod);
         //-- it should be that with current calculation, LOD may choose geometry with a higher resolution than tile data
-        //but that shouldn't matter for EPS values, or anything else(?)
+        //but that shouldn't matter for EPS values, or anything else(?) aside from redundant computation.
         uniforms.EPS.value.x = 1/(v-1);
         uniforms.EPS.value.y = 1/(v-1);
         uniforms.gridSizeX.value = v;
@@ -181,13 +162,14 @@ async function getTileMesh(coord: EastNorth) {
 
         mesh.userData.lastLOD = lod;
     }
+    mesh.userData.updateLOD(mesh.position);//prevent glitching when first loaded.
     // --------------------
     info.mesh = mesh;
     return info;
 }
 
 //may consider throttling how many tiles load at a time & having a status to indicate that.
-enum TileStatus { UnTouched, Loading, Loaded } 
+enum TileStatus { UnTouched, Loading, Loaded, Error } 
 class LazyTile {
     static loaderGeometry = new THREE.BoxBufferGeometry();
     static loaderMat = new THREE.MeshBasicMaterial({transparent: true, color: 0x800000, opacity: 0.5, blending: THREE.AdditiveBlending});
@@ -266,14 +248,22 @@ class LazyTileOS {
                 parent.remove(loadingMesh);
                 this.object3D = mesh;
                 parent.add(mesh);
+                applyCustomDepthForViewshed(mesh as THREE.Mesh);
             });
         }
+    }
+    async rasterize(destRT: THREE.WebGLRenderTarget) {
+        //render normalised height into a buffer
+        //read it back into memory
+        //send the data to a worker to compress & save to disk, along with appropriate metadata.
     }
 }
 async function getOSDelaunayMesh(coord: EastNorth, origin: EastNorth) {
     try {
         const geo = await threeGeometryFromShpZip(coord);
-        geo.computeVertexNormals();
+        //would be better to do this in worker, but it currently doesn't have THREE...
+        //I might figure how to make out WebPack config for workers, but...
+        geo.computeVertexNormals(); 
         const mat = osTerrainMat;
         const mesh = new THREE.Mesh(geo, mat);
         mesh.castShadow = true;
@@ -392,7 +382,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
     updateTileStats() {
         const loaded = this.tiles.filter(t => t.status === TileStatus.Loaded);
         const now = Date.now();
-        const recentlySeen = loaded.filter(t => (now - t.lastRender) < 50);
+        const recentlySeen = loaded.filter(t => (now - t.lastRender) < 1000);
         const lodStats = new Map<number, number>();
         recentlySeen.forEach(t => {
             const lod = t.lastLOD;

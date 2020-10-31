@@ -88,8 +88,8 @@ export async function loadGpxGeometry(url: string, context: TerrainRenderer, ele
     let debugStarted = false;
     l.shadow.camera.near = 1;
     l.shadow.bias = -0.005; //large values result in near objects being lit when they shouldn't
-    //I actually want this to be much higher, but if it triggers in loading lots of tiles then we crash.
-    l.shadow.camera.far = 100000; 
+    //I would expect less artefacts with low values, but perhaps more important is relationship to other camera?
+    l.shadow.camera.far = 200000; 
     const helper = new THREE.CameraHelper( l.shadow.camera );
     // g.add(helper);
     g.add(target);
@@ -115,6 +115,11 @@ export async function loadGpxGeometry(url: string, context: TerrainRenderer, ele
         getPos(i, tPos);
         getPos(i+1 % n, tNPos);
         tPos.lerpVectors(tPos, tNPos, a);
+        
+        //could crudely approximate Earth's curvature... but this wouldn't account for mountains
+        //short of actually rendering with proper curvature, I ought to be able to modify depth / distance shaders.
+        //l.shadow.camera.far = ... some trig based on tPos.z
+        
         tNPos.set(0,0,0);
         const nSmooth = 10;
         for (let j=1; j<nSmooth; j++) {

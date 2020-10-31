@@ -35,7 +35,7 @@ export function getTileMaterial(uniforms: any) {
     return mat;
 }
 export function getTileMaterialX(uniforms: any) {
-    const mat = new THREE.MeshStandardMaterial();
+    const mat = new THREE.MeshStandardMaterial({flatShading: true});
     // --- note: having these may have detrimental effect on shadows (& is pointless).
     // mat.side = THREE.DoubleSide; //probably not really needed
     // mat.shadowSide = THREE.DoubleSide;
@@ -231,7 +231,7 @@ function patchFragmentShader(fragmentShader: string) {
     return fragmentShader;
 
 }
-
+/** still not working quite right? this is for heightmap based tiles */
 export function applyCustomDepth(mesh: THREE.Mesh, uniforms: any) {
     const mat = mesh.material as THREE.MeshStandardMaterial;
     const depth = mesh.customDepthMaterial = new THREE.MeshDepthMaterial();
@@ -251,6 +251,31 @@ export function applyCustomDepth(mesh: THREE.Mesh, uniforms: any) {
         //     shader.vertexShader = patchVertexShader(shader.vertexShader);
         // }
     }
+}
+
+/** at time of writing, this is a first go at hacking in something to work with mesh geometry, not heightmap,
+ * such that curvature of Earth and potentially other factors relevant to viewshed analysis can be modeled.
+ */
+export function applyCustomDepthForViewshed(mesh: THREE.Mesh) {
+    //this link collects more in-depth info,
+    //http://mapaspects.org/content/effects-curvature-earth-refraction-light-air-and-fuzzy-viewsheds-arcgis-92/index.html
+    // I should just use some basic trig
+    //https://dizzib.github.io/earth/curve-calc/?d0=48.28032000002595&h0=1000&unit=metric
+    //const depth = mesh.customDepthMaterial = new THREE.MeshDepthMaterial();
+    const dist = mesh.customDistanceMaterial = new THREE.MeshDistanceMaterial();
+    dist.onBeforeCompile = (shader => {
+        shader.vertexShader = substituteInclude(
+            'begin_vertex',
+            glsl`
+            // where is 'transformed' (vert in model space) in relation to camera?
+            // how should transformed.z be changed to account for earth's curvature?
+            // --> it's hard to think about whether the maths will be right when you're not sure you'll see the results of the code coherently!
+            // ---> so let's test *something exaggerated* 
+            vec4 camPos = modelViewMatrix * vec4(vec3(0.), 1.);
+            float earthRad = 6371000.0;
+            // transformed.z -= length(camPos.xy - transformed.xy) / 10000.;
+            `, shader.vertexShader, SubstitutionType.APPEND);
+    });
 }
 
 
