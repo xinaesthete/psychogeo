@@ -24,7 +24,7 @@ export async function threeGeometryFromShpZipX(coord: EastNorth) {
         pArr.set(points[i], i*3);
     }
     geo.setAttribute("position", new THREE.BufferAttribute(pArr, 3));
-    geo.setIndex(new THREE.BufferAttribute(delaunay.triangles, 1));
+    geo.setIndex(new THREE.BufferAttribute(reverseWinding(delaunay.triangles), 1));
     return geo;
 }
 type Delaun = {triangles: Uint32Array, pArr: Float32Array}; //maybe Delaunator<Float64Array>?
@@ -66,8 +66,8 @@ export async function threeGeometryFromShpZip(coord: EastNorth) {
     return geo;
 }
 
-function reverseWinding(indices: Uint32Array) {
-    const newIndices = new Uint32Array(indices.length);
+function reverseWinding(indices: Uint32Array, inPlace = true) {
+    const newIndices = inPlace ? indices : new Uint32Array(indices.length);
     for (let i=0; i<indices.length/3; i++) {
         newIndices.set(indices.slice(i*3, 3+(i*3)).reverse(), i*3);
     }

@@ -35,8 +35,8 @@ function getPoints(featureCol) {
         }
     });
 }
-function reverseWinding(indices) {
-    const newIndices = new Uint32Array(indices.length);
+function reverseWinding(indices, inPlace = true) {
+    const newIndices = inPlace ? indices : new Uint32Array(indices.length);
     for (let i=0; i<indices.length/3; i++) {
         newIndices.set(indices.slice(i*3, 3+(i*3)).reverse(), i*3);
     }
