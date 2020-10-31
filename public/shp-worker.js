@@ -16,7 +16,7 @@ async function delaunayFromShpZip(url) {
     for (let i=0; i<points.length; i++) {
         pArr.set(points[i], i*3);
     }
-    return {triangles: delaunay.triangles, pArr: pArr};
+    return {triangles: reverseWinding(delaunay.triangles), pArr: pArr};
 }
 
 function getPoints(featureCol) {
@@ -34,6 +34,13 @@ function getPoints(featureCol) {
                 return [];
         }
     });
+}
+function reverseWinding(indices) {
+    const newIndices = new Uint32Array(indices.length);
+    for (let i=0; i<indices.length/3; i++) {
+        newIndices.set(indices.slice(i*3, 3+(i*3)).reverse(), i*3);
+    }
+    return newIndices;
 }
 
 onmessage = async m => {
