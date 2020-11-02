@@ -10,6 +10,7 @@
 // Created for the Shadertoy Competition 2017 
 //
 #define PI 3.14159
+float v(vec3 p);
 float sphere( vec3 p, float r) {
     return length(p) - r;
 }
@@ -42,13 +43,59 @@ float opSmoothUnion( float d1, float d2, float k ) {
     float h = clamp( 0.5 + 0.5*(d2-d1)/k, 0.0, 1.0 );
     return mix( d2, d1, h ) - k*h*(1.0-h); 
 }
+float opRep( in vec3 p, in vec3 c )
+{
+    vec3 q = mod(p+0.5*c,c)-0.5*c;
+    return v( q );
+}
+vec3 car2pol(in vec3 p) {
+    float r = length(p);
+    float lat = acos(p.z / r);
+    float lon = acos(p.x / length(p.xy)) * sign(p.y);
+    return vec3(r, lat, lon);
+}
+vec3 pol2car(in vec3 p) {
+    float r = p.x;
+    float lat = p.y;
+    float lon = p.z;
+    float x = r * sin(lat) * cos(lon);
+    float y = r * sin(lat) * sin(lon);
+    float z = r * cos(lat);
+    return vec3(x, y, z);
+}
+float mirrorRepeat(in float x, in float l) {
+    float v = 2.*l;
+    return min(abs(mod(x, v)), abs(mod(v-x, v)));
+}
+float opSym( in vec3 p, in float r, in float n) {
+    vec3 s = sign(p);
+    //float theta = length(p.xy) / r;
+    //float phi = atan(p.y, p.x) / r;
+    p.y -= r;
+    vec3 pol = car2pol(p);
+    // pol.z += iTime;
+    float theta = pol.z;
+    float ang = 2.*PI/n;// 2.*PI / 3.;
+    // theta = mod(theta, ang);
+    theta = mirrorRepeat(theta + .5*ang, ang/2.);
+    theta += ang;
+    pol.z = -theta; //--- ??? ---
+    float phi = pol.y;
+    pol.y = mirrorRepeat(pol.y, 0.25*ang) + ang;
+
+    pol.x = mirrorRepeat(pol.x, r*1.3);
+
+    p = pol2car(pol);
+    p.y += r;
+    return v(p);
+}
 float sm(float d1, float d2) {
     return opSmoothUnion(d1, d2, 0.15);
 }
 float v(vec3 p) {
     float s = sphere(p, 0.1);
-    float c = sdVerticalCapsule(p + vec3(0., 0.8, 0.), 0.8, 0.02);
-    float c2 = sdVerticalCapsule(rotateX(p, PI/2.), 0.6, 0.01);
+    float c = sdVerticalCapsule(p + vec3(0., 0.4, 0.), 0.5, 0.02);
+    float c2 = sdVerticalCapsule(rotateX(p, PI/2.), 0.4, 0.01);
     c = sm(c, c2);
     return sm(c, s);
 }
@@ -56,8 +103,22 @@ float v(vec3 p) {
 // Distance field function for the scene.
 //
 float map(vec3 p) {
-    float r = 1.3;
     float t = iTime;
+    float r = 1.3;
+    
+    p -= vec3(0, 1., -4.);
+    p*= -1.;
+    
+    float d = opSym(p, r, 4.5 + 0.5*sin(iTime));
+    // d = sm(opSym(p+vec3(0., -.5, 0.), r/2., 4.), d);
+    p += vec3(0., -r, 0.);
+    d = sm(d, sphere(p, r));
+    return d;
+}
+
+float mapX(vec3 p) {
+    float t = iTime;
+    float r = 1.3 + 0.2*sin(t*2.);
     vec3 p0 = vec3(0., 0., 0.);
     vec3 p1;// = vec3(1.6+sin(t), 0., 1.4);
     p1.x = r + sin(t*2.);
@@ -72,7 +133,7 @@ float map(vec3 p) {
     p -= vec3(0, 0, -4.);
     p *= -1.;
     float d = v(p+p0);
-    d = sm(d, v(p+p1));
+    d = sm(d, opSym(p+p1, r, 6.));
     p += vec3(0., -r, 0.);
     d = sm(d, sphere(p, r));
     p = rotateX(p, PI - theta);
