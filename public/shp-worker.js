@@ -12,6 +12,7 @@ async function delaunayFromShpZip(url) {
     //points = points.map(convertWgsPointToOSGB); //do this on the receiving end
     //(except that at time of writing, I'm doing "PROJ-bypass surgery")
     const delaunay = Delaunator.from(points);
+    //TODO: look into SharedArrayBuffer / Atomics
     const pArr = new Float32Array(points.length * 3);
     for (let i=0; i<points.length; i++) {
         pArr.set(points[i], i*3);

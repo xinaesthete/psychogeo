@@ -248,7 +248,6 @@ class LazyTileOS {
                 parent.remove(loadingMesh);
                 this.object3D = mesh;
                 parent.add(mesh);
-                applyCustomDepthForViewshed(mesh as THREE.Mesh);
             });
         }
     }
@@ -271,6 +270,7 @@ async function getOSDelaunayMesh(coord: EastNorth, origin: EastNorth) {
         
         mesh.position.x = -origin.east;
         mesh.position.y = -origin.north;
+        applyCustomDepthForViewshed(mesh as THREE.Mesh);
         return mesh;
     } catch (e) {
         console.error(e);

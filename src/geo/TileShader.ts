@@ -263,21 +263,42 @@ export function applyCustomDepthForViewshed(mesh: THREE.Mesh) {
     //https://dizzib.github.io/earth/curve-calc/?d0=48.28032000002595&h0=1000&unit=metric
     //const depth = mesh.customDepthMaterial = new THREE.MeshDepthMaterial();
     const dist = mesh.customDistanceMaterial = new THREE.MeshDistanceMaterial();
-    dist.onBeforeCompile = (shader => {
-        shader.vertexShader = substituteInclude(
-            'begin_vertex',
-            glsl`
-            // where is 'transformed' (vert in model space) in relation to camera?
-            // how should transformed.z be changed to account for earth's curvature?
-            // --> it's hard to think about whether the maths will be right when you're not sure you'll see the results of the code coherently!
-            // ---> so let's test *something exaggerated* 
-            vec4 camPos = modelViewMatrix * vec4(vec3(0.), 1.);
-            float earthRad = 6371000.0;
-            // transformed.z -= length(camPos.xy - transformed.xy) / 10000.;
-            `, shader.vertexShader, SubstitutionType.APPEND);
-    });
+    dist.onBeforeCompile = earthCurveVert;
+    //no :)
+    // if (mesh.material instanceof THREE.Material) mesh.material.onBeforeCompile = earthCurveVert;
 }
 
+function earthCurveVert(shader: THREE.Shader) {
+    shader.vertexShader = substituteInclude(
+        'begin_vertex',
+        glsl`
+        // where is 'transformed' (vert in model space) in relation to camera?
+        //--- where 'camera' is another point somewhere near the surface, for which we are computing viewshed ---
+        {
+            //this is a local scope, for local varaibles. We won't have any accidental name collisions, here.
+            vec4 camPos = modelViewMatrix * vec4(vec3(0.), 1.);
+            // float earthRad = 6371000.0;
+            float earthRad = 1000.0;
+            vec2 dGrid = camPos.xy - transformed.xy; //
+            float d = length(dGrid);
+            // dGrid /= d;
+            float theta = PI - (d / earthRad);
+            float phi = -atan(dGrid.y, dGrid.x) / earthRad;
+            mat3 m = mat3(cos(theta), -sin(theta), 0.,
+                        sin(theta), cos(theta), 0.,
+                        0., 0., 1.);
+            vec3 _t = vec3(0., 0., -earthRad);
+            _t = m * _t;
+            m = mat3(cos(phi), 0., sin(phi),
+                    0., 1., 0.,
+                    -sin(phi), 0., cos(phi));
+            _t = m * _t;
+            _t.z += earthRad + transformed.z;
+            // transformed = _t;
+            // transformed.z += d;
+        }
+        `, shader.vertexShader, SubstitutionType.APPEND);    
+}
 
 
 const vert = glsl`

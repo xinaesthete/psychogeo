@@ -35,7 +35,7 @@ export abstract class ThreactTrackballBase implements IThree {
     render(renderer: THREE.WebGLRenderer) {
         renderer.render(this.scene, this.camera);
         renderer.clearDepth();
-        renderer.render(this.overlay, this.ortho);
+        if (this.overlay.children.length) renderer.render(this.overlay, this.ortho);
     }
     debugTexture(texture: THREE.Texture) {
         const mat = new THREE.MeshBasicMaterial({map: texture});
