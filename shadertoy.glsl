@@ -68,6 +68,7 @@ float mirrorRepeat(in float x, in float l) {
     return min(abs(mod(x, v)), abs(mod(v-x, v)));
 }
 float opSym( in vec3 p, in float r, in float n) {
+    vec3 op = p;
     vec3 s = sign(p);
     //float theta = length(p.xy) / r;
     //float phi = atan(p.y, p.x) / r;
@@ -87,7 +88,7 @@ float opSym( in vec3 p, in float r, in float n) {
 
     p = pol2car(pol);
     p.y += r;
-    return v(p);
+    return v(mix(p, op, 0.5+0.5*sin(iTime*1.3)));
 }
 float sm(float d1, float d2) {
     return opSmoothUnion(d1, d2, 0.15);
@@ -112,7 +113,7 @@ float map(vec3 p) {
     float d = opSym(p, r, 4.5 + 0.5*sin(iTime));
     // d = sm(opSym(p+vec3(0., -.5, 0.), r/2., 4.), d);
     p += vec3(0., -r, 0.);
-    d = sm(d, sphere(p, r));
+    d = mix(d, sphere(p, r*0.9), pow(0.5 + 0.5*sin(t*.3), 10.));
     return d;
 }
 
