@@ -84,11 +84,11 @@ float opSym( in vec3 p, in float r, in float n) {
     float phi = pol.y;
     pol.y = mirrorRepeat(pol.y, 0.25*ang) + ang;
 
-    pol.x = mirrorRepeat(pol.x, r*1.3);
+    pol.x = mirrorRepeat(pol.x, r*1.3);//artefacty
 
     p = pol2car(pol);
     p.y += r;
-    return v(mix(p, op, 0.5+0.5*sin(iTime*1.3)));
+    return v(mix(p, op, 0.2*sin(iTime*.1)));
 }
 float sm(float d1, float d2) {
     return opSmoothUnion(d1, d2, 0.15);
@@ -110,10 +110,12 @@ float map(vec3 p) {
     p -= vec3(0, 1., -4.);
     p*= -1.;
     
-    float d = opSym(p, r, 4.5 + 0.5*sin(iTime));
-    // d = sm(opSym(p+vec3(0., -.5, 0.), r/2., 4.), d);
+    float d = pow(opSym(p, r, 4.5 + .5*sin(iTime)), 2.);
+    vec3 p2 = rotateX(p, t*2.14);
+    float d2 = opSym(p2+vec3(0., r, 0), r/1.5, 4. + 0.2*sin(t*0.9));
+    d = opSmoothUnion(d2, d, 0.5 + 0.3*sin(t*0.15)) + 0.2 * sin(t*2.7);
     p += vec3(0., -r, 0.);
-    d = mix(d, sphere(p, r*0.9), pow(0.5 + 0.5*sin(t*.3), 10.));
+    d = mix(d, sphere(p, r*0.9), pow(0.5 + 0.5*sin(t*.35), 4.));
     return d;
 }
 
@@ -142,7 +144,6 @@ float mapX(vec3 p) {
     d = sm(d, v(rotateX(p - vec3(0., r+p1.y, 0.), PI)));
     return d;
 }
-
 //
 // Calculate the normal by taking the central differences on the distance field.
 //
@@ -168,7 +169,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
         t += h;
         if (h < 0.01) break;
     }
-
+    
     if (h < 0.01) {
         vec3 p = ro + rd * t;
         vec3 normal = calcNormal(p);
