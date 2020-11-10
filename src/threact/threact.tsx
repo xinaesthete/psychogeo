@@ -1,6 +1,5 @@
 import React from 'react'
 import * as THREE from 'three'
-import { WebGLRenderer } from 'three';
 import './threact.css'
 
 declare const window: Window;
@@ -68,7 +67,7 @@ export interface IThree {
     //camera: THREE.Camera;
     initThree(dom: HTMLElement): void;
     update(): void;
-    render(renderer: WebGLRenderer): void;
+    render(renderer: THREE.WebGLRenderer): void;
     resize(rect: DOMRect): void;
     disposeThree(): void;
 }
