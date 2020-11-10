@@ -28,6 +28,12 @@ app.get('/os*', function(req, res) {
   const p = path.join(osFolder, letters, name + osSuffix);
   res.sendFile(p);
 });
+const gpxFolder = "C:/Users/peter/Dropbox/tracklogs/";
+app.get('/gpx*', function(req, res) {
+  const name = req.url.substring(5);
+  const p = path.join(gpxFolder, name);
+  res.sendFile(p);
+});
 
 app.get('/', function (req, res) {
   res.sendFile(path.join(__dirname, '../build', 'index.html'));
