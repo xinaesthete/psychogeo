@@ -149,7 +149,8 @@ export interface PixFrame {
 }
 export interface TexFrame {
   frameInfo: FrameInfo;
-  texData: Uint16Array; //<-- ?
+  texData: Uint16Array; //<-- ? xx this was a lie for a while, true again now... 
+  //not all code here is very clean wrt naming etc. at the moment.
 }
 
 const workers = new WorkerPool(8);
@@ -178,8 +179,11 @@ export async function jp2Texture(url: string) {
       //THREE.UVMapping, THREE.ClampToEdgeWrapping, THREE.ClampToEdgeWrapping, THREE.NearestFilter, THREE.NearestFilter, 1
   //);
   //there is evidence the following work in WebGL2, need to translate to THREE.DataTexture:
-  //internalFormat = gl.DEPTH_COMPONENT16; format = gl.DEPTH_COMPONENT; type = gl.UNSIGNED_SHORT; // OK, red    
-  const texture = new THREE.DataTexture(result.texData, frameInfo.width, frameInfo.height, THREE.RGBFormat, THREE.UnsignedByteType);
+  //internalFormat = gl.DEPTH_COMPONENT16; format = gl.DEPTH_COMPONENT; type = gl.UNSIGNED_SHORT; // OK, red
+  // const texture = new THREE.DataTexture(result.texData, frameInfo.width, frameInfo.height, THREE.RGBFormat, THREE.UnsignedByteType);
+  const format = THREE.RedFormat;
+  const type = THREE.HalfFloatType;
+  const texture = new THREE.DataTexture(result.texData, frameInfo.width, frameInfo.height, format, type);
   texture.minFilter = texture.magFilter = THREE.LinearFilter;
   texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
   texture.generateMipmaps = true; //TODO: test & make sure full use being made...
