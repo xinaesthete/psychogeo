@@ -2,6 +2,8 @@ import * as THREE from 'three'
 import { globalUniforms } from '../threact/threact';
 import { glsl } from '../threact/threexample';
 
+// stop press: https://www.donmccurdy.com/2019/03/17/three-nodematerial-introduction/
+
 
 export const tileLoadingMat = new THREE.ShaderMaterial({
     transparent: true,
@@ -102,6 +104,7 @@ const vertexPreamble = glsl`
     float getNormalisedHeight(vec2 uv) {
         uv.y = 1. - uv.y;
         vec4 v = texture2D(heightFeild, uv);
+        //now using single channel so v.g is irrelevant, but at time of writing it's zero, so may as well leave in shader.
         float h = v.r + (v.g / 256.);
         return h;
     }
@@ -146,8 +149,8 @@ const beginnormal_vertexChunk = glsl`
 const project_vertexChunk = glsl`
     //vNormal = computeNormal(vUv, p);
     normalisedHeight = p.z;
+    transformed = p.xyz; // standard threejs variable, not 'transformed' by modelViewMatrix
     p = modelViewMatrix * p;
-    transformed = p.xyz; // standard threejs variable
     vec4 mvPosition = p;
     gl_Position = projectionMatrix * p;
 `;
@@ -177,6 +180,7 @@ function patchVertexShader(vertexShader: string) {
     //however, since there are lots of <*_pars_vertex>, it's a bit long-winded.
 
     vertexShader = substituteInclude('uv_vertex', uv_vertexChunk, vertexShader);
+    // vertexShader = substituteInclude('uv2_vertex', `vUv2 = uv;`, vertexShader); //red herring: shadowMap != lightMap
     vertexShader = substituteInclude('beginnormal_vertex', beginnormal_vertexChunk, vertexShader, SubstitutionType.PREPEND);
     vertexShader = substituteInclude('project_vertex', project_vertexChunk, vertexShader);
     return vertexShader;
@@ -277,17 +281,19 @@ function earthCurveVert(shader: THREE.Shader) {
         {
             //this is a local scope, for local varaibles. We won't have any accidental name collisions, here.
             vec4 camPos = modelViewMatrix * vec4(vec3(0.), 1.);
+            vec4 origin = vec4(vec3(0.), 1.);
             // float earthRad = 6371000.0;
-            float earthRad = 1000.0;
-            vec2 dGrid = camPos.xy - transformed.xy; //
+            float earthRad = 10.0;
+            // vec2 dGrid = camPos.xy - transformed.xy;
+            vec2 dGrid = transformed.xy - origin.xy;
             float d = length(dGrid);
             // dGrid /= d;
             float theta = PI - (d / earthRad);
             float phi = -atan(dGrid.y, dGrid.x) / earthRad;
+            vec3 _t = vec3(0., 0., -earthRad);
             mat3 m = mat3(cos(theta), -sin(theta), 0.,
                         sin(theta), cos(theta), 0.,
                         0., 0., 1.);
-            vec3 _t = vec3(0., 0., -earthRad);
             _t = m * _t;
             m = mat3(cos(phi), 0., sin(phi),
                     0., 1., 0.,

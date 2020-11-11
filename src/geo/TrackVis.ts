@@ -79,14 +79,14 @@ export async function loadGpxGeometry(url: string, context: TerrainRenderer, ele
     m.matrixAutoUpdate = true;
     l.matrixAutoUpdate = true;
     l.castShadow = true;
-    l.shadow.mapSize.width = 2048;
-    l.shadow.mapSize.height = 2048;
+    l.shadow.mapSize.width = 1024;
+    l.shadow.mapSize.height = 1024;
     l.shadow.camera.matrixAutoUpdate = true;
     l.matrixAutoUpdate = true;
     //l.shadow.radius = 1000;
     // l.angle = Math.PI / 4;
     let debugStarted = false;
-    l.shadow.bias = -0.002; //large values result in near objects being lit when they shouldn't
+    l.shadow.bias = -0.0002; //large values result in near objects being lit when they shouldn't
     l.shadow.camera.near = 1;
     // //I would expect less artefacts with low values, but perhaps more important is relationship to other camera?
     l.shadow.camera.far = 200000; 
@@ -104,7 +104,7 @@ export async function loadGpxGeometry(url: string, context: TerrainRenderer, ele
     const tPos = new THREE.Vector3(), tNPos = new THREE.Vector3(), tt = new THREE.Vector3();
     m.onBeforeRender = () => {
         if (!debugStarted) {
-            context.debugTexture((l.shadow.map as any).texture);
+            // context.debugTexture((l.shadow.map as any).texture);
             debugStarted = true;
         }
         const t = globalUniforms.iTime.value * 0.02;
