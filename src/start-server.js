@@ -31,7 +31,7 @@ app.get('/os*', function(req, res) {
 const gpxFolder = "C:/Users/peter/Dropbox/tracklogs/";
 app.get('/gpx*', function(req, res) {
   const name = req.url.substring(5);
-  const p = path.join(gpxFolder, name);
+  const p = path.join(gpxFolder, unescape(name));
   res.sendFile(p);
 });
 

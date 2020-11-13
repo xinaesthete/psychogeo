@@ -84,8 +84,9 @@ const tileGeom: THREE.BufferGeometry[] = [];
 for (let i=0; i<LOD_LEVELS; i++) {
     tileGeom.push(makeTileGeometry(Math.floor(2000 / Math.pow(2, i))));
 }
+let lodFalloffFactor = 500; //TODO control this depending on hardware etc.
 function getTileLOD(dist: number) {
-    return Math.pow(2, Math.min(LOD_LEVELS-1, Math.round(Math.sqrt(dist/2000))));
+    return Math.pow(2, Math.min(LOD_LEVELS-1, Math.round(Math.sqrt(dist/lodFalloffFactor))));
 }
 
 
@@ -98,9 +99,9 @@ nullInfo.mesh!.userData.isNull = true;
 
 async function getTileMesh(coord: EastNorth) {
     let info = getTileProperties(coord) || nullInfo;
-    //XXX: NO! when hot-module-replacement happens, keeping hold of WebGL context related resources is a problem.
-    //(actually not sure in what case HMR ever would't completely replace everything here)
-    if (info.mesh) return info;
+    // if (info.mesh) return info; //!!! this breaks when more than one scene uses the same tile.
+    //// but we'll still be using a cached texture.
+
     const sources = info.sources;
     const source = sources[2000] || sources[1000] || sources[500]!;
     const url = getImageFilename(source);
