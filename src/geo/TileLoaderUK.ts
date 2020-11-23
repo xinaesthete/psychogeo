@@ -377,8 +377,12 @@ export class TerrainRenderer extends ThreactTrackballBase {
         });
     }
     update() {
-        this.updateTileStats();
+        //this.updateTileStats(); // generates a bit much garbage?
+        this.updateLOD(); //could use THREE.LOD instead of current system.
         super.update();
+    }
+    updateLOD() {
+        this.tiles.forEach(t => t.updateLOD(this.camera.position));
     }
     updateTileStats() {
         const loaded = this.tiles.filter(t => t.status === TileStatus.Loaded);

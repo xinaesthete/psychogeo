@@ -18,14 +18,16 @@ function App() {
   
   const winchester = convertWgsToOSGB({lat: 51.064, lon: -1.3098227});
   const geoScene2 = new TerrainRenderer(winchester, {defraDSMLayer: true, osTerr50Layer: false, camZ: 3000});
-  geoScene2.addTrack("data/stgiles.gpx", 2, 0x902020); //why not add both?
-  // geoScene2.addTrack("data/palestine.gpx", 2, 0x70f0f0);
+  geoScene2.addTrack("data/stgiles.gpx", 5, 0x902020);
+  geoScene2.addTrack("data/palestine.gpx", 2, 0x70f0f0);
   // geoScene2.addTrack("gpx/Back_to_Cowes_.gpx", 50, 0xff5060);
   // geoScene2.addTrack("gpx/To_the_potting_shed_.gpx", 50, 0x70a0f0);
   threeBits.push(geoScene2);
   
-  // const branscombe = {east: 320709, north: 88243};
-  // threeBits.push(new TerrainRenderer(branscombe, {osTerr50Layer: false, defraDSMLayer: true, camZ: 1500}));
+  const branscombe = {east: 320709, north: 88243};
+  const branscombeRenderer = new TerrainRenderer(branscombe, {osTerr50Layer: false, defraDSMLayer: true, camZ: 1500});
+  branscombeRenderer.addTrack("gpx/2020-07-05 Branscombe_Beer_loop_.gpx", 3, 0x809070);
+  threeBits.push(branscombeRenderer);
   
   return (
     <div className="App">

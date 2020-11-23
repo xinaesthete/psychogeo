@@ -34,6 +34,7 @@ export async function loadGpxGeometry(url: string, context: TerrainRenderer, ele
     const origin = context.coord;
     const data = await fetch(url);
     const track = parseGPX(await data.text());
+    // if (!track) throw new Error(`couldn't load gpx track '${url}'`);
     
     const pos = track.flatMap(tp => {
         const lat = tp.lat, lon = tp.lon;

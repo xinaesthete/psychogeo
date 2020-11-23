@@ -169,6 +169,7 @@ export async function getTexDataU16(url: string, compressionRatio = 1) : Promise
 const textureCache = new Map<string, TextureTile>();
 
 export async function jp2Texture(url: string) {
+  //what if someone else is already waiting for it but it's not in the cache yet?
   if (textureCache.has(url)) return textureCache.get(url) as TextureTile;
   const result = await getTexDataU16(url);
   const frameInfo = result.frameInfo;

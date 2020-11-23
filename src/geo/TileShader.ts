@@ -37,7 +37,7 @@ export function getTileMaterial(uniforms: any) {
     return mat;
 }
 export function getTileMaterialX(uniforms: any) {
-    const mat = new THREE.MeshStandardMaterial({flatShading: true});
+    const mat = new THREE.MeshStandardMaterial({flatShading: false});
     // --- note: having these may have detrimental effect on shadows (& is pointless).
     // mat.side = THREE.DoubleSide; //probably not really needed
     // mat.shadowSide = THREE.DoubleSide;
@@ -207,10 +207,10 @@ function patchFragmentShader(fragmentShader: string) {
     float getHeight(vec2 uv) {
         return mapHeight(getNormalisedHeight(uv));
     }
-    float aastep(float threshold, float value) {
-        float afwidth = length(vec2(dFdx(value), dFdy(value))) * 0.70710678118654757;
-        return smoothstep(threshold-afwidth, threshold+afwidth, value);
-    }
+    // float aastep(float threshold, float value) {
+    //     float afwidth = length(vec2(dFdx(value), dFdy(value))) * 0.70710678118654757;
+    //     return smoothstep(threshold-afwidth, threshold+afwidth, value);
+    // }
     //this function seems quite good at showing up certain artefacts...
     float computeSteepness() {
         // return pow(1.-abs(dot(vec3(0.,0.,1.), computeNormal())), 0.5);
