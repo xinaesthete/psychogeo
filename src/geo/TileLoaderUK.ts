@@ -84,7 +84,7 @@ const tileGeom: THREE.BufferGeometry[] = [];
 for (let i=0; i<LOD_LEVELS; i++) {
     tileGeom.push(makeTileGeometry(Math.floor(2000 / Math.pow(2, i))));
 }
-let lodFalloffFactor = 500; //TODO control this depending on hardware etc.
+let lodFalloffFactor = 700; //TODO control this depending on hardware etc.
 function getTileLOD(dist: number) {
     return Math.pow(2, Math.min(LOD_LEVELS-1, Math.round(Math.sqrt(dist/lodFalloffFactor))));
 }

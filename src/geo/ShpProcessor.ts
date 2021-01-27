@@ -27,7 +27,8 @@ export async function threeGeometryFromShpZipX(coord: EastNorth) {
     geo.setIndex(new THREE.BufferAttribute(reverseWinding(delaunay.triangles), 1));
     return geo;
 }
-type Delaun = {triangles: Uint32Array, pArr: Float32Array}; //maybe Delaunator<Float64Array>?
+type Delaun = {triangles: Uint32Array, pArr: Float32Array, computeTime: number}; //maybe Delaunator<Float64Array>?
+const times: number[] = [];
 /** returns THREE.BufferGeometry based on shapefile at the given OS coordinate */
 export async function threeGeometryFromShpZip(coord: EastNorth) {
     //there's a hole in everything, that's how the light gets in.
@@ -41,16 +42,18 @@ export async function threeGeometryFromShpZip(coord: EastNorth) {
         // }, 20000);
         worker.onmessage = m => {
             workers.releaseWorker(worker);
-            const data = m.data as Delaun;
-            if (!data) {
+            if (!m.data.computeTime) {
                 reject(m.data);
-            } else resolve(m.data as Delaun);
+            }
+            resolve(m.data as Delaun);
         }
         worker.postMessage({url: url});
     });
 
     const delaunay = await promise;
     const points = delaunay.pArr;
+    times.push(delaunay.computeTime);
+    console.log(`took ${delaunay.computeTime}, average: ${times.reduce((a, b) => a+b, 0)/times.length}`);
     const pArr = new Float32Array(points.length);
     for (let i=0; i<pArr.length/3; i++) {
         //we spend an awful lot of time on this, just projecting it *back* to how it was before

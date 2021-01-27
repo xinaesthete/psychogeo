@@ -3,21 +3,24 @@ importScripts('delaunator.min.js', 'shp.js');
 async function delaunayFromShpZip(url) {
     const file = await fetch(url);
     const shpBuff = await file.arrayBuffer();
+    const t = Date.now();
     let s = await shp(shpBuff); //swallows errors in its "safelyResolveThenable"... what can we then do?
     if (!s) throw new Error(`failed to parse shp '${url}'`);
-    let points;
+    let points; //[[x,y,z]*N]
     if (Array.isArray(s)) points = s.flatMap(getPoints);
     else points = getPoints(s);
     if (!points.length) throw new Error(`no geometry found from shp '${url}'`);
     //points = points.map(convertWgsPointToOSGB); //do this on the receiving end
-    //(except that at time of writing, I'm doing "PROJ-bypass surgery")
-    const delaunay = Delaunator.from(points);
+    //--(except that at time of writing, I'm doing "PROJ-bypass surgery")--
     //TODO: look into SharedArrayBuffer / Atomics
     const pArr = new Float32Array(points.length * 3);
     for (let i=0; i<points.length; i++) {
         pArr.set(points[i], i*3);
     }
-    return {triangles: reverseWinding(delaunay.triangles), pArr: pArr};
+    const delaunay = Delaunator.from(points);
+    // maybe it'd be quicker to use the constructor with an existing Float32Array, but any benefit negated here.
+    // const delaunay = new Delaunator(pArr.filter((v, i) => i%3 !== 2));
+    return {triangles: reverseWinding(delaunay.triangles), pArr: pArr, computeTime: Date.now()-t};
 }
 
 function getPoints(featureCol) {
@@ -36,6 +39,8 @@ function getPoints(featureCol) {
         }
     });
 }
+
+
 function reverseWinding(indices, inPlace = true) {
     const newIndices = inPlace ? indices : new Uint32Array(indices.length);
     for (let i=0; i<indices.length/3; i++) {
