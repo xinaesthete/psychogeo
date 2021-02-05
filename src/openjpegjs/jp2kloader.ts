@@ -154,11 +154,20 @@ export interface TexFrame {
 }
 
 const workers = new WorkerPool(8);
+workers.maxAge = 9e9;
+//^^^ long life because I have a slight bug when new workers init.
+//not much point in retiring, I think I had a memory leak before because I kept making new decoders
+const times: number[] = [];
 export async function getTexDataU16(url: string, compressionRatio = 1) : Promise<TexFrame> {
   const worker = await workers.getWorker();
+  const t = Date.now();
   const promise = new Promise<TexFrame>(async (resolve) => {
     worker.onmessage = m => {
       workers.releaseWorker(worker);
+      const dt = Date.now() - t;
+      times.push(dt);
+      const avg = times.reduce((a, b) => a + b, 0) / times.length;;
+      console.log(`t: ${dt}, min: ${Math.min(...times)}, max: ${Math.max(...times)} avg: ${avg}`);
       resolve(m.data as TexFrame);
     }
     if (compressionRatio === 1) worker.postMessage({cmd: "tex", url: url});
