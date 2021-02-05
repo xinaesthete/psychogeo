@@ -13,14 +13,15 @@ app.get('/ping', function (req, res) {
   return res.send('pong ' + req.path);
 });
 
-const tileFolder = "C:/Users/peter/Dropbox/BlenderGIS/pyUtil/images/web/";
-const tileSuffix = "_normalised_rate0.jpx";
+const tileFolder = "C:/Users/peter/Dropbox/BlenderGIS/pyUtil/images/jph/";
+const tileSuffix = "_normalised_rate0.j2c";
 app.get('/tile*', function(req, res) {
   const name = req.url.substring(6);
   const p = path.join(tileFolder, name + tileSuffix);
   res.sendFile(p);
 });
-const osFolder = "G:/GIS/OS terr50/data/";
+// const osFolder = "G:/GIS/OS terr50/data/";
+const osFolder = "C:/Users/peter/Dropbox/BlenderGIS/OS terr50/data";
 const osSuffix = "_OST50CONT_20190530.zip";
 app.get('/os*', function(req, res) {
   const name = req.url.substring(4);

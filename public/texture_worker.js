@@ -6,9 +6,14 @@
  * Used in conjunction with WorkerPool / jp2kloader
  */
 
-importScripts('openjpegwasm.js');
+// importScripts('openjpegwasm.js');
+importScripts('openjphjs.js');
 
 let j;
+let decoder;
+Module.onRuntimeInitialized = async _ => {
+    decoder = new Module.HTJ2KDecoder();
+}
 
 //https://discourse.threejs.org/t/three-datatexture-works-on-mobile-only-when-i-keep-the-type-three-floattype-but-not-as-three-halffloattype/1864/4
 const floatView = new Float32Array(1);
@@ -67,18 +72,18 @@ function getPixelData(frameInfo, decodedBuffer) {
 }
 
 async function decodeData(encodedBitstream) {
-    const decoder = new j.J2KDecoder();
+    // const decoder = new j.J2KDecoder();
     const encodedBuffer = decoder.getEncodedBuffer(encodedBitstream.length);
     encodedBuffer.set(encodedBitstream);
     decoder.decode();
     const frameInfo = decoder.getFrameInfo();
     const decodedBuffer = decoder.getDecodedBuffer();
     const pixelData = getPixelData(frameInfo, decodedBuffer);
+    // decoder.delete();// should have been there before, or decoder reused
     return { pixelData, frameInfo }
 }
-
 async function decodeFromURL(url) {
-    if (!j) j = await OpenJPEGWASM();
+    // if (!j) j = await OpenJPEGWASM();
     const response = await fetch(url);
     const encodedBitstream = new Uint8Array(await response.arrayBuffer());
     return decodeData(encodedBitstream);
@@ -133,15 +138,21 @@ async function recode(url, q) {
     return { texData, frameInfo };
 }
 
-onmessage = m => {
-    switch (m.data.cmd) {
-        case "tex":
-            decodeTex(m.data.url).then(postMessage);
-            break;
-        case "recode":
-            recode(m.data.url, m.data.compressionRatio).then(postMessage);
-            break;
-        default:
-            throw new Error(`texture_worker expects {cmd: "tex"|"pix", url: string }, got ${JSON.stringift(m.data)}`);
+onmessage = async m => {
+    try {
+        switch (m.data.cmd) {
+            case "tex":
+                const r = await decodeTex(m.data.url);
+                postMessage(r, [r.texData.buffer]);
+                break;
+            case "recode":
+                const d = await recode(m.data.url, m.data.compressionRatio);
+                postMessage(d, [d.texData.buffer]);
+                break;
+            default:
+                throw new Error(`texture_worker expects {cmd: "tex"|"recode", url: string }, got ${JSON.stringift(m.data)}`);
+        }
+    } catch (error) {
+        postMessage(error);
     }
 }
