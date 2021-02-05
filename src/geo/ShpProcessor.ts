@@ -27,23 +27,57 @@ export async function threeGeometryFromShpZipX(coord: EastNorth) {
     geo.setIndex(new THREE.BufferAttribute(reverseWinding(delaunay.triangles), 1));
     return geo;
 }
-type Delaun = {triangles: Uint32Array, pArr: Float32Array, computeTime: number}; //maybe Delaunator<Float64Array>?
+type Delaun = {triangles: Uint32Array, coordinates: Float32Array, computeTime: number}; //maybe Delaunator<Float64Array>?
 const times: number[] = [];
+const workerRegister: Map<EastNorth, Worker> = new Map();
 /** returns THREE.BufferGeometry based on shapefile at the given OS coordinate */
 export async function threeGeometryFromShpZip(coord: EastNorth) {
+    if (workerRegister.has(coord)) {
+        throw new Error("duplicate request");
+        //remember we could have more than one renderer
+        //(we should have a cache, multiple calls should not be an error)
+        //as of this writing, we don't - so this would be an error.
+        //doesn't seem to be occurring,
+        //so not sure why sometimes 'loading' geometry overlaps with loaded.
+    }
     //there's a hole in everything, that's how the light gets in.
     const os = gridRefString(coord, 2); //"su" + i + j
+    console.log(`request for ${os}`);
     const url = "/os/" + os;
     const worker = await workers.getWorker();
+    workerRegister.set(coord, worker);
+    //we could consider checking if this job is still a priority at this point to save swamping the system
+    //e.g. user sweeps camera across a wide area and queues thousands of tiles, but by the time a worker is available
+    //this tile is no longer visible.
+    console.log(`ready to start ${os}`);
+    let alreadyTimedOut = false;
     const promise = new Promise<Delaun>(async (resolve, reject) => {
-        // setTimeout(()=>{
-        //     workers.terminateWorker(worker);
-        //     reject("timeout");
-        // }, 20000);
+        const t = setTimeout(()=>{
+            alreadyTimedOut = true;
+            console.log(`timeout ${os}\t${new Date()}`);
+            //seems to fail the second time this happens
+            ///--- I think my problem is to do with WASM not yet being loaded in newWorker ---///
+            workers.releaseWorker(worker, false);
+            reject("timeout");
+        }, 30000);
+        const slow = setTimeout(()=> {
+            console.log(`slow ${os}`);
+        }, 1000);
         worker.onmessage = m => {
-            workers.releaseWorker(worker);
-            if (!m.data.computeTime) {
+            clearTimeout(t);
+            clearTimeout(slow);
+            console.log(`finished ${os} (${m.data.computeTime}ms)`);
+            if (!m.data.triangles) {
+                console.log(`error in ${os}: ${m.data}`);
+                workers.releaseWorker(worker);
                 reject(m.data);
+            }
+            workers.releaseWorker(worker, false); //testing kill functionality, don't want 2nd arg otherwise
+            // *adding it seems to make the bug go away*, not quite sure what's happening...
+            if (alreadyTimedOut) {
+                //I would expect this to be nigh-on impossible given that the worker.terminate() is 'instantaneous'
+                //but I guess there could be an issue with thread-safety.
+                console.warn(`got a message from a worker that had already timed out`);
             }
             resolve(m.data as Delaun);
         }
@@ -51,20 +85,12 @@ export async function threeGeometryFromShpZip(coord: EastNorth) {
     });
 
     const delaunay = await promise;
-    const points = delaunay.pArr;
+    const points = delaunay.coordinates;
     times.push(delaunay.computeTime);
-    console.log(`took ${delaunay.computeTime}, average: ${times.reduce((a, b) => a+b, 0)/times.length}`);
-    const pArr = new Float32Array(points.length);
-    for (let i=0; i<pArr.length/3; i++) {
-        //we spend an awful lot of time on this, just projecting it *back* to how it was before
-        //we need to figure out how to tell shp.js to use the right CRS
-        //--- for now, I've done "PROJ-bypass surgery" in the version of shp.js used in the worker ---
-        //pArr.set(convertWgsPointToOSGB([...points.slice(i*3,3+(i*3))]), i*3);
-        pArr.set([...points.slice(i*3,3+(i*3))], i*3);
-    }
+    console.log(`took ${delaunay.computeTime}, average: ${times.reduce((a, b) => a+b, 0)/times.length}\t${delaunay.triangles.length/3} triangles`);
     
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.BufferAttribute(pArr, 3));
+    geo.setAttribute("position", new THREE.BufferAttribute(points, 3));
     geo.setIndex(new THREE.BufferAttribute(delaunay.triangles, 1));
     return geo;
 }
@@ -94,5 +120,7 @@ function getPoints(featureCol: FeatureCollection) {
     });
 }
 
-const workers = new WorkerPool(8, "shp-worker.js");
-
+// const workers = new WorkerPool(8, "shp-worker.js");
+const workers = new WorkerPool(8, "rust_experiment/worker.js");
+workers.maxAge = 9e9;
+//may be a problem with first workers because module not loaded properly yet

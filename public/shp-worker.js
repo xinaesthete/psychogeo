@@ -1,9 +1,9 @@
 importScripts('delaunator.min.js', 'shp.js');
 
 async function delaunayFromShpZip(url) {
+    const t = Date.now();
     const file = await fetch(url);
     const shpBuff = await file.arrayBuffer();
-    const t = Date.now();
     let s = await shp(shpBuff); //swallows errors in its "safelyResolveThenable"... what can we then do?
     if (!s) throw new Error(`failed to parse shp '${url}'`);
     let points; //[[x,y,z]*N]
@@ -20,7 +20,7 @@ async function delaunayFromShpZip(url) {
     const delaunay = Delaunator.from(points);
     // maybe it'd be quicker to use the constructor with an existing Float32Array, but any benefit negated here.
     // const delaunay = new Delaunator(pArr.filter((v, i) => i%3 !== 2));
-    return {triangles: reverseWinding(delaunay.triangles), pArr: pArr, computeTime: Date.now()-t};
+    return {triangles: delaunay.triangles, coordinates: pArr, computeTime: Date.now()-t};
 }
 
 function getPoints(featureCol) {
@@ -50,5 +50,10 @@ function reverseWinding(indices, inPlace = true) {
 }
 
 onmessage = async m => {
-    delaunayFromShpZip(m.data.url).then(postMessage).catch(postMessage);
+    try {
+         const result = await delaunayFromShpZip(m.data.url);
+         postMessage(result, [result.coordinates.buffer, result.triangles.buffer]);
+    } catch (e) {
+        postMessage(e);
+    }
 }

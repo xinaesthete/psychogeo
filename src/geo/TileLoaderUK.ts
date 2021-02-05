@@ -220,7 +220,8 @@ class LazyTile {
     }
 }
 const osTerrainMat = new THREE.MeshStandardMaterial({
-    wireframe: false, color: 0x60e580, flatShading: true
+    wireframe: false, color: 0x60e580, flatShading: true,
+    side: THREE.BackSide, shadowSide: THREE.BackSide
 });
 // osTerrainMat.side = THREE.DoubleSide;
 osTerrainMat.shadowSide = THREE.DoubleSide;
