@@ -263,8 +263,8 @@ async function getOSDelaunayMesh(coord: EastNorth, origin: EastNorth) {
     try {
         const geo = await threeGeometryFromShpZip(coord);
         //would be better to do this in worker, but it currently doesn't have THREE...
-        //I might figure how to make out WebPack config for workers, but...
-        geo.computeVertexNormals(); 
+        /// -- I'm now doing this in Rust, but it may still have problems so might want to uncomment:
+        // geo.computeVertexNormals(); 
         const mat = osTerrainMat;
         const mesh = new THREE.Mesh(geo, mat);
         mesh.castShadow = true;

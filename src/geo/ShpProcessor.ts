@@ -27,7 +27,7 @@ export async function threeGeometryFromShpZipX(coord: EastNorth) {
     geo.setIndex(new THREE.BufferAttribute(reverseWinding(delaunay.triangles), 1));
     return geo;
 }
-type Delaun = {triangles: Uint32Array, coordinates: Float32Array, computeTime: number}; //maybe Delaunator<Float64Array>?
+type Delaun = {triangles: Uint32Array, coordinates: Float32Array, normals: Float32Array, computeTime: number}; //maybe Delaunator<Float64Array>?
 const times: number[] = [];
 const workerRegister: Map<EastNorth, Worker> = new Map();
 /** returns THREE.BufferGeometry based on shapefile at the given OS coordinate */
@@ -45,7 +45,9 @@ export async function threeGeometryFromShpZip(coord: EastNorth) {
     console.log(`request for ${os}`);
     const url = "/os/" + os;
     const worker = await workers.getWorker();
-    workerRegister.set(coord, worker);
+    ///////XXX: this was just some half-done temp debug thing I think
+    // workerRegister.set(coord, worker);
+    
     //we could consider checking if this job is still a priority at this point to save swamping the system
     //e.g. user sweeps camera across a wide area and queues thousands of tiles, but by the time a worker is available
     //this tile is no longer visible.
@@ -91,6 +93,7 @@ export async function threeGeometryFromShpZip(coord: EastNorth) {
     
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.BufferAttribute(points, 3));
+    geo.setAttribute("normal", new THREE.BufferAttribute(delaunay.normals, 3));
     geo.setIndex(new THREE.BufferAttribute(delaunay.triangles, 1));
     return geo;
 }
