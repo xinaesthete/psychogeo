@@ -27,7 +27,7 @@ export async function threeGeometryFromShpZipX(coord: EastNorth) {
     geo.setIndex(new THREE.BufferAttribute(reverseWinding(delaunay.triangles), 1));
     return geo;
 }
-type Delaun = {triangles: Uint32Array, coordinates: Float32Array, normals: Float32Array, computeTime: number}; //maybe Delaunator<Float64Array>?
+type Delaun = {triangles: Uint32Array, coordinates: Float32Array, normals?: Float32Array, computeTime: number}; //maybe Delaunator<Float64Array>?
 const times: number[] = [];
 const workerRegister: Map<EastNorth, Worker> = new Map();
 /** returns THREE.BufferGeometry based on shapefile at the given OS coordinate */
@@ -93,7 +93,7 @@ export async function threeGeometryFromShpZip(coord: EastNorth) {
     
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.BufferAttribute(points, 3));
-    geo.setAttribute("normal", new THREE.BufferAttribute(delaunay.normals, 3));
+    if (delaunay.normals) geo.setAttribute("normal", new THREE.BufferAttribute(delaunay.normals, 3));
     geo.setIndex(new THREE.BufferAttribute(delaunay.triangles, 1));
     return geo;
 }
@@ -123,7 +123,7 @@ function getPoints(featureCol: FeatureCollection) {
     });
 }
 
-// const workers = new WorkerPool(8, "shp-worker.js");
+//const workers = new WorkerPool(8, "shp-worker.js");
 const workers = new WorkerPool(8, "rust_experiment/worker.js");
 workers.maxAge = 9e9;
 //may be a problem with first workers because module not loaded properly yet

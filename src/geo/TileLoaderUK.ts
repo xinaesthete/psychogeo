@@ -264,7 +264,7 @@ async function getOSDelaunayMesh(coord: EastNorth, origin: EastNorth) {
         const geo = await threeGeometryFromShpZip(coord);
         //would be better to do this in worker, but it currently doesn't have THREE...
         /// -- I'm now doing this in Rust, but it may still have problems so might want to uncomment:
-        // geo.computeVertexNormals(); 
+        if (!geo.attributes["normal"]) geo.computeVertexNormals();
         const mat = osTerrainMat;
         const mesh = new THREE.Mesh(geo, mat);
         mesh.castShadow = true;
