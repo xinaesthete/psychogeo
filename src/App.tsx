@@ -4,8 +4,9 @@ import { convertWgsToOSGB } from './geo/Coordinates';
 import { TerrainRenderer, newGLContext } from './geo/TileLoaderUK';
 import { IThree, Threact } from './threact/threact';
 
+newGLContext();
+
 function App() {
-  newGLContext();
   const [renderers, setRenderers] = React.useState([] as IThree[]);
   
   React.useEffect(() => {
@@ -18,7 +19,7 @@ function App() {
       const beinnSgrithael = {east: 183786, north: 812828};
       const geoScene = new TerrainRenderer(beinnSgrithael, {camZ: 10000, osTerr50Layer: true});
       geoScene.addTrack("data/scot1.gpx", 30, 0x902030);
-      threeBits.push(geoScene);
+      // threeBits.push(geoScene);
       const winchester = convertWgsToOSGB({lat: 51.064, lon: -1.3098227});
       const geoScene2 = new TerrainRenderer(winchester, {defraDSMLayer: true, osTerr50Layer: false, camZ: 3000});
       geoScene2.addTrack("data/stgiles.gpx", 5, 0x902020);
@@ -32,7 +33,7 @@ function App() {
       // branscombeRenderer.addTrack("gpx/2020-07-05 Branscombe_Beer_loop_.gpx", 3, 0x809070);
       // threeBits.push(branscombeRenderer);
       setRenderers(threeBits);
-    }, 100);
+    }, 200);
     //timeout used in lieu of dependency on wasm module loading, should be fixed.
   }, []);
   
