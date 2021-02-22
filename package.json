@@ -4,7 +4,7 @@
   "private": true,
   "homepage": "./",
   "main": "src/start.js",
-  "proxy": "http://localhost:8080",
+  "proxy": "http://localhost:8082",
   "dependencies": {
     "@testing-library/jest-dom": "^4.2.4",
     "@testing-library/react": "^9.5.0",
@@ -21,6 +21,7 @@
     "electron": "^11.2.3",
     "geodesy": "^2.2.1",
     "geojson": "^0.5.0",
+    "http-proxy": "^1.18.1",
     "react": "^16.13.1",
     "react-dom": "^16.13.1",
     "react-scripts": "^4.0.2",
@@ -35,7 +36,7 @@
     "eject": "react-scripts eject",
     "electron": "electron .",
     "react-start": "cross-env BROWSER=none react-scripts start",
-    "electron-start": "node src/start-react",
+    "electron-start": "node src/start-react --trace-warnings",
     "proxy-start": "node src/start-server"
   },
   "eslintConfig": {
@@ -52,5 +53,8 @@
       "last 1 firefox version",
       "last 1 safari version"
     ]
+  },
+  "devDependencies": {
+    "snowpack": "^3.0.11"
   }
 }

@@ -1,6 +1,13 @@
-//https://dev.to/loujaybee/using-create-react-app-with-express
+/**
+ * There's not currently much need for a separate express server script...
+ * All it does as of this writing is interpret how to look up a few static files outside the repo.
+ * Might need more elaborate server with more complete data.
+ */
 
-console.log('starting express server on port ' + process.env.PORT || 8080);
+
+//https://dev.to/loujaybee/using-create-react-app-with-express
+const port = process.env.PORT || 8082; //changed to 8082 to not conflict with snowpack default
+console.log('starting express server on port ' + port);
 const express = require('express');
 //const bodyParser = require('body-parser')
 const path = require('path');
@@ -13,7 +20,7 @@ app.get('/ping', function (req, res) {
   return res.send('pong ' + req.path);
 });
 
-const tileFolder = "C:/Users/peter/Dropbox/BlenderGIS/pyUtil/images/jph/";
+const tileFolder = "C:/Users/peter/Dropbox/BlenderGIS/pyUtil/images/jph2/";
 const tileSuffix = "_normalised_rate0.j2c";
 app.get('/tile*', function(req, res) {
   const name = req.url.substring(6);
@@ -41,4 +48,4 @@ app.get('/', function (req, res) {
 });
 
 
-app.listen(process.env.PORT || 8080);
+app.listen(port);
