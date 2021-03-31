@@ -161,13 +161,14 @@ const times: number[] = [];
 export async function getTexDataU16(url: string, compressionRatio = 1) : Promise<TexFrame> {
   const worker = await workers.getWorker();
   const t = Date.now();
-  const promise = new Promise<TexFrame>(async (resolve) => {
+  const promise = new Promise<TexFrame>(async (resolve, reject) => {
     worker.onmessage = m => {
       workers.releaseWorker(worker);
       const dt = Date.now() - t;
       times.push(dt);
       const avg = times.reduce((a, b) => a + b, 0) / times.length;;
       console.log(`t: ${dt}, min: ${Math.min(...times)}, max: ${Math.max(...times)} avg: ${avg}`);
+      if (typeof m.data === "string") reject(m.data);
       resolve(m.data as TexFrame);
     }
     if (compressionRatio === 1) worker.postMessage({cmd: "tex", url: url});
