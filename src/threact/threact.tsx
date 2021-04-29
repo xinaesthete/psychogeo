@@ -15,6 +15,11 @@ export const globalUniforms = {
     iTime: { value: 0 }
 }
 
+/** elements drawn to 'proxy' render targets & one big canvas vs 
+ * making main canvas that owns WebGL invisible & drawing as image to each component's canvas.
+*/
+let compositeMode: 'canvas' | 'proxy' = 'canvas';
+
 function init() {
     //NB:: I should consider the implications of having these values determined in a global GL context, 
     //and how they may be configured in an application (probably require app to call init with arguments).
@@ -33,7 +38,7 @@ function init() {
     const el = renderer.domElement;
     document.body.appendChild(el);
     el.id = "threact_backing_canvas";
-
+    if (compositeMode === 'canvas') el.style.display = "none";
     animate();
 }
 
@@ -94,7 +99,7 @@ const basePlane = new THREE.PlaneBufferGeometry(1, 1, 1, 1);
  */
 export class Threact extends React.Component<IThreact, any> {
     composite: THREE.Mesh;
-    private mount?: HTMLDivElement;
+    private mount?: HTMLCanvasElement;
     renderTarget: THREE.WebGLRenderTarget;
     color = 0x202020;
     private lastW = 0;
@@ -133,13 +138,15 @@ export class Threact extends React.Component<IThreact, any> {
         const h = rect.height, ch = renderer.domElement.clientHeight;
         this.resize(rect);
         
-        const left = rect.left + w/2;
-        const bottom = (ch - rect.bottom) + h/2;
-        this.composite.position.x = left;
-        this.composite.position.y = bottom;
-        
         //this.composite.updateMatrix();
-        if (rect.bottom < 0 || rect.top > ch || rect.right < 0 || rect.left > cw) return;
+        if (compositeMode === 'proxy') {
+            const left = rect.left + w/2;
+            const bottom = (ch - rect.bottom) + h/2;
+            this.composite.position.x = left;
+            this.composite.position.y = bottom;
+            
+            if (rect.bottom < 0 || rect.top > ch || rect.right < 0 || rect.left > cw) return;
+        }
         this.renderGL();
     }
     resize(rect: DOMRect) {
@@ -154,8 +161,20 @@ export class Threact extends React.Component<IThreact, any> {
         this.lastW = w;
         this.lastH = h;
         this.props.gfx.resize(rect);
+        this.mount!.width = w;
+        this.mount!.height = h;
     }
     renderGL() {
+        switch (compositeMode) {
+            case 'proxy':
+                this.renderGL_proxy();
+                break;
+            case 'canvas':
+                this.renderGL_canvas();
+                break;
+        }
+    }
+    renderGL_proxy() {
         //this can be a significant performance bottleneck here, understandably:
         //this.setState({frameCount: this.state.frameCount+1})
         //::: this also demonstrates that using 'state' for things unrelated to React rendering is ill-advised.
@@ -175,7 +194,18 @@ export class Threact extends React.Component<IThreact, any> {
 
         renderer.setRenderTarget(rt);
     }
+    renderGL_canvas() {
+        renderer.setSize(this.lastW, this.lastH);
+        renderer.setRenderTarget(null);
+        renderer.setClearColor(this.color);
+        renderer.clear();
+        this.props.gfx.update();
+        this.props.gfx.render(renderer);
+        const ctx = this.mount!.getContext("2d", { alpha: true })!;
+        ctx.clearRect(0, 0, 1e6, 1e6);
+        ctx.drawImage(renderer.domElement, 0, 0);
+    }
     render() {
-        return <div className='threact_view_proxy' ref={(mount) => this.mount = mount as HTMLDivElement} />
+        return <canvas className='threact_view_proxy' ref={(mount) => this.mount = mount as HTMLCanvasElement} />
     }
 }
