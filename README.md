@@ -20,4 +20,4 @@ The current implementation is able to follow a path recorded as a `GPX` tracklog
 
 ![st giles hill viewshed](viewshed.webp)
 
-This visualisation is currently rather glitchy particularly as a result of using the elevation data as recorded in a `GPX` file, which is highly inaccurate; I base it on the height of the ground plus some offset. The quality of GPS data will still be a limiting factor, unfortunately.
+This visualisation is currently rather glitchy particularly as a result of using the elevation data as recorded in a `GPX` file, which is highly inaccurate; I should base it on the height of the ground plus some offset. The quality of GPS data will still be a limiting factor, unfortunately.
