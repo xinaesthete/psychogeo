@@ -283,7 +283,13 @@ async function getOSDelaunayMesh(coord: EastNorth, origin: EastNorth) {
 export interface TerrainOptions {
     osTerr50Layer?: boolean;
     defraDSMLayer?: boolean;
+    tracks?: Track[];
     camZ: number;
+}
+export interface Track {
+    url: string;
+    heightOffset?: number;
+    colour?: number;
 }
 export class TerrainRenderer extends ThreactTrackballBase {
     coord: EastNorth;
@@ -298,6 +304,9 @@ export class TerrainRenderer extends ThreactTrackballBase {
         this.tileProp = getTileProperties(coord);
         this.addAxes();
         this.options = options; //AKA props
+        if (options.tracks) {
+            options.tracks.forEach(t=>this.addTrack(t));
+        }
     }
     addMarker() {
         const info = this.tileProp;
@@ -311,8 +320,9 @@ export class TerrainRenderer extends ThreactTrackballBase {
 
         this.scene.add(m);
     }
-    async addTrack(url: string, eleOffset = 2, color = 0xffffff) {
-        this.scene.add(await loadGpxGeometry(url, this, eleOffset, color));
+    async addTrack(track: Track) {//url: string, heightOffset = 2, color = 0xffffff) {
+        const {url, heightOffset = 2, colour = 0xffffff} = track;
+        this.scene.add(await loadGpxGeometry(url, this, heightOffset, colour));
     }
     addAxes() {
         const ax = new THREE.AxesHelper(100);

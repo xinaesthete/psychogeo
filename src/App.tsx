@@ -1,7 +1,7 @@
 import React from 'react';
 import './App.css';
 import { convertWgsToOSGB, EastNorth } from './geo/Coordinates';
-import { TerrainRenderer, newGLContext, TerrainOptions } from './geo/TileLoaderUK';
+import { TerrainRenderer, newGLContext, TerrainOptions, Track } from './geo/TileLoaderUK';
 import { IThree, Threact } from './threact/threact';
 
 newGLContext();
@@ -28,7 +28,7 @@ function App() {
       const threeBits: IThree[] = [];
       
       const geoScene = new TerrainRenderer(beinnSgrithael, {camZ: 10000, osTerr50Layer: true});
-      geoScene.addTrack("data/scot1.gpx", 30, 0x902030);
+      //geoScene.addTrack("data/scot1.gpx", 30, 0x902030);
       // threeBits.push(geoScene);
       const geoScene2 = new TerrainRenderer(winchester, {defraDSMLayer: true, osTerr50Layer: false, camZ: 3000});
       // geoScene2.addTrack("data/stgiles.gpx", 5, 0x902020);
@@ -44,15 +44,16 @@ function App() {
     }, 200);
     //timeout used in lieu of dependency on wasm module loading, should be fixed.
   }, []);
-  
+  const stGiles: Track = {url: "data/stgiles.gpx", heightOffset: 2, colour: 0x902020};
+  const palestine: Track = { url: "data/palestine.gpx", heightOffset: 2, colour: 0x70f0f0};
   return (
     <div className="App">
       {/* <header className="App-header">
         {JSON.stringify(winchester, undefined, 2)}
       </header> */}
-      <Terrain coord={winchester} options={{defraDSMLayer: true, osTerr50Layer: false, camZ: 3000}} />
+      <Terrain coord={winchester} options={{defraDSMLayer: true, osTerr50Layer: false, camZ: 3000, tracks: [stGiles, palestine]}} />
       {/* <Terrain coord={beinnSgrithael} options={{defraDSMLayer: false, osTerr50Layer: true, camZ: 30000}} /> */}
-      <Terrain coord={branscombe} options={{defraDSMLayer: true, osTerr50Layer: false, camZ: 10000}} />
+      {/* <Terrain coord={branscombe} options={{defraDSMLayer: true, osTerr50Layer: false, camZ: 10000}} /> */}
       {/* {renderers.map((t, i) => <Threact key={i} gfx={t} />)} */}
     </div>
   );
