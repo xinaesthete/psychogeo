@@ -1,0 +1,120 @@
+const GeoTIFF = require('geotiff');
+const jph = require('../public/openjphjs.js');
+const fs = require('fs');
+const readline = require('readline');
+
+const path = '/Volumes/BlackSea/GIS/DEFRA/LIDAR_10m_DTM_Composite_2019/LIDAR_10m_DTM_Composite.tif';
+const outPath = '/Volumes/BlackSea/GIS/DEFRA/LIDAR_10m_DTM_Composite_2019/';
+let encoder; //hacky async init this later when 'probably' done.
+//const encoder = new jph.HTJ2KEncoder();
+
+//https://discourse.threejs.org/t/three-datatexture-works-on-mobile-only-when-i-keep-the-type-three-floattype-but-not-as-three-halffloattype/1864/4
+const floatView = new Float32Array(1);
+const int32View = new Int32Array(floatView.buffer);
+function toHalf(val) {
+    floatView[0] = val;
+    var x = int32View[0];
+
+    var bits = (x >> 16) & 0x8000; /* Get the sign */
+    var m = (x >> 12) & 0x07ff; /* Keep one extra bit for rounding */
+    var e = (x >> 23) & 0xff; /* Using int is faster here */
+
+    /* If zero, or denormal, or exponent underflows too much for a denormal
+                   * half, return signed zero. */
+    if (e < 103) return bits;
+
+    /* If NaN, return NaN. If Inf or exponent overflow, return Inf. */
+    if (e > 142) {
+
+        bits |= 0x7c00;
+        /* If exponent was 0xff and one mantissa bit was set, it means NaN,
+                                 * not Inf, so make sure we set one mantissa bit too. */
+        bits |= ((e == 255) ? 0 : 1) && (x & 0x007fffff);
+        return bits;
+    }
+
+    /* If exponent underflows but not too much, return a denormal */
+    if (e < 113) {
+        m |= 0x0800;
+        /* Extra rounding may overflow and set mantissa to 0 and exponent
+                         * to 1, which is OK. */
+        bits |= (m >> (114 - e)) + ((m >> (113 - e)) & 1);
+        return bits;
+    }
+
+    bits |= ((e - 112) << 10) | (m >> 1);
+    /* Extra rounding. An overflow will set mantissa to 0 and increment
+                   * the exponent, which is OK. */
+    bits += m & 1;
+    return bits;
+}
+async function processWindow(data, frameInfo, name) {
+  //TODO: encode to HTJ2K or whatever we decide we want here
+  const [vals] = data;
+  const anyGood = vals.find(v => v < 3000);
+  if (anyGood === undefined) {
+    // console.log('no useful data...');
+    return false;
+  }
+  //encode the data to a file... keep it at 32bit float for now?
+  const uncompressedBuffer = encoder.getDecodedBuffer(frameInfo);
+  uncompressedBuffer.set(vals);
+  encoder.encode();
+  const encoded = encoder.getEncodedBuffer();
+  console.log(`recompressed size ${encoded.byteLength / (1024)}kb`);
+  fs.writeFile(outPath + name, new Uint8Array(encoded), ()=>console.log(`wrote "${name}"`));
+
+  // const min = vals.reduce((a,b) => Math.min(a, b), Number.MAX_VALUE);
+  // const max = vals.reduce((a,b) => Math.max(a, b), Number.MIN_VALUE);
+  // const mean = vals.reduce((a, b) => a+b, 0) / vals.length;
+  
+  // console.log('got stats in', Date.now()-t);
+  // console.log('min', min);
+  // console.log('max', max);
+  // console.log('mean', mean);
+  return true;
+}
+//const pool = new GeoTIFF.Pool(); //seems to take ~2x as long to readRasters with pool.
+GeoTIFF.fromFile(path).then(async (tiff) => {
+  const image = await tiff.getImage();
+  encoder = new jph.HTJ2KEncoder(); //probably ready now...
+  encoder.setQuality(1, 1);
+  //encoder.setCompressionRatio(0, 0); //not a function??
+  encoder.setDecompositions(8);
+
+  console.log('file opened!', image.getWidth(), image.getHeight(), image.getTileWidth(), image.getTileHeight());
+  const w = image.getWidth();
+  const h = image.getHeight();
+  console.log('samples per pixel:', image.getSamplesPerPixel());
+  const s = outTileSize = image.getTileWidth() * 16; //tempted to make this POT, have some overlap on each tile...
+  const nx = Math.floor(w/outTileSize), ny = Math.floor(h/outTileSize);
+  console.log(`making ${nx}x${ny} tiles...`);
+  const frameInfo = { bitsPerSample: 32, isSigned: true, width: s, height: s, componentCount: 1 };
+  for (let y=0; y<ny; y++) {
+    console.log(`row ${y+1}/${ny}...`);
+    //readline.cursorTo(process.stdout, 0, 0);
+    //process.stdout.write(x + '/' + nx);
+    // readline.cursorTo(process.stdout, 0, y);
+    // process.stdout.write('\r' + " ".repeat(1000));
+    for (let x=0; x<nx; x++) {
+      // readline.cursorTo(process.stdout, x, y);
+      // console.log(`col ${y+1}/${ny}...`);
+      //let's not commit to the full processing until we do a trial...      
+      const left = x*s, right = (x+1)*s, top = y*s, bottom = (y+1)*s;
+      const win = [left, top, right, bottom];
+      // console.log(...win);
+      //image window can go beyond bounds, in which case it might be useful to supply a fillValue
+      const t = Date.now();
+      const data = await image.readRasters({window: win, fillValue: -1});
+      // console.log(`got data in`, Date.now()-t);
+      const X = x.toLocaleString(undefined, {minimumIntegerDigits: 3});
+      const Y = y.toLocaleString(undefined, {minimumIntegerDigits: 3});
+      const r = await processWindow(data, frameInfo, `${X}_${Y}-32bit.j2c`);
+      // process.stdout.write(r ? '.' : ' ');
+    }
+  }
+}).catch(err => {
+  console.error('ERROR!');
+  console.error(err);
+});
+
