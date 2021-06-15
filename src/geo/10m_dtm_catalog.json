@@ -1,0 +1,807 @@
+{
+  "80000, 9640": {
+    "xllcorner": 80000,
+    "yllcorner": 9640,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "000_015-32bit.j2c"
+  },
+  "120960, 9640": {
+    "xllcorner": 120960,
+    "yllcorner": 9640,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "001_015-32bit.j2c"
+  },
+  "161920, 50600": {
+    "xllcorner": 161920,
+    "yllcorner": 50600,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "002_014-32bit.j2c"
+  },
+  "161920, 9640": {
+    "xllcorner": 161920,
+    "yllcorner": 9640,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "002_015-32bit.j2c"
+  },
+  "202880, 132520": {
+    "xllcorner": 202880,
+    "yllcorner": 132520,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "003_012-32bit.j2c"
+  },
+  "202880, 91560": {
+    "xllcorner": 202880,
+    "yllcorner": 91560,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "003_013-32bit.j2c"
+  },
+  "202880, 50600": {
+    "xllcorner": 202880,
+    "yllcorner": 50600,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "003_014-32bit.j2c"
+  },
+  "202880, 9640": {
+    "xllcorner": 202880,
+    "yllcorner": 9640,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "003_015-32bit.j2c"
+  },
+  "243840, 132520": {
+    "xllcorner": 243840,
+    "yllcorner": 132520,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "004_012-32bit.j2c"
+  },
+  "243840, 91560": {
+    "xllcorner": 243840,
+    "yllcorner": 91560,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "004_013-32bit.j2c"
+  },
+  "243840, 50600": {
+    "xllcorner": 243840,
+    "yllcorner": 50600,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "004_014-32bit.j2c"
+  },
+  "243840, 9640": {
+    "xllcorner": 243840,
+    "yllcorner": 9640,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "004_015-32bit.j2c"
+  },
+  "284800, 542120": {
+    "xllcorner": 284800,
+    "yllcorner": 542120,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "005_002-32bit.j2c"
+  },
+  "284800, 501160": {
+    "xllcorner": 284800,
+    "yllcorner": 501160,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "005_003-32bit.j2c"
+  },
+  "284800, 460200": {
+    "xllcorner": 284800,
+    "yllcorner": 460200,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "005_004-32bit.j2c"
+  },
+  "284800, 419240": {
+    "xllcorner": 284800,
+    "yllcorner": 419240,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "005_005-32bit.j2c"
+  },
+  "284800, 378280": {
+    "xllcorner": 284800,
+    "yllcorner": 378280,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "005_006-32bit.j2c"
+  },
+  "284800, 337320": {
+    "xllcorner": 284800,
+    "yllcorner": 337320,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "005_007-32bit.j2c"
+  },
+  "284800, 296360": {
+    "xllcorner": 284800,
+    "yllcorner": 296360,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "005_008-32bit.j2c"
+  },
+  "284800, 255400": {
+    "xllcorner": 284800,
+    "yllcorner": 255400,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "005_009-32bit.j2c"
+  },
+  "284800, 214440": {
+    "xllcorner": 284800,
+    "yllcorner": 214440,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "005_010-32bit.j2c"
+  },
+  "284800, 132520": {
+    "xllcorner": 284800,
+    "yllcorner": 132520,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "005_012-32bit.j2c"
+  },
+  "284800, 91560": {
+    "xllcorner": 284800,
+    "yllcorner": 91560,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "005_013-32bit.j2c"
+  },
+  "284800, 50600": {
+    "xllcorner": 284800,
+    "yllcorner": 50600,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "005_014-32bit.j2c"
+  },
+  "284800, 9640": {
+    "xllcorner": 284800,
+    "yllcorner": 9640,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "005_015-32bit.j2c"
+  },
+  "325760, 583080": {
+    "xllcorner": 325760,
+    "yllcorner": 583080,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "006_001-32bit.j2c"
+  },
+  "325760, 542120": {
+    "xllcorner": 325760,
+    "yllcorner": 542120,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "006_002-32bit.j2c"
+  },
+  "325760, 501160": {
+    "xllcorner": 325760,
+    "yllcorner": 501160,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "006_003-32bit.j2c"
+  },
+  "325760, 460200": {
+    "xllcorner": 325760,
+    "yllcorner": 460200,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "006_004-32bit.j2c"
+  },
+  "325760, 419240": {
+    "xllcorner": 325760,
+    "yllcorner": 419240,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "006_005-32bit.j2c"
+  },
+  "325760, 378280": {
+    "xllcorner": 325760,
+    "yllcorner": 378280,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "006_006-32bit.j2c"
+  },
+  "325760, 337320": {
+    "xllcorner": 325760,
+    "yllcorner": 337320,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "006_007-32bit.j2c"
+  },
+  "325760, 296360": {
+    "xllcorner": 325760,
+    "yllcorner": 296360,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "006_008-32bit.j2c"
+  },
+  "325760, 255400": {
+    "xllcorner": 325760,
+    "yllcorner": 255400,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "006_009-32bit.j2c"
+  },
+  "325760, 214440": {
+    "xllcorner": 325760,
+    "yllcorner": 214440,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "006_010-32bit.j2c"
+  },
+  "325760, 173480": {
+    "xllcorner": 325760,
+    "yllcorner": 173480,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "006_011-32bit.j2c"
+  },
+  "325760, 132520": {
+    "xllcorner": 325760,
+    "yllcorner": 132520,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "006_012-32bit.j2c"
+  },
+  "325760, 91560": {
+    "xllcorner": 325760,
+    "yllcorner": 91560,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "006_013-32bit.j2c"
+  },
+  "325760, 50600": {
+    "xllcorner": 325760,
+    "yllcorner": 50600,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "006_014-32bit.j2c"
+  },
+  "366720, 624040": {
+    "xllcorner": 366720,
+    "yllcorner": 624040,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "007_000-32bit.j2c"
+  },
+  "366720, 583080": {
+    "xllcorner": 366720,
+    "yllcorner": 583080,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "007_001-32bit.j2c"
+  },
+  "366720, 542120": {
+    "xllcorner": 366720,
+    "yllcorner": 542120,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "007_002-32bit.j2c"
+  },
+  "366720, 501160": {
+    "xllcorner": 366720,
+    "yllcorner": 501160,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "007_003-32bit.j2c"
+  },
+  "366720, 460200": {
+    "xllcorner": 366720,
+    "yllcorner": 460200,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "007_004-32bit.j2c"
+  },
+  "366720, 419240": {
+    "xllcorner": 366720,
+    "yllcorner": 419240,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "007_005-32bit.j2c"
+  },
+  "366720, 378280": {
+    "xllcorner": 366720,
+    "yllcorner": 378280,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "007_006-32bit.j2c"
+  },
+  "366720, 337320": {
+    "xllcorner": 366720,
+    "yllcorner": 337320,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "007_007-32bit.j2c"
+  },
+  "366720, 296360": {
+    "xllcorner": 366720,
+    "yllcorner": 296360,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "007_008-32bit.j2c"
+  },
+  "366720, 255400": {
+    "xllcorner": 366720,
+    "yllcorner": 255400,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "007_009-32bit.j2c"
+  },
+  "366720, 214440": {
+    "xllcorner": 366720,
+    "yllcorner": 214440,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "007_010-32bit.j2c"
+  },
+  "366720, 173480": {
+    "xllcorner": 366720,
+    "yllcorner": 173480,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "007_011-32bit.j2c"
+  },
+  "366720, 132520": {
+    "xllcorner": 366720,
+    "yllcorner": 132520,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "007_012-32bit.j2c"
+  },
+  "366720, 91560": {
+    "xllcorner": 366720,
+    "yllcorner": 91560,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "007_013-32bit.j2c"
+  },
+  "366720, 50600": {
+    "xllcorner": 366720,
+    "yllcorner": 50600,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "007_014-32bit.j2c"
+  },
+  "407680, 624040": {
+    "xllcorner": 407680,
+    "yllcorner": 624040,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "008_000-32bit.j2c"
+  },
+  "407680, 583080": {
+    "xllcorner": 407680,
+    "yllcorner": 583080,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "008_001-32bit.j2c"
+  },
+  "407680, 542120": {
+    "xllcorner": 407680,
+    "yllcorner": 542120,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "008_002-32bit.j2c"
+  },
+  "407680, 501160": {
+    "xllcorner": 407680,
+    "yllcorner": 501160,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "008_003-32bit.j2c"
+  },
+  "407680, 460200": {
+    "xllcorner": 407680,
+    "yllcorner": 460200,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "008_004-32bit.j2c"
+  },
+  "407680, 419240": {
+    "xllcorner": 407680,
+    "yllcorner": 419240,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "008_005-32bit.j2c"
+  },
+  "407680, 378280": {
+    "xllcorner": 407680,
+    "yllcorner": 378280,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "008_006-32bit.j2c"
+  },
+  "407680, 337320": {
+    "xllcorner": 407680,
+    "yllcorner": 337320,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "008_007-32bit.j2c"
+  },
+  "407680, 296360": {
+    "xllcorner": 407680,
+    "yllcorner": 296360,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "008_008-32bit.j2c"
+  },
+  "407680, 255400": {
+    "xllcorner": 407680,
+    "yllcorner": 255400,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "008_009-32bit.j2c"
+  },
+  "407680, 214440": {
+    "xllcorner": 407680,
+    "yllcorner": 214440,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "008_010-32bit.j2c"
+  },
+  "407680, 173480": {
+    "xllcorner": 407680,
+    "yllcorner": 173480,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "008_011-32bit.j2c"
+  },
+  "407680, 132520": {
+    "xllcorner": 407680,
+    "yllcorner": 132520,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "008_012-32bit.j2c"
+  },
+  "407680, 91560": {
+    "xllcorner": 407680,
+    "yllcorner": 91560,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "008_013-32bit.j2c"
+  },
+  "407680, 50600": {
+    "xllcorner": 407680,
+    "yllcorner": 50600,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "008_014-32bit.j2c"
+  },
+  "448640, 501160": {
+    "xllcorner": 448640,
+    "yllcorner": 501160,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "009_003-32bit.j2c"
+  },
+  "448640, 460200": {
+    "xllcorner": 448640,
+    "yllcorner": 460200,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "009_004-32bit.j2c"
+  },
+  "448640, 419240": {
+    "xllcorner": 448640,
+    "yllcorner": 419240,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "009_005-32bit.j2c"
+  },
+  "448640, 378280": {
+    "xllcorner": 448640,
+    "yllcorner": 378280,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "009_006-32bit.j2c"
+  },
+  "448640, 337320": {
+    "xllcorner": 448640,
+    "yllcorner": 337320,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "009_007-32bit.j2c"
+  },
+  "448640, 296360": {
+    "xllcorner": 448640,
+    "yllcorner": 296360,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "009_008-32bit.j2c"
+  },
+  "448640, 255400": {
+    "xllcorner": 448640,
+    "yllcorner": 255400,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "009_009-32bit.j2c"
+  },
+  "448640, 214440": {
+    "xllcorner": 448640,
+    "yllcorner": 214440,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "009_010-32bit.j2c"
+  },
+  "448640, 173480": {
+    "xllcorner": 448640,
+    "yllcorner": 173480,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "009_011-32bit.j2c"
+  },
+  "448640, 132520": {
+    "xllcorner": 448640,
+    "yllcorner": 132520,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "009_012-32bit.j2c"
+  },
+  "448640, 91560": {
+    "xllcorner": 448640,
+    "yllcorner": 91560,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "009_013-32bit.j2c"
+  },
+  "448640, 50600": {
+    "xllcorner": 448640,
+    "yllcorner": 50600,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "009_014-32bit.j2c"
+  },
+  "489600, 501160": {
+    "xllcorner": 489600,
+    "yllcorner": 501160,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "010_003-32bit.j2c"
+  },
+  "489600, 460200": {
+    "xllcorner": 489600,
+    "yllcorner": 460200,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "010_004-32bit.j2c"
+  },
+  "489600, 419240": {
+    "xllcorner": 489600,
+    "yllcorner": 419240,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "010_005-32bit.j2c"
+  },
+  "489600, 378280": {
+    "xllcorner": 489600,
+    "yllcorner": 378280,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "010_006-32bit.j2c"
+  },
+  "489600, 337320": {
+    "xllcorner": 489600,
+    "yllcorner": 337320,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "010_007-32bit.j2c"
+  },
+  "489600, 296360": {
+    "xllcorner": 489600,
+    "yllcorner": 296360,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "010_008-32bit.j2c"
+  },
+  "489600, 255400": {
+    "xllcorner": 489600,
+    "yllcorner": 255400,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "010_009-32bit.j2c"
+  },
+  "489600, 214440": {
+    "xllcorner": 489600,
+    "yllcorner": 214440,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "010_010-32bit.j2c"
+  },
+  "489600, 173480": {
+    "xllcorner": 489600,
+    "yllcorner": 173480,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "010_011-32bit.j2c"
+  },
+  "489600, 132520": {
+    "xllcorner": 489600,
+    "yllcorner": 132520,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "010_012-32bit.j2c"
+  },
+  "489600, 91560": {
+    "xllcorner": 489600,
+    "yllcorner": 91560,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "010_013-32bit.j2c"
+  },
+  "530560, 419240": {
+    "xllcorner": 530560,
+    "yllcorner": 419240,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "011_005-32bit.j2c"
+  },
+  "530560, 378280": {
+    "xllcorner": 530560,
+    "yllcorner": 378280,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "011_006-32bit.j2c"
+  },
+  "530560, 337320": {
+    "xllcorner": 530560,
+    "yllcorner": 337320,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "011_007-32bit.j2c"
+  },
+  "530560, 296360": {
+    "xllcorner": 530560,
+    "yllcorner": 296360,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "011_008-32bit.j2c"
+  },
+  "530560, 255400": {
+    "xllcorner": 530560,
+    "yllcorner": 255400,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "011_009-32bit.j2c"
+  },
+  "530560, 214440": {
+    "xllcorner": 530560,
+    "yllcorner": 214440,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "011_010-32bit.j2c"
+  },
+  "530560, 173480": {
+    "xllcorner": 530560,
+    "yllcorner": 173480,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "011_011-32bit.j2c"
+  },
+  "530560, 132520": {
+    "xllcorner": 530560,
+    "yllcorner": 132520,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "011_012-32bit.j2c"
+  },
+  "530560, 91560": {
+    "xllcorner": 530560,
+    "yllcorner": 91560,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "011_013-32bit.j2c"
+  },
+  "571520, 337320": {
+    "xllcorner": 571520,
+    "yllcorner": 337320,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "012_007-32bit.j2c"
+  },
+  "571520, 296360": {
+    "xllcorner": 571520,
+    "yllcorner": 296360,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "012_008-32bit.j2c"
+  },
+  "571520, 255400": {
+    "xllcorner": 571520,
+    "yllcorner": 255400,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "012_009-32bit.j2c"
+  },
+  "571520, 214440": {
+    "xllcorner": 571520,
+    "yllcorner": 214440,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "012_010-32bit.j2c"
+  },
+  "571520, 173480": {
+    "xllcorner": 571520,
+    "yllcorner": 173480,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "012_011-32bit.j2c"
+  },
+  "571520, 132520": {
+    "xllcorner": 571520,
+    "yllcorner": 132520,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "012_012-32bit.j2c"
+  },
+  "571520, 91560": {
+    "xllcorner": 571520,
+    "yllcorner": 91560,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "012_013-32bit.j2c"
+  },
+  "612480, 337320": {
+    "xllcorner": 612480,
+    "yllcorner": 337320,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "013_007-32bit.j2c"
+  },
+  "612480, 296360": {
+    "xllcorner": 612480,
+    "yllcorner": 296360,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "013_008-32bit.j2c"
+  },
+  "612480, 255400": {
+    "xllcorner": 612480,
+    "yllcorner": 255400,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "013_009-32bit.j2c"
+  },
+  "612480, 214440": {
+    "xllcorner": 612480,
+    "yllcorner": 214440,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "013_010-32bit.j2c"
+  },
+  "612480, 173480": {
+    "xllcorner": 612480,
+    "yllcorner": 173480,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "013_011-32bit.j2c"
+  },
+  "612480, 132520": {
+    "xllcorner": 612480,
+    "yllcorner": 132520,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "013_012-32bit.j2c"
+  },
+  "612480, 91560": {
+    "xllcorner": 612480,
+    "yllcorner": 91560,
+    "nrows": 4096,
+    "ncols": 4096,
+    "source_filename": "013_013-32bit.j2c"
+  }
+}

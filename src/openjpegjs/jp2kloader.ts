@@ -22,11 +22,11 @@ export interface TextureTile {
 }
 export interface PixFrame {
   frameInfo: FrameInfo;
-  pixData: Uint16Array;
+  pixData: Uint16Array | Float32Array;
 }
 export interface TexFrame {
   frameInfo: FrameInfo;
-  texData: Uint16Array; //<-- ? xx this was a lie for a while, true again now... 
+  texData: Uint16Array | Float32Array;
   //not all code here is very clean wrt naming etc. at the moment.
 }
 
@@ -35,7 +35,7 @@ workers.maxAge = 9e9;
 //^^^ long life because I have a slight bug when new workers init.
 //not much point in retiring, I think I had a memory leak before because I kept making new decoders
 const times: number[] = [];
-export async function getTexDataU16(url: string, compressionRatio = 1) : Promise<TexFrame> {
+async function getTexData(url: string, fullFloat: boolean, compressionRatio = 1) : Promise<TexFrame> {
   const worker = await workers.getWorker();
   const t = Date.now();
   const promise = new Promise<TexFrame>(async (resolve, reject) => {
@@ -48,17 +48,17 @@ export async function getTexDataU16(url: string, compressionRatio = 1) : Promise
       if (typeof m.data === "string") reject(m.data);
       resolve(m.data as TexFrame);
     }
-    if (compressionRatio === 1) worker.postMessage({cmd: "tex", url: url});
+    if (compressionRatio === 1) worker.postMessage({cmd: "tex", url: url, fullFloat: fullFloat});
     else worker.postMessage({cmd: "recode", url: url, compressionRatio: compressionRatio});
   });
   return promise;
 }
 const textureCache = new Map<string, TextureTile>();
 
-export async function jp2Texture(url: string) {
+export async function jp2Texture(url: string, fullFloat: boolean) {
   //what if someone else is already waiting for it but it's not in the cache yet?
   if (textureCache.has(url)) return textureCache.get(url) as TextureTile;
-  const result = await getTexDataU16(url);
+  const result = await getTexData(url, fullFloat);
   const frameInfo = result.frameInfo;
   // console.log(JSON.stringify(frameInfo, null, 2));
 
@@ -70,8 +70,9 @@ export async function jp2Texture(url: string) {
   //internalFormat = gl.DEPTH_COMPONENT16; format = gl.DEPTH_COMPONENT; type = gl.UNSIGNED_SHORT; // OK, red
   // const texture = new THREE.DataTexture(result.texData, frameInfo.width, frameInfo.height, THREE.RGBFormat, THREE.UnsignedByteType);
   const format = THREE.RedFormat;
-  const type = THREE.HalfFloatType;
-  const texture = new THREE.DataTexture(result.texData, frameInfo.width, frameInfo.height, format, type);
+  const type = fullFloat ? THREE.FloatType : THREE.HalfFloatType;
+  const d = fullFloat ? new Float32Array(result.texData) : result.texData;
+  const texture = new THREE.DataTexture(d, frameInfo.width, frameInfo.height, format, type);
   texture.minFilter = texture.magFilter = THREE.LinearFilter;
   texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
   texture.generateMipmaps = true; //TODO: test & make sure full use being made...

@@ -5,6 +5,7 @@ const readline = require('readline');
 
 const path = '/Volumes/BlackSea/GIS/DEFRA/LIDAR_10m_DTM_Composite_2019/LIDAR_10m_DTM_Composite.tif';
 const outPath = '/Volumes/BlackSea/GIS/DEFRA/LIDAR_10m_DTM_Composite_2019/htj2k/';
+const catPath = '../src/geo';
 let encoder; //hacky async init this later when 'probably' done.
 //const encoder = new jph.HTJ2KEncoder();
 let decoder;
@@ -55,7 +56,7 @@ function toHalf(val) {
     return bits;
 }
 
-async function compressAndSave(data, frameInfo, name) {
+async function compressAndSave(data, frameInfo, name, test) {
   let [vals] = data;
   const anyGood = vals.find(v => v < BAD_THRESH);
   if (anyGood === undefined) {
@@ -124,38 +125,48 @@ GeoTIFF.fromFile(path).then(async (tiff) => {
     return [left, top, right, bottom];
   }
 
+  async function compareFile(f) {
+    const win = windowFromImgName(f);
+    const encodedBitstreamP = fs.promises.readFile(outPath + f);
+    const referenceDataP = image.readRasters({window: win, fillValue: NEW_BAD_VALUE});
+    const [encodedBitstream, referenceDataA] = await Promise.all([encodedBitstreamP, referenceDataP]);
+    let [referenceData] = referenceDataA;
+    referenceData = referenceData.map(v => v > BAD_THRESH ? NEW_BAD_VALUE : v);
+    const encodedBuffer = decoder.getEncodedBuffer(encodedBitstream.length);
+    encodedBuffer.set(encodedBitstream);
+    decoder.decode();
+    const decRaw = decoder.getDecodedBuffer(); //Uint8Array
+    //stats still showing min=0 max=255 even though I'm trying to turn into Float32.
+    //why am I getting NaN when I do `new Float32Array(decRaw.buffer)`?
+    //perhaps need to clarify endianness & use DataView instead?
+    const decodedBuffer = new Float32Array(decRaw.buffer, decRaw.byteOffset, decRaw.byteLength/4);
+    const dv = new DataView(decRaw.buffer);
+
+    console.log('reference data', f);
+    //printStats(referenceData);
+    const info = decoder.getFrameInfo();
+    console.log('decoded data', JSON.stringify(info));
+    // printStats(decodedBuffer);
+
+    const a = referenceData[0], b = dv.getFloat32(0, true), c = dv.getFloat32(0, false);// decodedBuffer[0];
+    console.log(a, b, Math.sqrt((a-b)**2));
+    console.log(a, c, Math.sqrt((a-c)**2));
+    const errSq = (v, i) => {
+      const ref = referenceData[i];
+      const r = ref > BAD_THRESH ? NEW_BAD_VALUE : ref;
+      return (v-r)**2;
+    }
+    const mse = decodedBuffer.map(errSq).reduce((a,b)=>a+b, 0) / decodedBuffer.length;
+    const rmse = Math.sqrt(mse);
+    console.log('rmse:', rmse);
+  }
+  await compareFile('007_012-32bit.j2c');
   (async function compare() {
     for (let i=0; i<compressedFiles.length; i++) {
       const f = compressedFiles[i];
-      const win = windowFromImgName(f);
-      const encodedBitstreamP = fs.promises.readFile(outPath + f);
-      const referenceDataP = image.readRasters({window: win, fillValue: NEW_BAD_VALUE});
-      const [encodedBitstream, referenceDataA] = await Promise.all([encodedBitstreamP, referenceDataP]);
-      let [referenceData] = referenceDataA;
-      referenceData = referenceData.map(v => v > BAD_THRESH ? NEW_BAD_VALUE : v);
-      const encodedBuffer = decoder.getEncodedBuffer(encodedBitstream.length);
-      encodedBuffer.set(encodedBitstream);
-      decoder.decode();
-      const decRaw = decoder.getDecodedBuffer(); //Uint8Array
-      const decodedBuffer = new Float32Array(decRaw, decRaw.byteOffset, decRaw.byteLength/4);
-      console.log('reference data', f);
-      printStats(referenceData);
-      const info = decoder.getFrameInfo();
-      console.log('decoded data', JSON.stringify(info));
-      printStats(decodedBuffer);
-
-      const a = referenceData[0], b = decodedBuffer[0];
-      console.log(a, b, Math.sqrt((a-b)**2));
-      const errSq = (v, i) => {
-        const ref = referenceData[i];
-        const r = ref > BAD_THRESH ? NEW_BAD_VALUE : ref;
-        return (v-r)**2;
-      }
-      const mse = decodedBuffer.map(errSq).reduce((a,b)=>a+b, 0) / decodedBuffer.length;
-      const rmse = Math.sqrt(mse);
-      console.log('rmse:', rmse);
+      await compareFile(f);
     }
-  })();
+  });
   (async function compress() {
     console.log(`making ${nx}x${ny} tiles...`);
     //https://github.com/chafey/openjphjs/blob/master/src/FrameInfo.hpp
@@ -181,7 +192,7 @@ GeoTIFF.fromFile(path).then(async (tiff) => {
         // if (compressedFiles.includes(name)) continue;
         const data = await image.readRasters({window: win, fillValue: NEW_BAD_VALUE});
         // console.log(`got data in`, Date.now()-t);
-        const r = await compressAndSave(data, frameInfo, name);
+        const r = await compressAndSave(data, frameInfo, name, true);
         // process.stdout.write(r ? '.' : ' ');
       }
     }
@@ -195,7 +206,7 @@ GeoTIFF.fromFile(path).then(async (tiff) => {
       fs.writeFile(outPath+f+'.json', json, ()=>{console.log('wrote metadata for', f)});
     });
 
-    fs.writeFile(outPath+'10m_dtm_catalog.json', JSON.stringify(catalog, null, 2), ()=>{console.log('wrote catalog')});
+    fs.writeFile(catPath+'10m_dtm_catalog.json', JSON.stringify(catalog, null, 2), ()=>{console.log('wrote catalog')});
   });
 }).catch(err => {
   console.error('ERROR!');

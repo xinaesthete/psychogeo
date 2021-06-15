@@ -4,17 +4,19 @@ import { globalUniforms } from '../threact/threact';
 import { computeTriangleGridIndices, ThreactTrackballBase } from '../threact/threexample';
 import { EastNorth } from './Coordinates';
 import * as dsm_cat from './dsm_catalog.json' //pending rethink of API...
+import * as dtm_10m from './10m_dtm_catalog.json' //similarly pending rethink of API...
 import { threeGeometryFromShpZip } from './ShpProcessor';
 import { applyCustomDepth, applyCustomDepthForViewshed, getTileMaterial, tileLoadingMat } from './TileShader';
 import { loadGpxGeometry } from './TrackVis';
 
 
 const cat = (dsm_cat as any).default;
+const cat10m = (dtm_10m as any).default;
 type DsmSources = Partial<Record<"500" | "1000" | "2000", string>>;
 interface DsmCatItem {
-    min_ele: number;
-    max_ele: number;
-    valid_percent: number,
+    min_ele?: number;
+    max_ele?: number;
+    valid_percent?: number,
     xllcorner: number,
     yllcorner: number,
     nrows: number,
@@ -30,6 +32,7 @@ interface DsmCatItem {
  * used to derive index for looking up in catalog / cache.
  */
 function truncateEastNorth(coord: EastNorth) {
+    //XXX: tried passing 4096 instead of 1000, but WRONG.
     const e = Math.floor(coord.east /1000) * 1000;
     const n = Math.floor(coord.north/1000) * 1000;
     return {east: e, north: n};
@@ -39,15 +42,16 @@ function truncateEastNorth(coord: EastNorth) {
  * @param x 
  * @param y 
  */
-export function getTileProperties(coord: EastNorth) {
+export function getTileProperties(coord: EastNorth, lowRes = false) {
     const low = truncateEastNorth(coord);
     //almost robust enough for critical medical data...
     const k = low.east + ", " + low.north;
 
-    return cat[k] as DsmCatItem;
+    return lowRes ? cat10m[k] : cat[k] as DsmCatItem;
 }
 
-export function getImageFilename(source_filename: string) {
+export function getImageFilename(source_filename: string, lowRes = false) {
+    if (lowRes) return "/ltile/" + source_filename;
     return "/tile/" + source_filename; // /tile/ interpreted as url for fetch, tile: uses electron api
 }
 
@@ -96,17 +100,20 @@ const nullInfo: DsmCatItem = {
 };
 nullInfo.mesh!.userData.isNull = true;
 
-
-async function getTileMesh(coord: EastNorth) {
-    let info = getTileProperties(coord) || nullInfo;
+// at the moment, this is only called from LazyLoader which already has it's info object
+// we shouldn't really be making a whole grid of these things, but as of now, could be passing that
+// rather than coord
+async function getTileMesh(info: DsmCatItem, lowRes = false) {
+    //let's call this differently for a low-res layer.
+    // let info = getTileProperties(coord, lowRes) || nullInfo;
     // if (info.mesh) return info; //!!! this breaks when more than one scene uses the same tile.
     //// but we'll still be using a cached texture.
 
     const sources = info.sources;
-    const source = sources[2000] || sources[1000] || sources[500]!;
-    const url = getImageFilename(source);
+    const source = !sources ? info.source_filename : sources[2000] || sources[1000] || sources[500]!;
+    const url = getImageFilename(source, lowRes);
     
-    const {texture, frameInfo} = await JP2.jp2Texture(url);
+    const {texture, frameInfo} = await JP2.jp2Texture(url, lowRes); //lowRes also means 'fullFloat' at the moment
     const w = frameInfo.width, h = frameInfo.height;
     const uniforms = {
         heightFeild: { value: texture },
@@ -129,14 +136,18 @@ async function getTileMesh(coord: EastNorth) {
     const mesh = new THREE.Mesh(geo, mat);
     applyCustomDepth(mesh, uniforms);
     mesh.castShadow = true;
-    mesh.receiveShadow = true; //unfortunately, I don't see them...
-    mesh.scale.set(1000, 1000, info.max_ele-info.min_ele);
-    mesh.position.z = info.min_ele;
+    mesh.receiveShadow = true;
+    const s = lowRes ? 40960 : 1000;
+    // for now there's a weak convention that lowRes also means non-normalised data
+    // and doesn't include stats. that might change, and we should more clearly flag.
+    const eleScale = lowRes ? 1 : info.max_ele! - info.min_ele!;
+    mesh.scale.set(s, s, eleScale);
+    mesh.position.z = info.min_ele??0;
 
     mesh.onBeforeRender = (r, s, cam, g, mat, group) => {
         mesh.userData.lastRender = Date.now();
     }
-    const dCam = new THREE.Vector3(), offset = new THREE.Vector3(500, 500, info.min_ele), pos = new THREE.Vector3();
+    const dCam = new THREE.Vector3(), offset = new THREE.Vector3(s/2, s/2, info.min_ele??0), pos = new THREE.Vector3();
     mesh.userData.updateLOD = (otherPos: THREE.Vector3) => {
         //TODO: different LOD for shadow vs view (I think this is only called once per frame, how do I intercept shadow pass?)
         //-- could have seperate LOD in MeshDepthMaterial / MeshDistanceMaterial I guess.
@@ -190,25 +201,30 @@ class LazyTile {
     constructor(info: DsmCatItem, origin: EastNorth, parent: THREE.Object3D) {
         let obj = this.object3D = new THREE.Mesh(LazyTile.loaderGeometry, LazyTile.loaderMat);
         const coord = {east: info.xllcorner, north: info.yllcorner};
-        const dx = info.xllcorner - origin.east;
+        const dx = info.xllcorner - origin.east; //these values look bad for lowRes tiles.
         const dy = info.yllcorner - origin.north;
-        obj.position.x = dx + 500;
-        obj.position.y = dy + 500;
-        obj.position.z = info.min_ele;
-        obj.scale.set(1000, 1000, info.max_ele-info.min_ele);
+        const lowRes = info.max_ele === undefined;
+        const s = lowRes ? 40960 : 1000;
+        obj.position.x = dx + s/2;
+        obj.position.y = dy + s/2;
+        obj.position.z = info.min_ele??0;
+        //info should really have grid size, hacking in on the basis of what is true right now
+        //but future Pete / anyone else attempting to maintain code will not be happy if not fixed
+        const eleScale = lowRes? 1 : info.max_ele!-info.min_ele!;
+        obj.scale.set(s, s, eleScale);
         parent.add(obj);
         obj.onBeforeRender = () => {
             this.status = TileStatus.Loading;
             parent.remove(obj);
             const loadingMesh = new THREE.Mesh(obj.geometry, tileLoadingMat);
-            loadingMesh.position.x = dx + 500;
-            loadingMesh.position.y = dy + 500;
-            loadingMesh.position.z = info.min_ele;
-            loadingMesh.scale.set(1000, 1000, info.max_ele-info.min_ele);
+            loadingMesh.position.x = dx + s/2;
+            loadingMesh.position.y = dy + s/2;
+            loadingMesh.position.z = info.min_ele??0;
+            loadingMesh.scale.set(s, s, eleScale);
             parent.add(loadingMesh);
     
             //TODO: add intermediate 'loading' graphic & 'error' debug info.
-            getTileMesh(coord).then(m => {
+            getTileMesh(info, lowRes).then(m => {
                 this.status = TileStatus.Loaded;
                 parent.remove(loadingMesh);
                 m.mesh!.position.x = dx;
@@ -283,6 +299,7 @@ async function getOSDelaunayMesh(coord: EastNorth, origin: EastNorth) {
 export interface TerrainOptions {
     osTerr50Layer?: boolean;
     defraDSMLayer?: boolean;
+    defra10mDTMLayer?: boolean;
     tracks?: Track[];
     camZ: number;
 }
@@ -297,7 +314,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
     tiles: LazyTile[] = [];
     options: TerrainOptions;
     constructor(coord: EastNorth, options: TerrainOptions = {
-        osTerr50Layer: true, defraDSMLayer: false, camZ: 15000
+        osTerr50Layer: false, defraDSMLayer: false, camZ: 15000, defra10mDTMLayer: true
     }) {
         super();
         this.coord = {...coord};
@@ -315,8 +332,8 @@ export class TerrainRenderer extends ThreactTrackballBase {
         const m = new THREE.Mesh(new THREE.SphereBufferGeometry(5, 30, 30), markerMat);
         // m.position.x = this.coord.east - info.xllcorner;
         // m.position.y = this.coord.north - info.yllcorner;
-        m.position.z = info.min_ele;
-        m.scale.z = (info.max_ele - info.min_ele) / 10;
+        m.position.z = info.min_ele??0;
+        m.scale.z = (info.max_ele! - info.min_ele!) / 10;
 
         this.scene.add(m);
     }
@@ -344,6 +361,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
         //this.shpTest();
         if (this.options.osTerr50Layer) this.bigShpTest();
         if (this.options.defraDSMLayer && !onlyDebugGeometry) this.makeTiles().then(v => {console.log('finished making tiles')});
+        if (this.options.defra10mDTMLayer) this.makeTiles(true).then(v => {console.log('finished making low-res tiles')});
     }
     sunLight() {
         //at some point I may want to have something more usefully resembling sun, just testing for now.
@@ -356,9 +374,9 @@ export class TerrainRenderer extends ThreactTrackballBase {
     planeBaseTest() {
         const geo = new THREE.PlaneBufferGeometry(10000, 10000, 2000, 2000);
         const mat = new THREE.MeshStandardMaterial();
-        JP2.jp2Texture(getImageFilename(this.tileProp.source_filename)).then(({texture, frameInfo}) => {
+        JP2.jp2Texture(getImageFilename(this.tileProp.source_filename), false).then(({texture, frameInfo}) => {
             mat.displacementMap = texture;
-            mat.displacementScale = (this.tileProp.max_ele - this.tileProp.min_ele) * 10;
+            mat.displacementScale = (this.tileProp.max_ele! - this.tileProp.min_ele!) * 10;
             const m = new THREE.Mesh(geo, mat);
             m.frustumCulled = false;
             //this is interesting: shadows definitely not working with either / both DoubleSide
@@ -381,8 +399,8 @@ export class TerrainRenderer extends ThreactTrackballBase {
             }
         }
     }
-    async makeTiles() {
-        Object.entries(cat).forEach((k) => {
+    async makeTiles(lowRes = false) {
+        Object.entries(lowRes ? cat10m : cat).forEach((k) => {
             const info = k[1] as DsmCatItem;
             this.tiles.push(new LazyTile(info, this.coord, this.scene));
         });

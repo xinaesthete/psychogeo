@@ -60,6 +60,9 @@ function toHalf(val) {
 }
 
 function getPixelData(frameInfo, decodedBuffer) {
+    if (frameInfo.bitsPerSample === 32) {
+        return new Float32Array(decodedBuffer.buffer, decodedBuffer.byteLength, decodedBuffer.byteLength / 4);
+    }
     if (frameInfo.bitsPerSample > 8) {
         if (frameInfo.isSigned) {
             return new Int16Array(decodedBuffer.buffer, decodedBuffer.byteOffset, decodedBuffer.byteLength / 2);
@@ -85,6 +88,7 @@ async function decodeData(encodedBitstream) {
 async function decodeFromURL(url) {
     // if (!j) j = await OpenJPEGWASM();
     const response = await fetch(url);
+    if (!response.ok) throw 'failed to fetch ' + url;
     const encodedBitstream = new Uint8Array(await response.arrayBuffer());
     return decodeData(encodedBitstream);
 }
@@ -109,11 +113,11 @@ async function decodeTexToRGB(url) {
     return { texData: splitData, frameInfo: frameInfo };
 }
 
-async function decodeTex(url) {
+async function decodeTex(url, fullFloat) {
     const { pixelData, frameInfo } = await decodeFromURL(url);
-    const halfFloatData = pixelData.map(v => toHalf(v / (1<<16)));
+    const texData = fullFloat && frameInfo.bitsPerSample === 32 ? pixelData.map(v=>v) : pixelData.map(v => toHalf(v / (1<<16)));
     
-    return { texData: halfFloatData, frameInfo: frameInfo };
+    return { texData, frameInfo };
 }
 
 async function recode(url, q) {
@@ -142,7 +146,7 @@ onmessage = async m => {
     try {
         switch (m.data.cmd) {
             case "tex":
-                const r = await decodeTex(m.data.url);
+                const r = await decodeTex(m.data.url, m.data.fullFloat);
                 postMessage(r, [r.texData.buffer]);
                 break;
             case "recode":

@@ -20,15 +20,22 @@ app.get('/ping', function (req, res) {
   return res.send('pong ' + req.path);
 });
 
-const tileFolder = "C:/Users/peter/Dropbox/BlenderGIS/pyUtil/images/jph2/";
+const tileFolder = "/Users/peter/Dropbox/BlenderGIS/pyUtil/images/jph2/";
 const tileSuffix = "_normalised_rate0.j2c";
 app.get('/tile*', function(req, res) {
   const name = req.url.substring(6);
   const p = path.join(tileFolder, name + tileSuffix);
   res.sendFile(p);
 });
+const ltileFolder = '/Volumes/BlackSea/GIS/DEFRA/LIDAR_10m_DTM_Composite_2019/htj2k/';
+app.get('/ltile*', function(req, res) {
+  console.log('serving', req.url);
+  const name = req.url.substring(7);
+  const p = path.join(ltileFolder, name);
+  res.sendFile(p);
+});
 // const osFolder = "G:/GIS/OS terr50/data/";
-const osFolder = "C:/Users/peter/Dropbox/BlenderGIS/OS terr50/data";
+const osFolder = "/Users/peter/Dropbox/BlenderGIS/OS terr50/data";
 const osSuffix = "_OST50CONT_20190530.zip";
 app.get('/os*', function(req, res) {
   const name = req.url.substring(4);
@@ -36,7 +43,7 @@ app.get('/os*', function(req, res) {
   const p = path.join(osFolder, letters, name + osSuffix);
   res.sendFile(p);
 });
-const gpxFolder = "C:/Users/peter/Dropbox/tracklogs/";
+const gpxFolder = "/Users/peter/Dropbox/tracklogs/";
 app.get('/gpx*', function(req, res) {
   const name = req.url.substring(5);
   const p = path.join(gpxFolder, unescape(name));
