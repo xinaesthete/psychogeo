@@ -123,7 +123,9 @@ function getPoints(featureCol: FeatureCollection) {
     });
 }
 
-//const workers = new WorkerPool(8, "shp-worker.js");
-const workers = new WorkerPool(8, "rust_experiment/worker.js");
+const workers = new WorkerPool(8, "shp-worker.js");
+// const workers = new WorkerPool(8, "rust_experiment/worker.js");
 workers.maxAge = 9e9;
 //may be a problem with first workers because module not loaded properly yet
+//2021-06-15::: needs review: Rust version had been working, but not now on MBP
+//perhaps it only worked on Windows desktop?
