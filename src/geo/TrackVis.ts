@@ -150,9 +150,14 @@ function parseGPX(source: string) {
     const xml = parser.parseFromString(source, 'text/html');
 
     const segsRaw = [...xml.getElementsByTagName('trkseg')];
-    const segsParsed = segsRaw.map(trksegProcess)[0];
-    
-    return segsParsed;
+    if (segsRaw.length !== 0) {
+        const segsParsed = segsRaw.map(trksegProcess)[0];
+        
+        return segsParsed;
+    }
+    const rteRaw = [...xml.getElementsByTagName('rte')];
+    const rteParsed = rteRaw.map(rteProcess)[0];
+    return rteParsed;
 }
 
 function trksegProcess(trkseg: Element): GpxTrackpoint[] {
@@ -173,3 +178,37 @@ function trksegProcess(trkseg: Element): GpxTrackpoint[] {
     return points;
 }
 
+//TODO GPX parser to handle 'routes' vs tracks. 
+// <rte>
+// <name>King Alfreds Way 2020 Final Route</name>
+// <rtept lat="51.0636310" lon="-1.3190900">
+//   <ele>55.5</ele>
+//   <name>Winchester - Westgate</name>
+//   <desc>Route Starts at the Western gate of Winchester City, Close to the medieval Great Hall and site of the ancient Winchester Castle </desc>
+// </rtept>
+// <rtept lat="51.0636690" lon="-1.3196130">
+//   <ele>59.1</ele>
+// </rtept>
+// <rtept lat="51.0648300" lon="-1.3204540">
+//   <ele>66</ele>
+// </rtept>
+// </rte>
+//Also, this particular file has a lot of interesting metadata in waypoints
+//eg:
+// <wpt lat="51.0636310" lon="-1.3190900">
+//   <ele>55.5</ele>
+//   <name>Winchester - Westgate</name>
+//   <desc>Route Starts at the Western gate of Winchester City, Close to the medieval Great Hall and site of the ancient Winchester Castle </desc>
+// </wpt>
+function rteProcess(rte: Element): GpxTrackpoint[] {
+    const pointsRaw = [...rte.getElementsByTagName('rtept')];
+    const points: GpxTrackpoint[] = pointsRaw.map((p, i) => {
+        return {
+            lat: F(p.attributes.getNamedItem('lat')!.value),
+            lon: F(p.attributes.getNamedItem('lon')!.value),
+            altitude: F(p.getElementsByTagName('ele')[0].innerHTML),
+            time: new Date(i)
+        }
+    });
+    return points;
+}
