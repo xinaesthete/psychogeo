@@ -164,9 +164,9 @@ const shadowmap_vertexChunk = glsl`
 `;
 
 const emissivemap_fragmentChunk = glsl`
-    totalEmissiveRadiance.rgb += vec3(getHeight(vUv)/800.);
-    totalEmissiveRadiance.r += computeSteepness() * 0.2;
-    totalEmissiveRadiance.gb += vec2(computeContour() * 0.7);
+    totalEmissiveRadiance.rgb += vec3(getHeight(vUv)/2000.);
+    totalEmissiveRadiance.g += min(computeSteepness() * 0.01, 0.1);
+    totalEmissiveRadiance.rgb += computeContour() * vec3(0.1, 0.5, 0.7);
     // totalEmissiveRadiance.rgb = computeNormal(vUv, computePos(vUv));
 `;
 
