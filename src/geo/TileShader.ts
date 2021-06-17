@@ -164,7 +164,10 @@ const shadowmap_vertexChunk = glsl`
 `;
 
 const emissivemap_fragmentChunk = glsl`
+    totalEmissiveRadiance.rgb += vec3(getHeight(vUv)/800.);
+    totalEmissiveRadiance.r += computeSteepness() * 0.2;
     totalEmissiveRadiance.gb += vec2(computeContour() * 0.7);
+    // totalEmissiveRadiance.rgb = computeNormal(vUv, computePos(vUv));
 `;
 
 
@@ -192,6 +195,8 @@ function patchFragmentShader(fragmentShader: string) {
     precision highp float;
     //out vec4 col;
     uniform sampler2D heightFeild;
+    uniform vec2 EPS;
+    uniform float horizontalScale;
     uniform float heightMin, heightMax;
     uniform float iTime;
     varying float normalisedHeight;
@@ -207,23 +212,41 @@ function patchFragmentShader(fragmentShader: string) {
     float getHeight(vec2 uv) {
         return mapHeight(getNormalisedHeight(uv));
     }
-    // float aastep(float threshold, float value) {
-    //     float afwidth = length(vec2(dFdx(value), dFdy(value))) * 0.70710678118654757;
-    //     return smoothstep(threshold-afwidth, threshold+afwidth, value);
-    // }
+    float aastep(float threshold, float value) {
+        float afwidth = length(vec2(dFdx(value), dFdy(value))) * 0.70710678118654757;
+        return smoothstep(threshold-afwidth, threshold+afwidth, value);
+    }
+    vec4 computePos(vec2 uv) {
+        return vec4((uv) * horizontalScale, getNormalisedHeight(uv), 1.0);
+    }
+    vec3 computeNormal(vec2 uv, vec4 pos) {
+        //what about the edges?
+        vec3 p = pos.xyz;
+        vec3 dx = normalize(computePos(uv + vec2(EPS.x, 0.)).xyz - p);
+        vec3 dy = normalize(computePos(uv + vec2(0., EPS.y)).xyz - p);
+        return normalize(cross(dx, dy)).xyz;
+        // return vec3(0.,0.,1.);
+    }
+    float computeContour() {
+        float h = getHeight(vUv);
+        float afwidth = length(vec2(dFdx(h), dFdy(h))) * 0.70710678118654757;
+        
+        h = mod(h-3.*iTime, 5.)/5.;
+        float sm = 0.2*afwidth;// 0.2;
+        h = max(smoothstep(1.-sm, 1.0, h), smoothstep(sm, 0., h));
+        // h = aastep(0.5, h);
+        return h;
+    }
     //this function seems quite good at showing up certain artefacts...
     float computeSteepness() {
         // return pow(1.-abs(dot(vec3(0.,0.,1.), computeNormal())), 0.5);
         //XXX: copying this into depth/distance shader (where it's not used) lead to compiler error
         //vNormal not defined.
-        return 0.; //pow(1.-abs(dot(vec3(0.,0.,1.), vNormal)), 0.5);
-    }
-    float computeContour() {
+        // vec3 normal = computeNormal(vUv, computePos(vUv));
+        // return 1.-pow(dot(vec3(0.,0.,1.), normal), 0.02);
         float h = getHeight(vUv);
-        h = mod(h-3.*iTime, 5.)/5.;
-        h = max(smoothstep(0.98, 1.0, h), smoothstep(0.02, 0., h));
-        //h = aastep(0.5, h);
-        return h;
+        float afwidth = length(vec2(dFdx(h), dFdy(h))) * 0.70710678118654757;
+        return afwidth;
     }
     ///----------------------------------
     `;
