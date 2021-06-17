@@ -55,6 +55,7 @@
     ]
   },
   "devDependencies": {
+    "geotiff": "^1.0.4",
     "snowpack": "^3.0.11"
   }
 }

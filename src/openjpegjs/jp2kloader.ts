@@ -36,6 +36,28 @@ workers.maxAge = 9e9;
 //not much point in retiring, I think I had a memory leak before because I kept making new decoders
 const times: number[] = [];
 async function getTexData(url: string, fullFloat: boolean, compressionRatio = 1) : Promise<TexFrame> {
+  if (url.startsWith('/ttile')) {
+    const r = await fetch(url);
+    const frameInfo:FrameInfo = {width: 4096, height: 4096, isSigned: true, bitsPerSample: 32, componentCount: 1};
+    const buf = await r.arrayBuffer();
+    // for some reason, this doesn't appear to resemble the data that I'm expecting.
+    // I get an error that the byteLength is not a multiple of 4.
+    // If I try to slice a portion from the start & turn that into a Float32Array, it doesn't appear to contain relevant values.
+    const texData = new Float32Array(buf);//.map(v => Number.isNaN(v) ? -200 : v);
+    if (texData.length !== frameInfo.width * frameInfo.height) {
+      console.error(`that ain't gonna work - ${texData.length} isn't expected length (${frameInfo.width*frameInfo.height})`);
+    }
+    // const min = texData.reduce((a,b) => Math.min(a, b), Number.MAX_VALUE);
+    // const max = texData.reduce((a,b) => Math.max(a, b), Number.MIN_VALUE);
+    // const mean = texData.reduce((a, b) => a+b, 0) / texData.length;
+    // console.log('got stats in', Date.now()-t);
+    
+    // console.log('min', min);
+    // console.log('max', max);
+    // console.log('mean', mean);
+    
+    return {frameInfo, texData};
+  }
   const worker = await workers.getWorker();
   const t = Date.now();
   const promise = new Promise<TexFrame>(async (resolve, reject) => {
@@ -71,7 +93,7 @@ export async function jp2Texture(url: string, fullFloat: boolean) {
   // const texture = new THREE.DataTexture(result.texData, frameInfo.width, frameInfo.height, THREE.RGBFormat, THREE.UnsignedByteType);
   const format = THREE.RedFormat;
   const type = fullFloat ? THREE.FloatType : THREE.HalfFloatType;
-  const d = fullFloat ? new Float32Array(result.texData) : result.texData;
+  const d = result.texData; //fullFloat ? new Float32Array(result.texData) : result.texData;
   const texture = new THREE.DataTexture(d, frameInfo.width, frameInfo.height, format, type);
   texture.minFilter = texture.magFilter = THREE.LinearFilter;
   texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;

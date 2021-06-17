@@ -51,7 +51,7 @@ export function getTileProperties(coord: EastNorth, lowRes = false) {
 }
 
 export function getImageFilename(source_filename: string, lowRes = false) {
-    if (lowRes) return "/ltile/" + source_filename;
+    if (lowRes) return "/ttile/" + source_filename;
     return "/tile/" + source_filename; // /tile/ interpreted as url for fetch, tile: uses electron api
 }
 
@@ -84,11 +84,12 @@ function makeTileGeometry(s: number) {
 
 const LOD_LEVELS = 8;
 /** by LOD, 0 is 2k, 1 is 1k, 2 is 500... powers of 2 might've been nice if the original data was like that */
+///// chchchanging....
 const tileGeom: THREE.BufferGeometry[] = [];
 for (let i=0; i<LOD_LEVELS; i++) {
-    tileGeom.push(makeTileGeometry(Math.floor(2000 / Math.pow(2, i))));
+    tileGeom.push(makeTileGeometry(Math.floor(4096 / Math.pow(2, i))));
 }
-let lodFalloffFactor = 700; //TODO control this depending on hardware etc.
+let lodFalloffFactor = 3000; //TODO control this depending on hardware etc.
 function getTileLOD(dist: number) {
     return Math.pow(2, Math.min(LOD_LEVELS-1, Math.round(Math.sqrt(dist/lodFalloffFactor))));
 }
@@ -117,7 +118,7 @@ async function getTileMesh(info: DsmCatItem, lowRes = false) {
     const w = frameInfo.width, h = frameInfo.height;
     const uniforms = {
         heightFeild: { value: texture },
-        heightMin: { value: info.min_ele }, heightMax: { value: info.max_ele },
+        heightMin: { value: info.min_ele?? 0 }, heightMax: { value: info.max_ele?? 1 },
         // heightMin: { value: 0 }, heightMax: { value: 1 },
         EPS: { value: new THREE.Vector2(1/w, 1/h) },
         // horizontalScale: { value: 1000 },
@@ -163,7 +164,7 @@ async function getTileMesh(info: DsmCatItem, lowRes = false) {
         const geo = tileGeom[lodIndex];
         if (!geo) debugger;
         mesh.geometry = geo;
-        const v = Math.floor(2000 / lod);
+        const v = Math.floor(4096 / lod); //TODO: review 
         //-- it should be that with current calculation, LOD may choose geometry with a higher resolution than tile data
         //but that shouldn't matter for EPS values, or anything else(?) aside from redundant computation.
         uniforms.EPS.value.x = 1/(v-1);

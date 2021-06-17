@@ -25,7 +25,7 @@ module.exports = {
   ],
   routes: [
     {
-      src: '/(tile|os|gpx|ltile|ping)/.*',
+      src: '/(tile|os|gpx|ltile|ttile|ping)/.*',
       dest: (req, res) => proxy.web(req, res),
     }
     
