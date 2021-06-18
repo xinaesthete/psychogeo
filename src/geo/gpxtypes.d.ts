@@ -31,11 +31,19 @@ export interface GpxTrack {
     segments: GpxTrackpoint[][];
 }
 
+export interface GpxBounds {
+    maxlat: number;
+    minlat: number;
+    maxlon: number;
+    minlon: number;
+}
+
 export interface GpxMetadata {
     name?: string;
     description?: string;
     creator?: string;
     time?: Date;
+    bounds?: GpxBounds;
 }
 
 export interface Gpx {

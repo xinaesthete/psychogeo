@@ -29,6 +29,7 @@ function App() {
   const stGiles: Track = {url: "data/stgiles.gpx", heightOffset: 2, colour: 0x902020};
   const palestine: Track = { url: "data/palestine.gpx", heightOffset: 2, colour: 0x70f0f0};
   const kaw: Track = { url: "gpx/king_alfreds_way_2020_final_route.gpx", heightOffset: 2, colour: 0xf08050};
+  const stonehenge: Track = { url: "gpx/Where_the_Banshees_live_and_they_do_live_well.gpx", heightOffset: 2, colour: 0xf08050};
   const bart: Track = { url: "gpx/Kings-Barton-Walking-1-Apr-2021-at-17-55.gpx", heightOffset: 2, colour: 0x70f0f0};
   fetch('/ping');
   return (
@@ -39,7 +40,8 @@ function App() {
       <Terrain coord={winchester} options={{defra10mDTMLayer: true, osTerr50Layer: false, camZ: 30000, tracks: [
       //  stGiles, palestine
       // bart,
-      kaw
+      // kaw,
+      stonehenge
       ]}} />
       {/* <Terrain coord={beinnSgrithael} options={{defraDSMLayer: false, osTerr50Layer: true, camZ: 30000}} /> */}
       {/* <Terrain coord={branscombe} options={{defraDSMLayer: true, osTerr50Layer: false, camZ: 10000}} /> */}

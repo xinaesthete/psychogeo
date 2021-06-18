@@ -1,4 +1,4 @@
-import { Gpx, GpxTrackpoint } from "./gpxtypes";
+import { Gpx, GpxMetadata, GpxTrackpoint } from "./gpxtypes";
 
 const F = Number.parseFloat;
 
@@ -11,13 +11,26 @@ export default function parseGPX(source: string) : Gpx {
     
     const rteRaw = getEls(xml, 'rte');
     const routes = rteRaw.length > 0 ? [{segments: rteRaw.map(rteProcess)}] : undefined;
-    const metadata = {};//TDB.
+    const metadata = parseMetadata(xml);
     
     return {
         routes, tracks, metadata
     };
 }
 
+function parseMetadata(xml: Document) : GpxMetadata {
+    const gpx = getFirstEl(xml, 'gpx')!;
+    const creator = gpx.attributes.getNamedItem('creator')?.value;
+    //const meta = getFirstEl(xml, 'metadata');
+    const timeStr = getFirstEl(gpx, 'time')?.innerHTML; //might or might not be from metadata
+    const name = getFirstEl(gpx, 'name')?.innerHTML; //might or might not be from metadata
+    const time = timeStr ? new Date(timeStr) : undefined;
+    return {creator, time, name}
+}
+
+function getFirstEl(xml: Element | Document, tagName: string) {
+    return xml.getElementsByTagName(tagName).item(0);
+}
 function getEls(xml: Element | Document, tagName: string) {
     return [...xml.getElementsByTagName(tagName)];
 }
