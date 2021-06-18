@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { globalUniforms } from '../threact/threact';
 import { glsl } from '../threact/threexample';
 import { convertWgsToOSGB, EastNorth } from './Coordinates'
-import { GpxTrackpoint } from './gpxtypes';
+import { Gpx, GpxTrackpoint } from './gpxtypes';
 import { TerrainRenderer } from './TileLoaderUK';
 
 
@@ -35,9 +35,10 @@ void main() {
 export async function loadGpxGeometry(url: string, context: TerrainRenderer, eleOffset = 30, color = 0xffffff) {
     const origin = context.coord;
     const data = await fetch(url);
-    const track = parseGPX(await data.text());
-    // if (!track) throw new Error(`couldn't load gpx track '${url}'`);
-    
+    const gpx = parseGPX(await data.text());
+    const tracks = gpx.tracks?? gpx.routes?? undefined;
+    if (!tracks) throw new Error(`couldn't load gpx track '${url}'`);
+    const track = tracks[0].segments.flat(1);
     const pos = track.flatMap(tp => {
         const lat = tp.lat, lon = tp.lon;
         const en = convertWgsToOSGB({lat, lon});
@@ -148,33 +149,43 @@ export async function loadGpxGeometry(url: string, context: TerrainRenderer, ele
 
 const F = Number.parseFloat;
 
-function parseGPX(source: string) {
+function parseGPX(source: string) : Gpx {
     const parser = new DOMParser();
     const xml = parser.parseFromString(source, 'text/html');
 
-    const segsRaw = [...xml.getElementsByTagName('trkseg')];
-    if (segsRaw.length !== 0) {
-        const segsParsed = segsRaw.map(trksegProcess)[0];
-        
-        return segsParsed;
-    }
-    const rteRaw = [...xml.getElementsByTagName('rte')];
-    const rteParsed = rteRaw.map(rteProcess)[0];
-    return rteParsed;
+    const segsRaw = getEls(xml, 'trkseg');
+    const tracks = segsRaw.length > 0 ? [{segments: segsRaw.map(trksegProcess)}] : undefined;
+    
+    const rteRaw = getEls(xml, 'rte');
+    const routes = rteRaw.length > 0 ? [{segments: rteRaw.map(rteProcess)}] : undefined;
+    const metadata = {};//TDB.
+    
+    return {
+        routes, tracks, metadata
+    };
 }
 
+function getEls(xml: Element | Document, tagName: string) {
+    return [...xml.getElementsByTagName(tagName)];
+}
+
+function parsePoint(p: Element) {
+    return {
+        lat: F(p.attributes.getNamedItem('lat')!.value),
+        lon: F(p.attributes.getNamedItem('lon')!.value),
+        altitude: F(p.getElementsByTagName('ele')[0].innerHTML)
+    }
+}
 function trksegProcess(trkseg: Element): GpxTrackpoint[] {
     //turn into a point[] with a lat/lon, time, ele
 
     //https://stackoverflow.com/questions/53441292/why-downleveliteration-is-not-on-by-default
     //was worried create-react-app might interfere, but it doesn't seem to so far:
     //something to check if this gives compiler error in future.
-    const pointsRaw = [...trkseg.getElementsByTagName('trkpt')];
+    const pointsRaw = getEls(trkseg, 'trkpt');
     const points: GpxTrackpoint[] = pointsRaw.map(p => {
         return {
-            lat: F(p.attributes.getNamedItem('lat')!.value),
-            lon: F(p.attributes.getNamedItem('lon')!.value),
-            altitude: F(p.getElementsByTagName('ele')[0].innerHTML),
+            ...parsePoint(p),
             time: new Date(p.getElementsByTagName('time')[0].innerHTML)
         }
     });
@@ -204,15 +215,13 @@ function trksegProcess(trkseg: Element): GpxTrackpoint[] {
 //   <desc>Route Starts at the Western gate of Winchester City, Close to the medieval Great Hall and site of the ancient Winchester Castle </desc>
 // </wpt>
 function rteProcess(rte: Element): GpxTrackpoint[] {
-    const pointsRaw = [...rte.getElementsByTagName('rtept')];
+    const pointsRaw = getEls(rte, 'rtept');
     const points: GpxTrackpoint[] = pointsRaw.map((p, i) => {
         const name = p.getElementsByTagName('name')[0]?.innerHTML;
         const description = p.getElementsByTagName('desc')[0]?.innerHTML;
         if (name) console.log(name, description);
         return {
-            lat: F(p.attributes.getNamedItem('lat')!.value),
-            lon: F(p.attributes.getNamedItem('lon')!.value),
-            altitude: F(p.getElementsByTagName('ele')[0].innerHTML),
+            ...parsePoint(p),
             name,
             description,
             time: new Date(i)

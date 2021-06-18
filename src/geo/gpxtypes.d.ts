@@ -17,7 +17,7 @@ export interface GpxTrackpoint {
     lon: number;
     time?: Date;
     altitude?: number;
-    //adding name & description here... although actually it's on 'GpxRoutepoints' <rtept> that I'm seeing them.
+    //adding name & description here... although actually it's on 'GpxRoutepoint' <rtept> that I'm seeing them.
     name?: string;
     description?: string;
     speed?: number;
@@ -26,9 +26,9 @@ export interface GpxTrackpoint {
 }
 
 export interface GpxTrack {
-    name: string | null;
-    trackpoints: Array<GpxTrackpoint>;
-    segments: Array<number>;
+    name?: string;
+    // trackpoints: GpxTrackpoint[];
+    segments: GpxTrackpoint[][];
 }
 
 export interface GpxMetadata {
@@ -40,8 +40,9 @@ export interface GpxMetadata {
 
 export interface Gpx {
     metadata: GpxMetadata;
-    waypoints?: Array<GpxWaypoint>;
-    tracks?: Array<GpxTrack>;
+    waypoints?: GpxWaypoint[];
+    tracks?: GpxTrack[];
+    routes?: GpxTrack[];
 }
 
 export interface ParsedGpx {
@@ -50,8 +51,8 @@ export interface ParsedGpx {
             creator: string;
             [propName: string]: any;
         };
-        metadata: Array<any>;
-        trk: Array<any>;
-        wpt: Array<any>;
+        metadata: any[];
+        trk: any[];
+        wpt: any[];
     };
 }
