@@ -23,10 +23,12 @@ void main() {
 
 const lineFrag = glsl`
 uniform float iTime;
+uniform vec3 color;
 varying float vTime;
 void main() {
     float v = smoothstep(0.9, 1.0, mod(vTime - (0.02*iTime), 1.0));
-    gl_FragColor = vec4(v, 0.4, 0.4, 1.);
+    gl_FragColor.rgb = mix(1.-color, color, v);
+    gl_FragColor.a = 1.;
 }
 `
 
@@ -52,6 +54,7 @@ export async function loadGpxGeometry(url: string, context: TerrainRenderer, ele
     const uniforms = {
         startTime: {value: 0},
         endTime: {value: Math.max(...time)},
+        color: {value: new THREE.Color(color)},
         iTime: globalUniforms.iTime
     }
     const lineGeo = new THREE.LineLoop(geo, new THREE.ShaderMaterial({
@@ -203,10 +206,15 @@ function trksegProcess(trkseg: Element): GpxTrackpoint[] {
 function rteProcess(rte: Element): GpxTrackpoint[] {
     const pointsRaw = [...rte.getElementsByTagName('rtept')];
     const points: GpxTrackpoint[] = pointsRaw.map((p, i) => {
+        const name = p.getElementsByTagName('name')[0]?.innerHTML;
+        const description = p.getElementsByTagName('desc')[0]?.innerHTML;
+        if (name) console.log(name, description);
         return {
             lat: F(p.attributes.getNamedItem('lat')!.value),
             lon: F(p.attributes.getNamedItem('lon')!.value),
             altitude: F(p.getElementsByTagName('ele')[0].innerHTML),
+            name,
+            description,
             time: new Date(i)
         }
     });

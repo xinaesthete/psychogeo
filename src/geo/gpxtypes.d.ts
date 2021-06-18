@@ -17,6 +17,9 @@ export interface GpxTrackpoint {
     lon: number;
     time?: Date;
     altitude?: number;
+    //adding name & description here... although actually it's on 'GpxRoutepoints' <rtept> that I'm seeing them.
+    name?: string;
+    description?: string;
     speed?: number;
     cadence?: number;
     heartRate?: number;
