@@ -166,7 +166,7 @@ const shadowmap_vertexChunk = glsl`
 const emissivemap_fragmentChunk = glsl`
     totalEmissiveRadiance.rgb += vec3(getHeight(vUv)/2000.);
     totalEmissiveRadiance.g += min(computeSteepness() * 0.01, 0.1);
-    totalEmissiveRadiance.rgb += computeContour() * vec3(0.1, 0.5, 0.7);
+    totalEmissiveRadiance.rgb += computeContour() * vec3(0.1, 0.5, 0.7) * 0.3;
     // totalEmissiveRadiance.rgb = computeNormal(vUv, computePos(vUv));
 `;
 
@@ -231,7 +231,8 @@ function patchFragmentShader(fragmentShader: string) {
         float h = getHeight(vUv);
         float afwidth = length(vec2(dFdx(h), dFdy(h))) * 0.70710678118654757;
         
-        h = mod(h-3.*iTime, 5.)/5.;
+        //should be user-controllable - consider 'prefers-reduced-motion' etc as well as general sliders?
+        h = mod(h-3.*iTime, 5.)/5.; 
         float sm = 0.2*afwidth;// 0.2;
         h = max(smoothstep(1.-sm, 1.0, h), smoothstep(sm, 0., h));
         // h = aastep(0.5, h);

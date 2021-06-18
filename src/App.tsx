@@ -2,7 +2,7 @@ import React from 'react';
 import './App.css';
 import { convertWgsToOSGB, EastNorth } from './geo/Coordinates';
 import { TerrainRenderer, newGLContext, TerrainOptions, Track } from './geo/TileLoaderUK';
-import { IThree, Threact } from './threact/threact';
+import { DomAttributes, IThree, Threact } from './threact/threact';
 
 newGLContext();
 
@@ -10,7 +10,14 @@ newGLContext();
 function Terrain(opt: {coord: EastNorth, options?: TerrainOptions}) {
   const {coord, options} = {...opt};
   const [renderer] = React.useState(new TerrainRenderer(coord, options));
-  return <Threact gfx={renderer} />
+  const dom: DomAttributes = {
+    style: { height: "100vh" }
+  }
+  return (
+    <>
+    <Threact gfx={renderer} domAttributes={dom}/>
+    </>
+  )
 }
 
 function App() {
@@ -21,7 +28,7 @@ function App() {
   
   const stGiles: Track = {url: "data/stgiles.gpx", heightOffset: 2, colour: 0x902020};
   const palestine: Track = { url: "data/palestine.gpx", heightOffset: 2, colour: 0x70f0f0};
-  const kaw: Track = { url: "gpx/king_alfreds_way_2020_final_route.gpx", heightOffset: 20, colour: 0x70f0f0};
+  const kaw: Track = { url: "gpx/king_alfreds_way_2020_final_route.gpx", heightOffset: 2, colour: 0xf08050};
   const bart: Track = { url: "gpx/Kings-Barton-Walking-1-Apr-2021-at-17-55.gpx", heightOffset: 2, colour: 0x70f0f0};
   fetch('/ping');
   return (
