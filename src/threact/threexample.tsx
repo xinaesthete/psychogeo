@@ -82,7 +82,7 @@ export class JP2TextureView extends ThreactTrackballBase {
             gl_FragColor = vec4(h, h, h, 1.);
         }
         `;
-        jp2Texture(this.url).then(result => {
+        jp2Texture(this.url, false).then(result => {
             const uniforms = {'map': {value: result.texture}};
             const mat = new THREE.ShaderMaterial({vertexShader: vert, fragmentShader: frag, uniforms: uniforms});
             const mesh = new THREE.Mesh(JP2TextureView.geo, mat);
