@@ -117,7 +117,10 @@ const vertexPreamble = glsl`
         uint y = id % gridSizeX;
         //NB: when I was doing this in OF, I didn't include the +0.5
         //I think this version is correct... see some odd artefacts otherwise.
-        return vec2(float(x)+0.5, float(y)+0.5) * EPS;
+        // return vec2(float(x)+0.5, float(y)+0.5) * EPS;
+        //XXX: seeing odd artefacts with DOF, so taking out 0.5 offset. 
+        //Other artefacts were fairly subtle on small details like trees IIRC - should review that.
+        return vec2(float(x), float(y)) * EPS;
     }
     vec4 computePos(vec2 uv) {
         return vec4((uv) * horizontalScale, getNormalisedHeight(uv), 1.0);
@@ -164,9 +167,15 @@ const shadowmap_vertexChunk = glsl`
 `;
 
 const emissivemap_fragmentChunk = glsl`
-    totalEmissiveRadiance.rgb += vec3(getHeight(vUv)/2000.);
+    float h = getHeight(vUv);
+    totalEmissiveRadiance.rgb += vec3(h/2000.);
     totalEmissiveRadiance.g += min(computeSteepness() * 0.01, 0.1);
-    totalEmissiveRadiance.rgb += computeContour() * vec3(0.1, 0.5, 0.7) * 0.3;
+    float majorContour = 10., minorContour = 0.2, speed = 1.;
+    vec3 col = vec3(0.1, 0.5, 0.7);
+    totalEmissiveRadiance.rgb += computeContour(h) * vec3(0.3, 0.5, 0.7) * 0.3;
+    totalEmissiveRadiance.rgb += contour(h, 0., majorContour) * vec3(0.8, 0.5, 0.7) * 0.3;
+    // totalEmissiveRadiance.rgb += contour(h, speed, minorContour, majorContour, 1.) * col * 0.3;
+    
     // totalEmissiveRadiance.rgb = computeNormal(vUv, computePos(vUv));
 `;
 
@@ -227,18 +236,42 @@ function patchFragmentShader(fragmentShader: string) {
         return normalize(cross(dx, dy)).xyz;
         // return vec3(0.,0.,1.);
     }
-    float computeContour() {
-        float h = getHeight(vUv);
+    float computeContour(float h) {
+        // float h = getHeight(vUv);
         float afwidth = length(vec2(dFdx(h), dFdy(h))) * 0.70710678118654757;
         
         //should be user-controllable - consider 'prefers-reduced-motion' etc as well as general sliders?
-        h = mod(h-3.*iTime, 5.)/5.; 
+        h = mod(h+3.*iTime, 5.)/5.; 
         float sm = 0.2*afwidth;// 0.2;
         h = max(smoothstep(1.-sm, 1.0, h), smoothstep(sm, 0., h));
         // h = aastep(0.5, h);
         return h;
     }
-    //this function seems quite good at showing up certain artefacts...
+    float contour(in float h, float speed, float interval) {
+        float afwidth = length(vec2(dFdx(h), dFdy(h)) * 0.70710678118654757);
+        float t = iTime*speed*interval;
+        float c = h = mod(h+t, interval)/interval;
+        float sm = .2*afwidth;
+        c = mod(c, interval);
+        c = max(smoothstep(1.-sm, 1.0, c), smoothstep(sm, 0., c));
+        return c;
+    }
+    float fallOff(in float h, float interval) {
+        float c = mod(h, interval)/interval;
+        return 1.-c;
+    }
+    float contour(in float h, float speed, float interval, float majorInterval, float falloff) {
+        float afwidth = length(vec2(dFdx(h), dFdy(h)) * 0.70710678118654757);
+        float t = iTime*speed*interval;
+        float c = mod(h+t, interval)/interval;
+        float sm = afwidth;
+        // c = mod(c, interval);
+        float fall = fallOff(h, majorInterval);
+        c = max(smoothstep(1.-sm, 1.0, c), smoothstep(sm, 0., c));
+        c *= max(0.,1.-fall*falloff);
+        return c;
+    }
+        //this function seems quite good at showing up certain artefacts...
     float computeSteepness() {
         // return pow(1.-abs(dot(vec3(0.,0.,1.), computeNormal())), 0.5);
         //XXX: copying this into depth/distance shader (where it's not used) lead to compiler error
