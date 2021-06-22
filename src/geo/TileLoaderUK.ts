@@ -82,16 +82,18 @@ function makeTileGeometry(s: number) {
     return geo;
 }
 
-const LOD_LEVELS = 8;
+const LOD_LEVELS = 10;
 /** by LOD, 0 is 2k, 1 is 1k, 2 is 500... powers of 2 might've been nice if the original data was like that */
 ///// chchchanging....
 const tileGeom: THREE.BufferGeometry[] = [];
 for (let i=0; i<LOD_LEVELS; i++) {
     tileGeom.push(makeTileGeometry(Math.floor(4096 / Math.pow(2, i))));
 }
-let lodFalloffFactor = 3000; //TODO control this depending on hardware etc.
-function getTileLOD(dist: number) {
-    return Math.pow(2, Math.min(LOD_LEVELS-1, Math.round(Math.sqrt(dist/lodFalloffFactor))));
+let lodFalloffFactor = 100; //TODO control this depending on hardware etc.
+function getTileLOD(dist: number, tilePx: number, tileM: number) {
+    const tileRes = tilePx / tileM;
+    const d = dist/tileRes;
+    return Math.pow(2, Math.min(LOD_LEVELS-1, Math.round(Math.sqrt(d/lodFalloffFactor))));
 }
 
 
@@ -158,8 +160,9 @@ async function getTileMesh(info: DsmCatItem, lowRes = false) {
         //could still be something to be said for changing drawRange vs switching geometry,
         //but this was half-baked, and switching geometry seems ok (as long as not done in onBeforeRender)
         // geo.drawRange.count = fullLODCount/lod; //this version would *have* to be onBeforeRender
-
-        const lod = getTileLOD(dist);
+        const tileM = lowRes ? 10*4096 : 1000;
+        const tilePx = w;
+        const lod = getTileLOD(dist, tilePx, tileM);
         const lodIndex = Math.log2(lod);
         const geo = tileGeom[lodIndex];
         if (!geo) debugger;
@@ -201,16 +204,15 @@ class LazyTile {
     }
     constructor(info: DsmCatItem, origin: EastNorth, parent: THREE.Object3D) {
         let obj = this.object3D = new THREE.Mesh(LazyTile.loaderGeometry, LazyTile.loaderMat);
-        const coord = {east: info.xllcorner, north: info.yllcorner};
         const dx = info.xllcorner - origin.east; //these values look bad for lowRes tiles.
         const dy = info.yllcorner - origin.north;
+        //info should really have grid size, hacking in on the basis of what is true right now
+        //but future Pete / anyone else attempting to maintain code will not be happy if not fixed
         const lowRes = info.max_ele === undefined;
         const s = lowRes ? 40960 : 1000;
         obj.position.x = dx + s/2;
         obj.position.y = dy + s/2;
         obj.position.z = info.min_ele??0;
-        //info should really have grid size, hacking in on the basis of what is true right now
-        //but future Pete / anyone else attempting to maintain code will not be happy if not fixed
         const eleScale = lowRes? 1 : info.max_ele!-info.min_ele!;
         obj.scale.set(s, s, eleScale);
         parent.add(obj);
@@ -231,6 +233,7 @@ class LazyTile {
                 m.mesh!.position.x = dx;
                 m.mesh!.position.y = dy;
                 this.object3D = m.mesh!;
+                if (lowRes) this.object3D.position.z = -100;
                 parent.add(this.object3D);
             });
         }
@@ -354,6 +357,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
         this.camera.lookAt(0, 0, 0); //info.max_ele);
         this.camera.near = 1;
         this.camera.far = 2000000;
+        //todo: change to OrbitControls with no screenspace panning?
 
         this.sunLight();
         
