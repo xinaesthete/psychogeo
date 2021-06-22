@@ -1,4 +1,5 @@
 import React from 'react';
+import { Canvas, useGraph, useFrame } from 'react-three-fiber';
 import './App.css';
 import { convertWgsToOSGB, EastNorth } from './geo/Coordinates';
 import { TerrainRenderer, newGLContext, TerrainOptions, Track } from './geo/TileLoaderUK';
@@ -11,12 +12,23 @@ function Terrain(opt: {coord: EastNorth, options?: TerrainOptions}) {
   const {coord, options} = {...opt};
   const [renderer] = React.useState(new TerrainRenderer(coord, options));
   const dom: DomAttributes = {
-    style: { height: "100vh" }
+    style: { height: "100vh", width: '100vw' }
   }
+  const {nodes, materials} = useGraph(renderer.scene);
+  // useFrame((state, delta) => {
+  //   renderer.update();
+  // });
   return (
-    <>
+    <div style={{width: '100vw', height: '100vh'}}>
+    {/* <Canvas camera={renderer.camera} >
+      <scene 
+      // add={()=>renderer.scene}
+      >
+
+      </scene>
+    </Canvas> */}
     <Threact gfx={renderer} domAttributes={dom}/>
-    </>
+    </div>
   )
 }
 
@@ -37,11 +49,12 @@ function App() {
       {/* <header className="App-header">
         {JSON.stringify(winchester, undefined, 2)}
       </header> */}
-      <Terrain coord={winchester} options={{defra10mDTMLayer: true, osTerr50Layer: false, camZ: 30000, tracks: [
+      <Terrain coord={winchester} options={{
+        defra10mDTMLayer: true, defraDSMLayer: false, osTerr50Layer: false, camZ: 30000, tracks: [
       //  stGiles, palestine
       // bart,
       // kaw,
-      stonehenge
+      // stonehenge
       ]}} />
       {/* <Terrain coord={beinnSgrithael} options={{defraDSMLayer: false, osTerr50Layer: true, camZ: 30000}} /> */}
       {/* <Terrain coord={branscombe} options={{defraDSMLayer: true, osTerr50Layer: false, camZ: 10000}} /> */}
