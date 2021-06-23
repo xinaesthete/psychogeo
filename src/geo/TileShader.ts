@@ -175,7 +175,8 @@ const emissivemap_fragmentChunk = glsl`
     totalEmissiveRadiance.rgb += computeContour(h) * vec3(0.3, 0.5, 0.7) * 0.3;
     totalEmissiveRadiance.rgb += contour(h, 0., majorContour) * vec3(0.8, 0.5, 0.7) * 0.3;
     // totalEmissiveRadiance.rgb += contour(h, speed, minorContour, majorContour, 1.) * col * 0.3;
-    
+    vec3 lodCol = vec3(LOD, 0.8, 0.05);
+    totalEmissiveRadiance.rgb += hsv2rgb(lodCol);
     // totalEmissiveRadiance.rgb = computeNormal(vUv, computePos(vUv));
 `;
 
@@ -208,7 +209,38 @@ function patchFragmentShader(fragmentShader: string) {
     uniform float horizontalScale;
     uniform float heightMin, heightMax;
     uniform float iTime;
+    uniform float LOD;
     varying float normalisedHeight;
+    // https://cis700-procedural-graphics.github.io/files/toolbox_functions.pdf
+    //(nb, switched arguments)
+    float bias(float t, float b) { return pow(t, log(b) / log(0.5)); }
+    float gain(float t, float g) {
+    if (t < 0.5)
+        return bias(2. * t, 1. - g) / 2.;
+    else
+        return 1. - bias(2. - 2. * t, 1. - g) / 2.;
+    }
+    vec2 gain(vec2 t, float g) { return vec2(gain(t.x, g), gain(t.y, g)); }
+    vec2 gain(vec2 t, vec2 g) { return vec2(gain(t.x, g.x), gain(t.y, g.y)); }
+
+    // http://lolengine.net/blog/2013/07/27/rgb-to-hsv-in-glsl
+    vec3 hsv2rgb(in vec3 c) {
+        vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+        vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+        vec3 pp = c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+        return clamp(
+            pp, 0.0,
+            1.0); // added sjpt 30 July 2015, can probably remove other clamp???
+    }
+    vec3 rgb2hsv(in vec3 c) {
+        vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+        vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
+        vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
+
+        float d = q.x - min(q.w, q.y);
+        float e = 1.0e-10;
+        return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
+    }
     float mapHeight(float h) {
         return heightMin + h * (heightMax - heightMin);
     }

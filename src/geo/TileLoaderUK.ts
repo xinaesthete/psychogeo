@@ -126,7 +126,8 @@ async function getTileMesh(info: DsmCatItem, lowRes = false) {
         // horizontalScale: { value: 1000 },
         horizontalScale: { value: 1 },
         gridSizeX: { value: w }, gridSizeY: { value: h },
-        iTime: globalUniforms.iTime
+        iTime: globalUniforms.iTime,
+        LOD: {value: 0}
     }
     const geo = tileGeom[0]; //regardless of image geom, for now
     
@@ -174,7 +175,7 @@ async function getTileMesh(info: DsmCatItem, lowRes = false) {
         uniforms.EPS.value.y = 1/(v-1);
         uniforms.gridSizeX.value = v;
         uniforms.gridSizeY.value = v;
-        
+        uniforms.LOD.value = lodIndex/10;
 
         mesh.userData.lastLOD = lod;
     }
