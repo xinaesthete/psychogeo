@@ -1,5 +1,5 @@
 import React from 'react';
-import { Canvas, useGraph, useFrame } from 'react-three-fiber';
+import { Canvas, useGraph, useFrame } from '@react-three/fiber';
 import './App.css';
 import { convertWgsToOSGB, EastNorth } from './geo/Coordinates';
 import { TerrainRenderer, newGLContext, TerrainOptions, Track } from './geo/TileLoaderUK';
@@ -20,12 +20,12 @@ function Terrain(opt: {coord: EastNorth, options?: TerrainOptions}) {
   // });
   return (
     <div style={{width: '100vw', height: '100vh'}}>
-    {/* <Canvas camera={renderer.camera} >
-      <scene 
-      // add={()=>renderer.scene}
-      >
-
-      </scene>
+    {/* <Canvas camera={renderer.camera} color='red' >
+      <mesh position={[0, -10, -10]}>
+        <boxBufferGeometry />
+        <meshBasicMaterial color="white" />
+      </mesh>
+      <primitive object={renderer.scene} />
     </Canvas> */}
     <Threact gfx={renderer} domAttributes={dom}/>
     </div>
