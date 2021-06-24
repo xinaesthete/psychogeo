@@ -33,8 +33,8 @@ void main() {
 }
 `
 
-export async function loadGpxGeometry(url: string, context: TerrainRenderer, eleOffset = 30, color = 0xffffff) {
-    const origin = context.coord;
+export async function loadGpxGeometry(url: string, eleOffset = 30, color = 0xffffff) {
+    // const origin = context.coord;
     const data = await fetch(url);
     const gpx = parseGPX(await data.text());
     const tracks = gpx.tracks?? gpx.routes?? undefined;
@@ -43,7 +43,7 @@ export async function loadGpxGeometry(url: string, context: TerrainRenderer, ele
     const pos = track.flatMap(tp => {
         const lat = tp.lat, lon = tp.lon;
         const en = convertWgsToOSGB({lat, lon});
-        return [en.east - origin.east, en.north - origin.north, eleOffset + (tp.altitude || 0)];
+        return [en.east, en.north, eleOffset + (tp.altitude || 0)];
     });
     const s = track[0].time!.getTime();
     const time = track.map(tp => (tp.time!.getTime() - s)/1000 || 0);

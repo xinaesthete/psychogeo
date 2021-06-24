@@ -203,10 +203,10 @@ class LazyTile {
         if (!mesh.userData.updateLOD) return;
         mesh.userData.updateLOD(otherPos);
     }
-    constructor(info: DsmCatItem, origin: EastNorth, parent: THREE.Object3D) {
+    constructor(info: DsmCatItem, parent: THREE.Object3D) {
         let obj = this.object3D = new THREE.Mesh(LazyTile.loaderGeometry, LazyTile.loaderMat);
-        const dx = info.xllcorner - origin.east; //these values look bad for lowRes tiles.
-        const dy = info.yllcorner - origin.north;
+        const dx = info.xllcorner;
+        const dy = info.yllcorner;
         //info should really have grid size, hacking in on the basis of what is true right now
         //but future Pete / anyone else attempting to maintain code will not be happy if not fixed
         const lowRes = info.max_ele === undefined;
@@ -251,14 +251,13 @@ class LazyTileOS {
     static loaderGeometry = new THREE.BoxBufferGeometry(10000, 10000, 200);
     object3D: THREE.Object3D;
     status = TileStatus.UnTouched;
-    constructor(coord: EastNorth, origin: EastNorth, parent: THREE.Object3D) {
+    constructor(coord: EastNorth, parent: THREE.Object3D) {
+        const tileSize = 10000;
         let obj = this.object3D = new THREE.Mesh(LazyTileOS.loaderGeometry, LazyTile.loaderMat);
-        const xll = Math.floor(coord.east / 10000) * 10000;
-        const yll = Math.floor(coord.north / 10000) * 10000;
-        const dx = xll - origin.east;
-        const dy = yll - origin.north;
-        obj.position.x = dx + 5000;
-        obj.position.y = dy + 5000;
+        const xll = Math.floor(coord.east / tileSize) * tileSize;
+        const yll = Math.floor(coord.north / tileSize) * tileSize;
+        obj.position.x = xll + tileSize/2;
+        obj.position.y = yll + tileSize/2;
         parent.add(obj);
         obj.onBeforeRender = () => {
             this.status = TileStatus.Loading;
@@ -266,7 +265,7 @@ class LazyTileOS {
             const loadingMesh = new THREE.Mesh(obj.geometry, tileLoadingMat);
             loadingMesh.position.copy(obj.position);
             parent.add(loadingMesh);
-            getOSDelaunayMesh(coord, origin).then(mesh => {
+            getOSDelaunayMesh(coord).then(mesh => {
                 this.status = TileStatus.Loaded;
                 parent.remove(loadingMesh);
                 this.object3D = mesh;
@@ -280,7 +279,7 @@ class LazyTileOS {
         //send the data to a worker to compress & save to disk, along with appropriate metadata.
     }
 }
-async function getOSDelaunayMesh(coord: EastNorth, origin: EastNorth) {
+async function getOSDelaunayMesh(coord: EastNorth) {
     try {
         const geo = await threeGeometryFromShpZip(coord);
         //would be better to do this in worker, but it currently doesn't have THREE...
@@ -291,8 +290,6 @@ async function getOSDelaunayMesh(coord: EastNorth, origin: EastNorth) {
         mesh.castShadow = true;
         mesh.receiveShadow = true;
         
-        mesh.position.x = -origin.east;
-        mesh.position.y = -origin.north;
         applyCustomDepthForViewshed(mesh as THREE.Mesh);
         return mesh;
     } catch (e) {
@@ -344,20 +341,24 @@ export class TerrainRenderer extends ThreactTrackballBase {
     }
     async addTrack(track: Track) {//url: string, heightOffset = 2, color = 0xffffff) {
         const {url, heightOffset = 2, colour = 0xffffff} = track;
-        this.scene.add(await loadGpxGeometry(url, this, heightOffset, colour));
+        this.scene.add(await loadGpxGeometry(url, heightOffset, colour));
     }
     addAxes() {
         const ax = new THREE.AxesHelper(100);
-        ax.position.set(0, 0, 0);//this.tileProp.min_ele);
+        ax.position.set(this.coord.east, this.coord.north, 0);//this.tileProp.min_ele);
         this.scene.add(ax);
     }
     init() {
         //const info = this.tileProp;
-        this.camera.position.y = -100;
-        this.camera.position.z = this.options.camZ; //info.max_ele + 50;
-        this.camera.lookAt(0, 0, 0); //info.max_ele);
         this.camera.near = 1;
         this.camera.far = 2000000;
+        this.camera.position.x = this.coord.east;
+        this.camera.position.y = this.coord.north;// - 100;
+        this.camera.position.z = this.options.camZ;
+        // this.camera.lookAt(this.coord.east, this.coord.north, 0); //will be overriden by trackball control
+        // this.camera.quaternion._onChange(()=>{debugger});
+        this.trackCtrl!.target.set(this.coord.east, this.coord.north, 0);
+        
         //todo: change to OrbitControls with no screenspace panning?
 
         this.sunLight();
@@ -400,15 +401,16 @@ export class TerrainRenderer extends ThreactTrackballBase {
         const o = this.coord;
         for (let i=-30; i<30; i++) {
             for (let j=-10; j<100; j++) {
+                //some of these coords won't have any data; we just swallow a few exceptions.
                 const coord = {east: o.east + 10000 * i, north: o.north + 10000 * j};
-                new LazyTileOS(coord, o, this.scene);
+                new LazyTileOS(coord, this.scene);
             }
         }
     }
     async makeTiles(lowRes = false) {
         Object.entries(lowRes ? cat10m : cat).forEach((k) => {
             const info = k[1] as DsmCatItem;
-            this.tiles.push(new LazyTile(info, this.coord, this.scene));
+            this.tiles.push(new LazyTile(info, this.scene));
         });
     }
     update() {
