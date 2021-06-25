@@ -108,6 +108,7 @@ const vertexPreamble = glsl`
         float h = v.r + (v.g / 256.);
         return h;
     }
+    //not used?
     float getHeight(vec2 uv) {
         return mapHeight(getNormalisedHeight(uv));
     }
@@ -167,7 +168,7 @@ const shadowmap_vertexChunk = glsl`
 `;
 
 const emissivemap_fragmentChunk = glsl`
-    float h = getHeight(vUv);
+    float h = getNormalisedHeight(vUv);
     totalEmissiveRadiance.rgb += vec3(h/2000.);
     totalEmissiveRadiance.g += min(computeSteepness() * 0.01, 0.1);
     float majorContour = 10., minorContour = 0.2, speed = 1.;
@@ -175,7 +176,7 @@ const emissivemap_fragmentChunk = glsl`
     totalEmissiveRadiance.rgb += computeContour(h) * vec3(0.3, 0.5, 0.7) * 0.3;
     totalEmissiveRadiance.rgb += contour(h, 0., majorContour) * vec3(0.8, 0.5, 0.7) * 0.3;
     // totalEmissiveRadiance.rgb += contour(h, speed, minorContour, majorContour, 1.) * col * 0.3;
-    vec3 lodCol = vec3(LOD, 0.8, 0.05);
+    vec3 lodCol = vec3(LOD, 0.8, 0.1);
     totalEmissiveRadiance.rgb += hsv2rgb(lodCol);
     // totalEmissiveRadiance.rgb = computeNormal(vUv, computePos(vUv));
 `;
