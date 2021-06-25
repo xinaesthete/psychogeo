@@ -8,6 +8,7 @@ import * as dtm_10m from './10m_dtm_catalog.json' //similarly pending rethink of
 import { threeGeometryFromShpZip } from './ShpProcessor';
 import { applyCustomDepth, applyCustomDepthForViewshed, getTileMaterial, tileLoadingMat } from './TileShader';
 import { loadGpxGeometry } from './TrackVis';
+import { getLodUniforms, LOD_LEVELS, tileGeom } from './LodUtils';
 
 
 const cat = (dsm_cat as any).default;
@@ -57,44 +58,10 @@ export function getImageFilename(source_filename: string, lowRes = false) {
 
 
 
-const tileBSphere = new THREE.Sphere(new THREE.Vector3(0.5, 0.5, 0.5), 0.8);
-const tileBBox = new THREE.Box3(new THREE.Vector3(), new THREE.Vector3(1, 1, 1));
-
 //make this false to use PlaneBufferGeometry
 //should allow us to use more standard shaders, with displacement map for terrain
 //but not working.
-const attributeless = true, onlyDebugGeometry = false;
-
-function makeTileGeometry(s: number) {
-    let geo : THREE.BufferGeometry;
-    if (attributeless) {
-        geo = new THREE.BufferGeometry();
-        geo.drawRange.count = (s-1) * (s-1) * 6;
-        geo.setIndex(computeTriangleGridIndices(s, s));
-    } else {
-        geo = new THREE.PlaneBufferGeometry(1, 1, s, s);
-        geo.translate(0.5, 0.5, 0.5);
-        geo.computeVertexNormals();
-    }
-    //would these be able to account for displacement if computed automatically?
-    geo.boundingSphere = tileBSphere;
-    geo.boundingBox = tileBBox;
-    return geo;
-}
-
-const LOD_LEVELS = 10;
-/** by LOD, 0 is 2k, 1 is 1k, 2 is 500... powers of 2 might've been nice if the original data was like that */
-///// chchchanging....
-const tileGeom: THREE.BufferGeometry[] = [];
-for (let i=0; i<LOD_LEVELS; i++) {
-    tileGeom.push(makeTileGeometry(Math.floor(4096 / Math.pow(2, i))));
-}
-let lodFalloffFactor = 100; //TODO control this depending on hardware etc.
-function getTileLOD(dist: number, tilePx: number, tileM: number) {
-    const tileRes = tilePx / tileM;
-    const d = dist/tileRes;
-    return Math.pow(2, Math.min(LOD_LEVELS-1, Math.round(Math.sqrt(d/lodFalloffFactor))));
-}
+export const attributeless = true, onlyDebugGeometry = false;
 
 
 const nullInfo: DsmCatItem = {
@@ -118,70 +85,39 @@ async function getTileMesh(info: DsmCatItem, lowRes = false) {
     
     const {texture, frameInfo} = await JP2.jp2Texture(url, lowRes); //lowRes also means 'fullFloat' at the moment
     const w = frameInfo.width, h = frameInfo.height;
-    const uniforms = {
-        heightFeild: { value: texture },
-        heightMin: { value: info.min_ele?? 0 }, heightMax: { value: info.max_ele?? 1 },
-        // heightMin: { value: 0 }, heightMax: { value: 1 },
-        EPS: { value: new THREE.Vector2(1/w, 1/h) },
-        // horizontalScale: { value: 1000 },
-        horizontalScale: { value: 1 },
-        gridSizeX: { value: w }, gridSizeY: { value: h },
-        iTime: globalUniforms.iTime,
-        LOD: {value: 0}
-    }
-    const geo = tileGeom[0]; //regardless of image geom, for now
-    
-    const mat = attributeless ? getTileMaterial(uniforms) : new THREE.MeshStandardMaterial();
-    if (!attributeless) {
-        let material = mat as THREE.MeshStandardMaterial;
-        material.displacementMap = texture;
-        material.displacementScale = 1;//info.max_ele - info.min_ele; //handled by matrix (for now)
-    }
-    const mesh = new THREE.Mesh(geo, mat);
-    applyCustomDepth(mesh, uniforms);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
+    const lodObj = new THREE.LOD();
     const s = lowRes ? 40960 : 1000;
     // for now there's a weak convention that lowRes also means non-normalised data
     // and doesn't include stats. that might change, and we should more clearly flag.
     const eleScale = lowRes ? 1 : info.max_ele! - info.min_ele!;
-    mesh.scale.set(s, s, eleScale);
-    mesh.position.z = info.min_ele??0;
-
-    mesh.onBeforeRender = (r, s, cam, g, mat, group) => {
-        mesh.userData.lastRender = Date.now();
+    lodObj.scale.set(s, s, eleScale);
+    lodObj.position.z = info.min_ele??0;
+    for (let lod = 0; lod<LOD_LEVELS; lod++) {
+        const uniforms = {
+            heightFeild: { value: texture },
+            heightMin: { value: info.min_ele?? 0 }, heightMax: { value: info.max_ele?? 1 },
+            ...getLodUniforms(lod),
+            horizontalScale: { value: 1 },
+            iTime: globalUniforms.iTime,
+        };
+        const geo = tileGeom[lod]; //regardless of image geom, for now
+        
+        const mat = attributeless ? getTileMaterial(uniforms) : new THREE.MeshStandardMaterial();
+        if (!attributeless) {
+            let material = mat as THREE.MeshStandardMaterial;
+            material.displacementMap = texture;
+            material.displacementScale = 1;//info.max_ele - info.min_ele; //handled by matrix (for now)
+        }
+        const mesh = new THREE.Mesh(geo, mat);
+        applyCustomDepth(mesh, uniforms);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        
+        // at what distance should this lod be applied?
+        lodObj.addLevel(mesh, Math.pow(2,lod-2) * s/4);
     }
-    const dCam = new THREE.Vector3(), offset = new THREE.Vector3(s/2, s/2, info.min_ele??0), pos = new THREE.Vector3();
-    mesh.userData.updateLOD = (otherPos: THREE.Vector3) => {
-        //TODO: different LOD for shadow vs view (I think this is only called once per frame, how do I intercept shadow pass?)
-        //-- could have seperate LOD in MeshDepthMaterial / MeshDistanceMaterial I guess.
-        pos.addVectors(mesh.position, offset);
-        //const otherPos = cam.position;
-        const dist = dCam.subVectors(pos, otherPos).length();
-        //could still be something to be said for changing drawRange vs switching geometry,
-        //but this was half-baked, and switching geometry seems ok (as long as not done in onBeforeRender)
-        // geo.drawRange.count = fullLODCount/lod; //this version would *have* to be onBeforeRender
-        const tileM = lowRes ? 10*4096 : 1000;
-        const tilePx = w;
-        const lod = getTileLOD(dist, tilePx, tileM);
-        const lodIndex = Math.log2(lod);
-        const geo = tileGeom[lodIndex];
-        if (!geo) debugger;
-        mesh.geometry = geo;
-        const v = Math.floor(4096 / lod); //TODO: review 
-        //-- it should be that with current calculation, LOD may choose geometry with a higher resolution than tile data
-        //but that shouldn't matter for EPS values, or anything else(?) aside from redundant computation.
-        uniforms.EPS.value.x = 1/(v-1);
-        uniforms.EPS.value.y = 1/(v-1);
-        uniforms.gridSizeX.value = v;
-        uniforms.gridSizeY.value = v;
-        uniforms.LOD.value = lodIndex/10;
 
-        mesh.userData.lastLOD = lod;
-    }
-    mesh.userData.updateLOD(mesh.position);//prevent glitching when first loaded.
-    // --------------------
-    info.mesh = mesh;
+    info.mesh = lodObj;
     return info;
 }
 
@@ -194,14 +130,6 @@ class LazyTile {
     status = TileStatus.UnTouched;
     get lastRender(): number {
         return this.object3D.userData.lastRender as number;
-    }
-    get lastLOD(): number {
-        return this.object3D.userData.lastLOD as number;
-    }
-    updateLOD(otherPos: THREE.Vector3) {
-        const mesh = this.object3D as THREE.Mesh;
-        if (!mesh.userData.updateLOD) return;
-        mesh.userData.updateLOD(otherPos);
     }
     constructor(info: DsmCatItem, parent: THREE.Object3D) {
         let obj = this.object3D = new THREE.Mesh(LazyTile.loaderGeometry, LazyTile.loaderMat);
@@ -346,6 +274,8 @@ export class TerrainRenderer extends ThreactTrackballBase {
     addAxes() {
         const ax = new THREE.AxesHelper(100);
         ax.position.set(this.coord.east, this.coord.north, 0);//this.tileProp.min_ele);
+        // ax.position = this.trackCtrl!.target
+        
         this.scene.add(ax);
     }
     init() {
@@ -414,29 +344,9 @@ export class TerrainRenderer extends ThreactTrackballBase {
         });
     }
     update() {
-        //this.updateTileStats(); // generates a bit much garbage?
-        this.updateLOD(); //could use THREE.LOD instead of current system.
+        //LOD is now done with THREE.LOD, although we may benefit from a different distance function.
+        //if so, we won't have a separate updateLOD() pass here.
         super.update();
-    }
-    updateLOD() {
-        this.tiles.forEach(t => t.updateLOD(this.camera.position));
-    }
-    updateTileStats() {
-        const loaded = this.tiles.filter(t => t.status === TileStatus.Loaded);
-        const now = Date.now();
-        const recentlySeen = loaded.filter(t => (now - t.lastRender) < 1000);
-        const lodStats = new Map<number, number>();
-        recentlySeen.forEach(t => {
-            const lod = t.lastLOD;
-            const n = lodStats.get(lod) || 0;
-            lodStats.set(lod, n+1);
-
-            //premature optimisation?
-            //don't want to do this to all tiles, this isn't probably most correct way, 
-            //but should get it done for approximately correct set of tiles before (not during) next render
-            t.updateLOD(this.camera.position);
-        });
-        // this.tiles.forEach(t => t.updateLOD(this.camera.position));
     }
 }
 
