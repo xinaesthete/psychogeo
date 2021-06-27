@@ -24,19 +24,9 @@ export const tileLoadingMat = new THREE.ShaderMaterial({
 //currently debugging, 'frankenShader' here means start with StandardMaterial & modify
 //false for ShaderMaterial (not Raw, but not Standard)
 //see also 'attributeless' in TileLoaderUK for using standard displacement map.
-const frankenShader = true;
+//const frankenShader = true; //not maintaining non-franken code.
 
 export function getTileMaterial(uniforms: any) {
-    if (frankenShader) return getTileMaterialX(uniforms);
-    const mat = new THREE.ShaderMaterial({
-        vertexShader: vert,
-        fragmentShader: frag,
-        uniforms: uniforms,
-        //lights: true //if experimenting with this, need to combine uniforms
-    });
-    return mat;
-}
-export function getTileMaterialX(uniforms: any) {
     const mat = new THREE.MeshStandardMaterial({flatShading: false});
     // --- note: having these may have detrimental effect on shadows (& is pointless).
     // mat.side = THREE.DoubleSide; //probably not really needed
@@ -91,7 +81,6 @@ const vertexPreamble = glsl`
     uniform uint gridSizeX, gridSizeY;
     uniform vec2 EPS;
     uniform float heightMin, heightMax;
-    uniform float horizontalScale;
     uniform sampler2D heightFeild;
     varying float normalisedHeight;
     // varying vec3 v_modelSpacePosition;
@@ -112,6 +101,22 @@ const vertexPreamble = glsl`
     float getHeight(vec2 uv) {
         return mapHeight(getNormalisedHeight(uv));
     }
+    vec4 computePos(vec2 uv) {
+        return vec4(uv, getNormalisedHeight(uv), 1.0);
+    }
+    vec3 computeNormal(vec2 uv, vec4 pos) {
+        //what about the edges?
+        vec3 p = pos.xyz;
+        vec3 dx = normalize(computePos(uv + vec2(EPS.x, 0.)).xyz - p);
+        vec3 dy = normalize(computePos(uv + vec2(0., EPS.y)).xyz - p);
+        return normalize(cross(dx, dy)).xyz;
+        // return vec3(0.,0.,1.);
+    }
+`;
+
+const uv_pars_vertexChunk = glsl`
+    varying vec2 vUv;
+    uniform mat3 uvTransform;
     vec2 uvFromVertID() {
         uint id = uint(gl_VertexID);
         uint x = id / gridSizeY;
@@ -121,18 +126,9 @@ const vertexPreamble = glsl`
         // return vec2(float(x)+0.5, float(y)+0.5) * EPS;
         //XXX: seeing odd artefacts with DOF, so taking out 0.5 offset. 
         //Other artefacts were fairly subtle on small details like trees IIRC - should review that.
-        return vec2(float(x), float(y)) * EPS;
-    }
-    vec4 computePos(vec2 uv) {
-        return vec4((uv) * horizontalScale, getNormalisedHeight(uv), 1.0);
-    }
-    vec3 computeNormal(vec2 uv, vec4 pos) {
-        //what about the edges?
-        vec3 p = pos.xyz;
-        vec3 dx = normalize(computePos(uv + vec2(EPS.x, 0.)).xyz - p);
-        vec3 dy = normalize(computePos(uv + vec2(0., EPS.y)).xyz - p);
-        return normalize(cross(dx, dy)).xyz;
-        // return vec3(0.,0.,1.);
+        //// adding use of uvTransform for sub-tiles
+        vec2 uv = vec2(float(x), float(y)) * EPS;
+        return (uvTransform * vec3(uv, 1.)).xy;
     }
 `;
 
@@ -193,6 +189,7 @@ function patchVertexShader(vertexShader: string) {
     //Declare & initialise them in 'uv_vertex', fairly similar to now, but in a way that means other parts of code need less change.
     //however, since there are lots of <*_pars_vertex>, it's a bit long-winded.
 
+    vertexShader = substituteInclude('uv_pars_vertex', uv_pars_vertexChunk, vertexShader);
     vertexShader = substituteInclude('uv_vertex', uv_vertexChunk, vertexShader);
     // vertexShader = substituteInclude('uv2_vertex', `vUv2 = uv;`, vertexShader); //red herring: shadowMap != lightMap
     vertexShader = substituteInclude('beginnormal_vertex', beginnormal_vertexChunk, vertexShader, SubstitutionType.PREPEND);
@@ -207,7 +204,6 @@ function patchFragmentShader(fragmentShader: string) {
     //out vec4 col;
     uniform sampler2D heightFeild;
     uniform vec2 EPS;
-    uniform float horizontalScale;
     uniform float heightMin, heightMax;
     uniform float iTime;
     uniform float LOD;
@@ -259,7 +255,7 @@ function patchFragmentShader(fragmentShader: string) {
         return smoothstep(threshold-afwidth, threshold+afwidth, value);
     }
     vec4 computePos(vec2 uv) {
-        return vec4((uv) * horizontalScale, getNormalisedHeight(uv), 1.0);
+        return vec4(uv, getNormalisedHeight(uv), 1.0);
     }
     vec3 computeNormal(vec2 uv, vec4 pos) {
         //what about the edges?
@@ -395,122 +391,3 @@ function earthCurveVert(shader: THREE.Shader) {
         }
         `, shader.vertexShader, SubstitutionType.APPEND);    
 }
-
-
-const vert = glsl`
-//uniform mat4 projectionMatrix, modelViewMatrix;
-uniform float iTime;
-uniform uint gridSizeX, gridSizeY;
-uniform vec2 EPS;
-uniform float heightMin, heightMax;
-uniform float horizontalScale;
-uniform sampler2D heightFeild;
-varying vec2 vUv;
-varying float normalisedHeight;
-varying vec3 v_modelSpacePosition;
-varying vec3 v_worldSpacePosition;
-varying vec3 v_viewSpacePosition;
-varying vec3 v_normal;
-float mapHeight(float h) {
-    return heightMin + h * (heightMax - heightMin);
-}
-float getNormalisedHeight(vec2 uv) {
-    uv.y = 1. - uv.y;
-    vec4 v = texture2D(heightFeild, uv);
-    float h = v.r + (v.g / 256.);
-    return h;
-}
-float getHeight(vec2 uv) {
-    return mapHeight(getNormalisedHeight(uv));
-}
-vec2 uvFromVertID() {
-    uint id = uint(gl_VertexID);
-    uint x = id / gridSizeY;
-    uint y = id % gridSizeX;
-    //NB: when I was doing this in OF, I didn't include the +0.5
-    //I think this version is correct... see some odd artefacts otherwise.
-    return vec2(float(x)+0.5, float(y)+0.5) * EPS;
-}
-vec4 computePos(vec2 uv) {
-    return vec4((uv) * horizontalScale, getNormalisedHeight(uv), 1.0);
-}
-vec3 computeNormal(vec2 uv, vec4 pos) {
-    //what about the edges?
-    vec3 p = pos.xyz;
-    vec3 dx = normalize(computePos(uv + vec2(EPS.x, 0.)).xyz - p);
-    vec3 dy = normalize(computePos(uv + vec2(0., EPS.y)).xyz - p);
-    return normalize(cross(dx, dy)).xyz;
-}
-void main() {
-    vec2 uv = uvFromVertID();
-    vUv = uv;
-    // float h = getNormalisedHeight(vUv);
-    // normalisedHeight = h;
-    vec4 p = computePos(vUv);
-    v_normal = computeNormal(uv, p);
-    normalisedHeight = p.z;
-    v_modelSpacePosition = p.xyz;
-    p = modelMatrix * p;
-    v_worldSpacePosition = p.xyz;
-    p = viewMatrix * p;
-    v_viewSpacePosition = p.xyz;
-    gl_Position = projectionMatrix * p;
-}
-`;
-const frag = glsl`//#version 300 es
-precision highp float;
-//out vec4 col;
-uniform sampler2D heightFeild;
-uniform float heightMin, heightMax;
-uniform float iTime;
-varying vec3 v_modelSpacePosition;
-varying vec3 v_worldSpacePosition;
-varying vec3 v_viewSpacePosition;
-varying vec2 vUv;
-varying float normalisedHeight;
-varying vec3 v_normal;
-float mapHeight(float h) {
-    return heightMin + h * (heightMax - heightMin);
-}
-float getNormalisedHeight(vec2 uv) {
-    uv.y = 1. - uv.y;
-    vec4 v = texture2D(heightFeild, uv);
-    float h = v.r + (v.g / 256.);
-    return h;
-}
-float getHeight(vec2 uv) {
-    return mapHeight(getNormalisedHeight(uv));
-}
-float aastep(float threshold, float value) {
-    float afwidth = length(vec2(dFdx(value), dFdy(value))) * 0.70710678118654757;
-    return smoothstep(threshold-afwidth, threshold+afwidth, value);
-}
-vec3 computeNormal() {
-    vec3 p = v_worldSpacePosition;
-    vec3 dx = dFdx(p);
-    vec3 dy = dFdy(p);
-    return normalize(cross(dx, dy));
-}
-//this function seems quite good at showing up certain artefacts...
-float computeSteepness() {
-    // return pow(1.-abs(dot(vec3(0.,0.,1.), computeNormal())), 0.5);
-    return pow(1.-abs(dot(vec3(0.,0.,1.), v_normal)), 0.5);
-}
-float computeContour() {
-    float h = getHeight(vUv);// v_worldSpacePosition.z;
-    h = mod(h-3.*iTime, 5.)/5.;
-    h = max(smoothstep(0.98, 1.0, h), smoothstep(0.02, 0., h));
-    //h = aastep(0.5, h);
-    return h;
-}
-void main() {
-    float h = computeContour();
-    float s = computeSteepness();
-    // float v = normalisedHeight;
-    float v = abs(getHeight(vUv) - v_worldSpacePosition.z);
-    vec4 col = vec4(vec3(0.2, s*0.7, v), 1.0);
-    col.rg *= vec2(h);
-    // col.rg = vUv;
-    gl_FragColor = col;
-}
-`;

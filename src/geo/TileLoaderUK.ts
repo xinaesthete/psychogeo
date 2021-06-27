@@ -61,7 +61,7 @@ export function getImageFilename(source_filename: string, lowRes = false) {
 //make this false to use PlaneBufferGeometry
 //should allow us to use more standard shaders, with displacement map for terrain
 //but not working.
-export const attributeless = true, onlyDebugGeometry = false;
+export const onlyDebugGeometry = false;
 
 
 const nullInfo: DsmCatItem = {
@@ -93,22 +93,19 @@ async function getTileMesh(info: DsmCatItem, lowRes = false) {
     lodObj.scale.set(s, s, eleScale);
     lodObj.position.z = info.min_ele??0;
     for (let lod = 0; lod<LOD_LEVELS; lod++) {
+        const uvTransform = new THREE.Matrix3();
+        // uvTransform.scale(0.5, 0.5);
         const uniforms = {
             heightFeild: { value: texture },
             heightMin: { value: info.min_ele?? 0 }, heightMax: { value: info.max_ele?? 1 },
             ...getLodUniforms(lod),
-            horizontalScale: { value: 1 },
+            uvTransform: { value: uvTransform },
             iTime: globalUniforms.iTime,
         };
         const geo = tileGeom[lod]; //regardless of image geom, for now
         
-        const mat = attributeless ? getTileMaterial(uniforms) : new THREE.MeshStandardMaterial();
+        const mat = getTileMaterial(uniforms);
         // mat.wireframe = true;
-        if (!attributeless) {
-            let material = mat as THREE.MeshStandardMaterial;
-            material.displacementMap = texture;
-            material.displacementScale = 1;//info.max_ele - info.min_ele; //handled by matrix (for now)
-        }
         const mesh = new THREE.Mesh(geo, mat);
         applyCustomDepth(mesh, uniforms);
         mesh.castShadow = true;

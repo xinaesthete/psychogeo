@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 import { computeTriangleGridIndices } from '../threact/threexample';
-// import { attributeless } from './TileLoaderUK';
 
 const _bb = new THREE.Box3();
 /**
@@ -21,17 +20,9 @@ function distanceToBBox(p1: THREE.Vector3, p2: THREE.Mesh) {
 const tileBSphere = new THREE.Sphere(new THREE.Vector3(0.5, 0.5, 0.5), 0.8);
 const tileBBox = new THREE.Box3(new THREE.Vector3(), new THREE.Vector3(1, 1, 1));
 function makeTileGeometry(s: number) {
-  let geo : THREE.BufferGeometry;
-  const attributeless = true;//XXX
-  if (attributeless) {
-      geo = new THREE.BufferGeometry();
-      geo.drawRange.count = (s-1) * (s-1) * 6;
-      geo.setIndex(computeTriangleGridIndices(s, s));
-  } else {
-      geo = new THREE.PlaneBufferGeometry(1, 1, s, s);
-      geo.translate(0.5, 0.5, 0.5);
-      geo.computeVertexNormals();
-  }
+  const geo = new THREE.BufferGeometry();
+  geo.drawRange.count = (s-1) * (s-1) * 6;
+  geo.setIndex(computeTriangleGridIndices(s, s));
   //would these be able to account for displacement if computed automatically?
   geo.boundingSphere = tileBSphere;
   geo.boundingBox = tileBBox;
