@@ -1,5 +1,9 @@
 import * as THREE from 'three';
+import * as JP2 from '../openjpegjs/jp2kloader';
+import { globalUniforms } from '../threact/threact';
 import { computeTriangleGridIndices } from '../threact/threexample';
+import { DsmCatItem, getImageFilename } from './TileLoaderUK';
+import { applyCustomDepth, getTileMaterial } from './TileShader';
 
 const _bb = new THREE.Box3();
 /**
@@ -51,4 +55,51 @@ export function getLodUniforms(lod: number) {
   const EPS = {value: new THREE.Vector2(e, e)};
   const LOD = {value: lod/LOD_LEVELS};
   return {EPS, gridSizeX, gridSizeY, LOD};
+}
+
+export async function getTileMesh(info: DsmCatItem, lowRes = false) {
+  //let's call this differently for a low-res layer.
+  // let info = getTileProperties(coord, lowRes) || nullInfo;
+  // if (info.mesh) return info; //!!! this breaks when more than one scene uses the same tile.
+  //// but we'll still be using a cached texture.
+
+  const sources = info.sources;
+  const source = !sources ? info.source_filename : sources[2000] || sources[1000] || sources[500]!;
+  const url = getImageFilename(source, lowRes);
+  
+  const {texture, frameInfo} = await JP2.jp2Texture(url, lowRes); //lowRes also means 'fullFloat' at the moment
+  const w = frameInfo.width, h = frameInfo.height;
+  const lodObj = new THREE.LOD();
+  const s = lowRes ? 40960 : 1000;
+  // for now there's a weak convention that lowRes also means non-normalised data
+  // and doesn't include stats. that might change, and we should more clearly flag.
+  const eleScale = lowRes ? 1 : info.max_ele! - info.min_ele!;
+  lodObj.scale.set(s, s, eleScale);
+  lodObj.position.z = info.min_ele??0;
+  for (let lod = 0; lod<LOD_LEVELS; lod++) {
+      const uvTransform = new THREE.Matrix3();
+      // uvTransform.scale(0.5, 0.5);
+      const uniforms = {
+          heightFeild: { value: texture },
+          heightMin: { value: info.min_ele?? 0 }, heightMax: { value: info.max_ele?? 1 },
+          ...getLodUniforms(lod),
+          uvTransform: { value: uvTransform },
+          iTime: globalUniforms.iTime,
+      };
+      const geo = tileGeom[lod]; //regardless of image geom, for now
+      
+      const mat = getTileMaterial(uniforms);
+      // mat.wireframe = true;
+      const mesh = new THREE.Mesh(geo, mat);
+      applyCustomDepth(mesh, uniforms);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      
+      //this could be tweakable (integer only, higher values lower detail)
+      const lodBias = 8;
+      lodObj.addLevel(mesh, Math.pow(2,lod-lodBias) * s);
+  }
+
+  info.mesh = lodObj;
+  return info;
 }

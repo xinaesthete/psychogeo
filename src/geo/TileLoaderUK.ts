@@ -1,20 +1,19 @@
 import * as THREE from 'three';
 import * as JP2 from '../openjpegjs/jp2kloader';
-import { globalUniforms } from '../threact/threact';
-import { computeTriangleGridIndices, ThreactTrackballBase } from '../threact/threexample';
+import { ThreactTrackballBase } from '../threact/threexample';
 import { EastNorth } from './Coordinates';
 import * as dsm_cat from './dsm_catalog.json' //pending rethink of API...
 import * as dtm_10m from './10m_dtm_catalog.json' //similarly pending rethink of API...
 import { threeGeometryFromShpZip } from './ShpProcessor';
-import { applyCustomDepth, applyCustomDepthForViewshed, getTileMaterial, tileLoadingMat } from './TileShader';
+import { applyCustomDepth, applyCustomDepthForViewshed, tileLoadingMat } from './TileShader';
 import { loadGpxGeometry } from './TrackVis';
-import { getLodUniforms, LOD_LEVELS, tileGeom } from './LodUtils';
+import { getTileMesh } from './LodUtils';
 
 
 const cat = (dsm_cat as any).default;
 const cat10m = (dtm_10m as any).default;
 type DsmSources = Partial<Record<"500" | "1000" | "2000", string>>;
-interface DsmCatItem {
+export interface DsmCatItem {
     min_ele?: number;
     max_ele?: number;
     valid_percent?: number,
@@ -70,55 +69,6 @@ const nullInfo: DsmCatItem = {
 };
 nullInfo.mesh!.userData.isNull = true;
 
-// at the moment, this is only called from LazyLoader which already has it's info object
-// we shouldn't really be making a whole grid of these things, but as of now, could be passing that
-// rather than coord
-async function getTileMesh(info: DsmCatItem, lowRes = false) {
-    //let's call this differently for a low-res layer.
-    // let info = getTileProperties(coord, lowRes) || nullInfo;
-    // if (info.mesh) return info; //!!! this breaks when more than one scene uses the same tile.
-    //// but we'll still be using a cached texture.
-
-    const sources = info.sources;
-    const source = !sources ? info.source_filename : sources[2000] || sources[1000] || sources[500]!;
-    const url = getImageFilename(source, lowRes);
-    
-    const {texture, frameInfo} = await JP2.jp2Texture(url, lowRes); //lowRes also means 'fullFloat' at the moment
-    const w = frameInfo.width, h = frameInfo.height;
-    const lodObj = new THREE.LOD();
-    const s = lowRes ? 40960 : 1000;
-    // for now there's a weak convention that lowRes also means non-normalised data
-    // and doesn't include stats. that might change, and we should more clearly flag.
-    const eleScale = lowRes ? 1 : info.max_ele! - info.min_ele!;
-    lodObj.scale.set(s, s, eleScale);
-    lodObj.position.z = info.min_ele??0;
-    for (let lod = 0; lod<LOD_LEVELS; lod++) {
-        const uvTransform = new THREE.Matrix3();
-        // uvTransform.scale(0.5, 0.5);
-        const uniforms = {
-            heightFeild: { value: texture },
-            heightMin: { value: info.min_ele?? 0 }, heightMax: { value: info.max_ele?? 1 },
-            ...getLodUniforms(lod),
-            uvTransform: { value: uvTransform },
-            iTime: globalUniforms.iTime,
-        };
-        const geo = tileGeom[lod]; //regardless of image geom, for now
-        
-        const mat = getTileMaterial(uniforms);
-        // mat.wireframe = true;
-        const mesh = new THREE.Mesh(geo, mat);
-        applyCustomDepth(mesh, uniforms);
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-        
-        //this could be tweakable (integer only, higher values lower detail)
-        const lodBias = 8;
-        lodObj.addLevel(mesh, Math.pow(2,lod-lodBias) * s);
-    }
-
-    info.mesh = lodObj;
-    return info;
-}
 
 //may consider throttling how many tiles load at a time & having a status to indicate that.
 enum TileStatus { UnTouched, Loading, Loaded, Error } 
