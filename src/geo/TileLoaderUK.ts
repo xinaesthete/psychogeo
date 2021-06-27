@@ -103,6 +103,7 @@ async function getTileMesh(info: DsmCatItem, lowRes = false) {
         const geo = tileGeom[lod]; //regardless of image geom, for now
         
         const mat = attributeless ? getTileMaterial(uniforms) : new THREE.MeshStandardMaterial();
+        // mat.wireframe = true;
         if (!attributeless) {
             let material = mat as THREE.MeshStandardMaterial;
             material.displacementMap = texture;
@@ -113,8 +114,9 @@ async function getTileMesh(info: DsmCatItem, lowRes = false) {
         mesh.castShadow = true;
         mesh.receiveShadow = true;
         
-        // at what distance should this lod be applied?
-        lodObj.addLevel(mesh, Math.pow(2,lod-2) * s/4);
+        //this could be tweakable (integer only, higher values lower detail)
+        const lodBias = 8;
+        lodObj.addLevel(mesh, Math.pow(2,lod-lodBias) * s);
     }
 
     info.mesh = lodObj;

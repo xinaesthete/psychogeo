@@ -38,7 +38,7 @@ function makeTileGeometry(s: number) {
   return geo;
 }
 
-export const LOD_LEVELS = 10;
+export const LOD_LEVELS = 12;
 /** by LOD, 0 is 2k, 1 is 1k, 2 is 500... powers of 2 might've been nice if the original data was like that */
 ///// chchchanging....
 export const tileGeom: THREE.BufferGeometry[] = [];
