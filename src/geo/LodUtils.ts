@@ -70,7 +70,7 @@ export async function getTileMesh(info: DsmCatItem, lowRes = false, lodBias = 5)
 
   const { texture, frameInfo } = await JP2.jp2Texture(url, lowRes); //lowRes also means 'fullFloat' at the moment
   const w = frameInfo.width, h = frameInfo.height;
-  const lodObj = new THREE.LOD();
+  const lodObj = new GeoLOD();
   const s = lowRes ? 40960 : 1000;
   // for now there's a weak convention that lowRes also means non-normalised data
   // and doesn't include stats. that might change, and we should more clearly flag.
@@ -156,11 +156,14 @@ const _v2 = new THREE.Vector3();
  */
 class GeoLOD extends THREE.Object3D {
   _currentLevel = 0;
+  autoUpdate = true;
   levels: {object: THREE.Object3D, distance: number}[];
+  get isLOD() { return true; }
   constructor() {
     super();
     this.type = 'GeoLOD';
     this.levels = [];
+    this.frustumCulled = false;
   }
   copy(source: this)  {
     super.copy(source, false);
@@ -169,6 +172,7 @@ class GeoLOD extends THREE.Object3D {
       const level = levels[i];
       this.addLevel(level.object.clone(), level.distance);
     }
+    this.autoUpdate = source.autoUpdate;
     return this;
   }
   addLevel(object: THREE.Object3D, distance = 0) {
@@ -200,9 +204,49 @@ class GeoLOD extends THREE.Object3D {
     }
     return null;
   }
+  raycast(raycaster: THREE.Raycaster, intersects: THREE.Intersection[]) {
+    const levels = this.levels;
+    if (levels.length > 0) {
+      //TODO: distance to bbox, properly transformed
+      _v1.setFromMatrixPosition(this.matrixWorld);
+      const distance = raycaster.ray.origin.distanceTo(_v1);
+      this.getObjectForDistance(distance)?.raycast(raycaster, intersects);
+    }
+  }
+  update(camera: THREE.Camera) {
+    const levels = this.levels;
+    if (levels.length > 1) {
+      _v1.setFromMatrixPosition(camera.matrixWorld);
+      _v2.setFromMatrixPosition(this.matrixWorld);
+      let lod: THREE.LOD;
+      const distance = _v1.distanceTo(_v2) / (camera as any).zoom;
+      levels[0].object.visible = true;
+      let i = 1, l = levels.length;
+      for (; i<l; i++) {
+        if (distance >= levels[i].distance) {
+          levels[i-1].object.visible = false;
+          levels[i].object.visible = true;
+        } else {
+          break;
+        }
+      }
+      this._currentLevel = i-1;
+      for (; i<l; i++) {
+        levels[i].object.visible = false;
+      }
+    }
+  }
   toJSON( meta: any ) {
     const data = super.toJSON(meta);
     data.object.levels = [];
-    
+    const levels = this.levels;
+    for (let i=0, l=levels.length; i<l; i++) {
+      const level = levels[i];
+      data.object.levels.push({
+        object: level.object.uuid,
+        distance: level.distance
+      });
+    }
+    return data;
   }
 }

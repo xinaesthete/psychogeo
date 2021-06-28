@@ -297,7 +297,7 @@ function patchFragmentShader(fragmentShader: string) {
         c *= max(0.,1.-fall*falloff);
         return c;
     }
-        //this function seems quite good at showing up certain artefacts...
+    //this function seems quite good at showing up certain artefacts...
     float computeSteepness() {
         // return pow(1.-abs(dot(vec3(0.,0.,1.), computeNormal())), 0.5);
         //XXX: copying this into depth/distance shader (where it's not used) lead to compiler error
