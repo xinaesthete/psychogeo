@@ -102,7 +102,7 @@ const vertexPreamble = glsl`
         return mapHeight(getNormalisedHeight(uv));
     }
     vec4 computePos(vec2 uv) {
-        return vec4(uv, getNormalisedHeight(uv), 1.0);
+        return vec4(uv - 0.5, getNormalisedHeight(uv), 1.0);
     }
     vec3 computeNormal(vec2 uv, vec4 pos) {
         //what about the edges?
@@ -255,7 +255,7 @@ function patchFragmentShader(fragmentShader: string) {
         return smoothstep(threshold-afwidth, threshold+afwidth, value);
     }
     vec4 computePos(vec2 uv) {
-        return vec4(uv, getNormalisedHeight(uv), 1.0);
+        return vec4(uv - 0.5, getNormalisedHeight(uv), 1.0);
     }
     vec3 computeNormal(vec2 uv, vec4 pos) {
         //what about the edges?

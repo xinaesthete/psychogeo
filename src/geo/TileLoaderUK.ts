@@ -105,13 +105,15 @@ class LazyTile {
             parent.add(loadingMesh);
     
             //TODO: add intermediate 'loading' graphic & 'error' debug info.
+            //potentially pass something with the ability to cancel loading.
+            //(take some inspiration from goroutines)
             getTileMesh(info, lowRes).then(m => {
                 this.status = TileStatus.Loaded;
                 parent.remove(loadingMesh);
-                m.mesh!.position.x = dx;
-                m.mesh!.position.y = dy;
+                m.mesh!.position.x = dx + s/2;
+                m.mesh!.position.y = dy + s/2;
                 this.object3D = m.mesh!;
-                if (lowRes) this.object3D.position.z = -100;
+                // if (lowRes) this.object3D.position.z = -100;
                 parent.add(this.object3D);
             });
         }

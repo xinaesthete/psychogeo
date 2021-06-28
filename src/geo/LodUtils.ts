@@ -21,8 +21,9 @@ function distanceToBBox(p1: THREE.Vector3, p2: THREE.Mesh) {
   return _bb.distanceToPoint(p1);
 }
 
-const tileBSphere = new THREE.Sphere(new THREE.Vector3(0.5, 0.5, 0.5), 0.8);
-const tileBBox = new THREE.Box3(new THREE.Vector3(), new THREE.Vector3(1, 1, 1));
+//BBox & BSphere centred rather than at tile origin
+const tileBSphere = new THREE.Sphere(new THREE.Vector3(0.5, 0.5, 0), 1); //nb radius is wide, but could still potentially miss hills?
+const tileBBox = new THREE.Box3(new THREE.Vector3(-0.5, -0.5, 0), new THREE.Vector3(0.5, 0.5, 1));
 function makeTileGeometry(s: number) {
   const geo = new THREE.BufferGeometry();
   geo.drawRange.count = (s-1) * (s-1) * 6;
