@@ -148,6 +148,7 @@ export async function getTileMesh(info: DsmCatItem, lowRes = false, lodBias = 5)
 
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
+const _bbox = new THREE.Box3();
 /**
  * Starting out as fairly much of a direct copy of `THREE.LOD`.
  * Want to behave differently in terms of how `distanceTo` is computed (to BoundingBox).
@@ -204,22 +205,26 @@ class GeoLOD extends THREE.Object3D {
     }
     return null;
   }
+  /** Not clever enough to cast into procedural geometry etc. Will require async with special render pass. */
   raycast(raycaster: THREE.Raycaster, intersects: THREE.Intersection[]) {
     const levels = this.levels;
     if (levels.length > 0) {
-      //TODO: distance to bbox, properly transformed
-      _v1.setFromMatrixPosition(this.matrixWorld);
-      const distance = raycaster.ray.origin.distanceTo(_v1);
+      //distance to bbox, properly transformed (UNTESTED)
+      _bbox.copy(tileBBox);
+      _bbox.applyMatrix4(this.matrixWorld); //may not be needed every time.
+      //_v1.setFromMatrixPosition(this.matrixWorld);
+      const distance = _bbox.distanceToPoint(raycaster.ray.origin);// raycaster.ray.origin.distanceTo(_v1);
       this.getObjectForDistance(distance)?.raycast(raycaster, intersects);
     }
   }
   update(camera: THREE.Camera) {
     const levels = this.levels;
+    _bbox.copy(tileBBox);
+    _bbox.applyMatrix4(this.matrixWorld); //may not be needed every time.
     if (levels.length > 1) {
       _v1.setFromMatrixPosition(camera.matrixWorld);
-      _v2.setFromMatrixPosition(this.matrixWorld);
-      let lod: THREE.LOD;
-      const distance = _v1.distanceTo(_v2) / (camera as any).zoom;
+      //_v2.setFromMatrixPosition(this.matrixWorld);
+      const distance = _bbox.distanceToPoint(_v1) / (camera as any).zoom;
       levels[0].object.visible = true;
       let i = 1, l = levels.length;
       for (; i<l; i++) {
