@@ -82,7 +82,6 @@ const vertexPreamble = glsl`
     uniform vec2 EPS;
     uniform float heightMin, heightMax;
     uniform sampler2D heightFeild;
-    varying float normalisedHeight;
     // varying vec3 v_modelSpacePosition;
     // varying vec3 v_worldSpacePosition;
     // varying vec3 v_viewSpacePosition;
@@ -148,7 +147,6 @@ const beginnormal_vertexChunk = glsl`
 
 const project_vertexChunk = glsl`
     //vNormal = computeNormal(vUv, p);
-    normalisedHeight = p.z;
     transformed = p.xyz; // standard threejs variable, not 'transformed' by modelViewMatrix
     p = modelViewMatrix * p;
     vec4 mvPosition = p;
@@ -207,7 +205,6 @@ function patchFragmentShader(fragmentShader: string) {
     uniform float heightMin, heightMax;
     uniform float iTime;
     uniform float LOD;
-    varying float normalisedHeight;
     // https://cis700-procedural-graphics.github.io/files/toolbox_functions.pdf
     //(nb, switched arguments)
     float bias(float t, float b) { return pow(t, log(b) / log(0.5)); }
