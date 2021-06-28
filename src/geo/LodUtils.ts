@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { WebGLRenderer } from 'three';
 import * as JP2 from '../openjpegjs/jp2kloader';
 import { globalUniforms } from '../threact/threact';
 import { computeTriangleGridIndices } from '../threact/threexample';
@@ -56,6 +57,25 @@ function getLodUniforms(lod: number) {
   const EPS = {value: new THREE.Vector2(e, e)};
   const LOD = {value: lod/LOD_LEVELS};
   return {EPS, gridSizeX, gridSizeY, LOD};
+}
+
+function renderMip(renderer: WebGLRenderer, texture: THREE.Texture, size: number) {
+  const camera = new THREE.OrthographicCamera(0, 1, 0, 1, 0, 2);
+  camera.position.set(0.5, 0.5, -2);
+  camera.lookAt(0.5, 0.5, 0);
+  const geo = new THREE.PlaneBufferGeometry(1, 1, 1, 1);
+  const mat = new THREE.MeshBasicMaterial({map: texture});
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.set(0, 1, 0);
+  mesh.scale.set(-1, -1, 1);
+  const scene = new THREE.Scene();
+  scene.add(mesh);
+  const oldTarget = renderer.getRenderTarget();
+  const target = new THREE.WebGLRenderTarget(size, size, {...texture});
+  renderer.setRenderTarget(target);
+  renderer.render(scene, camera);
+  renderer.setRenderTarget(oldTarget);
+  return target.texture;
 }
 
 export async function getTileMesh(info: DsmCatItem, lowRes = false, lodBias = 5) {
@@ -129,6 +149,14 @@ export async function getTileMesh(info: DsmCatItem, lowRes = false, lodBias = 5)
     const mat = getTileMaterial(uniforms);
     // mat.wireframe = true;
     const mesh = new THREE.Mesh(geo, mat);
+    if (lowRes && lod > 4) {
+      const oldBeforeRender = mesh.onBeforeRender;
+      mesh.onBeforeRender = (renderer) => {
+        const s = w / Math.pow(2, lod - 4);
+        uniforms.heightFeild.value = renderMip(renderer, texture, s);
+        mesh.onBeforeRender = oldBeforeRender;
+      }
+    }
     applyCustomDepth(mesh, uniforms);
     mesh.castShadow = true;
     mesh.receiveShadow = true;

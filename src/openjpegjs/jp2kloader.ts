@@ -99,7 +99,7 @@ export async function jp2Texture(url: string, simplerDecodeHack: boolean) {
   texture.minFilter = texture.magFilter = THREE.LinearFilter;
   texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
   texture.anisotropy = 16;
-  texture.generateMipmaps = true; //TODO: test & make sure full use being made...
+  // texture.generateMipmaps = true; //TODO: test & make sure full use being made...
   const t = {texture, frameInfo};
   textureCache.set(url, t);
   return t;
