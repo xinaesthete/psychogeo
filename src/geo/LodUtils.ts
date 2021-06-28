@@ -140,3 +140,69 @@ export async function getTileMesh(info: DsmCatItem, lowRes = false, lodBias = 5)
   info.mesh = lodObj;
   return info;
 }
+
+////////////////
+////////////////
+////////////////
+////////////////
+
+const _v1 = new THREE.Vector3();
+const _v2 = new THREE.Vector3();
+/**
+ * Starting out as fairly much of a direct copy of `THREE.LOD`.
+ * Want to behave differently in terms of how `distanceTo` is computed (to BoundingBox).
+ * May want to reduce matrix operations, adding / removing children rather than setting visible?
+ * May want to do some 
+ */
+class GeoLOD extends THREE.Object3D {
+  _currentLevel = 0;
+  levels: {object: THREE.Object3D, distance: number}[];
+  constructor() {
+    super();
+    this.type = 'GeoLOD';
+    this.levels = [];
+  }
+  copy(source: this)  {
+    super.copy(source, false);
+    const levels = source.levels;
+    for (let i = 0, l = levels.length; i<l; i++) {
+      const level = levels[i];
+      this.addLevel(level.object.clone(), level.distance);
+    }
+    return this;
+  }
+  addLevel(object: THREE.Object3D, distance = 0) {
+    distance = Math.abs(distance);
+    const levels = this.levels;
+    let l: number;
+    for (l=0; l<levels.length; l++) {
+      if (distance < levels[l].distance) {
+        break;
+      }
+    }
+    levels.splice(l, 0, {distance, object});
+    this.add(object);
+    return this;
+  }
+  getCurrentLevel() {
+    return this._currentLevel;
+  }
+  getObjectForDistance( distance: number ) {
+    const levels = this.levels;
+    if (levels.length > 0) {
+      let i = 1, l = levels.length;
+      for (; i<l; i++) {
+        if (distance < levels[i].distance) {
+          break;
+        }
+      }
+      return levels[i-1].object;
+    }
+    return null;
+  }
+  toJSON( meta: any ) {
+    const data = super.toJSON(meta);
+    data.object.levels = [];
+    
+  }
+}
