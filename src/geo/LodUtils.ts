@@ -6,22 +6,6 @@ import { computeTriangleGridIndices } from '../threact/threexample';
 import { DsmCatItem, getImageFilename } from './TileLoaderUK';
 import { applyCustomDepth, getTileMaterial } from './TileShader';
 
-const _bb = new THREE.Box3();
-/**
- * this isn't used currently, but if we want to go back to a more custom LOD, it could be useful.
- * @param p1 
- * @param p2 
- * @returns 
- */
-function distanceToBBox(p1: THREE.Vector3, p2: THREE.Mesh) {
-  //_bb.setFromObject(p2); //nb, this does a redundant updateWorldMatrix(), so let's cut to the chase
-  if (!p2.geometry.boundingBox) throw 'expected bounding box';
-  _bb.copy(p2.geometry.boundingBox!);
-  //come to think of it, this is also a bit of a waste
-  _bb.applyMatrix4(p2.matrixWorld);
-  return _bb.distanceToPoint(p1);
-}
-
 //BBox & BSphere centred rather than at tile origin
 const tileBSphere = new THREE.Sphere(new THREE.Vector3(0.5, 0.5, 0), 1); //nb radius is wide, but could still potentially miss hills?
 const tileBBox = new THREE.Box3(new THREE.Vector3(-0.5, -0.5, 0), new THREE.Vector3(0.5, 0.5, 1));
@@ -36,18 +20,10 @@ function makeTileGeometry(s: number) {
 }
 
 const LOD_LEVELS = 12;
-/** by LOD, 0 is 2k, 1 is 1k, 2 is 500... powers of 2 might've been nice if the original data was like that */
-///// chchchanging....
 const tileGeom: THREE.BufferGeometry[] = [];
 for (let i=0; i<LOD_LEVELS; i++) {
     tileGeom.push(makeTileGeometry(Math.floor(4096 / Math.pow(2, i))));
 }
-// let lodFalloffFactor = 100; //TODO control this depending on hardware etc.
-// function getTileLOD(dist: number, tilePx: number, tileM: number) {
-//     const tileRes = tileM / tilePx;
-//     const d = dist/tileRes;
-//     return Math.pow(2, Math.min(LOD_LEVELS-1, Math.round(Math.sqrt(d/lodFalloffFactor))));
-// }
 function getLodUniforms(lod: number) {
   const s = Math.pow(2, lod);//1, 2, 4, ...
   const w = 4096 / s; //4096, 2048, 1024, ...
@@ -64,6 +40,7 @@ function renderMip(renderer: WebGLRenderer, texture: THREE.Texture, size: number
   camera.position.set(0.5, 0.5, -2);
   camera.lookAt(0.5, 0.5, 0);
   const geo = new THREE.PlaneBufferGeometry(1, 1, 1, 1);
+  //TODO: filter nicely.
   const mat = new THREE.MeshBasicMaterial({map: texture});
   const mesh = new THREE.Mesh(geo, mat);
   mesh.position.set(0, 1, 0);

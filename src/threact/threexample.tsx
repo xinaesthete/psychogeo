@@ -91,10 +91,32 @@ export class JP2TextureView extends ThreactTrackballBase {
     }
 }
 
-
 export function computeTriangleGridIndices(gridSizeX: number, gridSizeY: number) {
+    //TODO: order triangle so that they can be used for better LOD?
+    const n = gridSizeX * gridSizeY * 6;
+    const t = n > 1<<16 ? Uint32Array : Uint16Array;
+    const data = new t(n);
+    let p = 0;
+    const index = (x: number, y: number) => gridSizeY * x + y;
+    for (let i=0; i<gridSizeX - 1; i++) {
+        for (let j=0; j<gridSizeY - 1; j++) {
+            const cell = [
+                index(i,   j),
+                index(i+1, j),
+                index(i+1, j+1),
+                index(i,   j),
+                index(i+1, j+1),
+                index(i,   j+1),
+            ];
+            data.set(cell,   p);
+            p+=6;
+        }
+    }
+    return new THREE.BufferAttribute(data, 1);
+}
+
+function computeTriangleGridIndicesX(gridSizeX: number, gridSizeY: number) {
     //TODO: order triangle so that they can be used for better LOD
-    
     const d: number[] = [];
     const index = (x: number, y: number) => gridSizeY * x + y;
     for (let i=0; i<gridSizeX - 1; i++) {
