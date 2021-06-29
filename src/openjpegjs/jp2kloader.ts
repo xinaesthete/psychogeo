@@ -40,11 +40,9 @@ async function getTexData(url: string, fullFloat: boolean, compressionRatio = 1)
     const r = await fetch(url);
     const frameInfo:FrameInfo = {width: 4096, height: 4096, isSigned: true, bitsPerSample: 32, componentCount: 1};
     const buf = await r.arrayBuffer();
-    // for some reason, this doesn't appear to resemble the data that I'm expecting.
-    // I get an error that the byteLength is not a multiple of 4.
-    // If I try to slice a portion from the start & turn that into a Float32Array, it doesn't appear to contain relevant values.
-    const texData = new Uint16Array(new Float32Array(buf).map(toHalf));//.map(v => Number.isNaN(v) ? -200 : v);
-    // const texData = new Float32Array(buf);
+    
+    //const texData = new Uint16Array(new Float32Array(buf).map(toHalf));//.map(v => Number.isNaN(v) ? -200 : v);
+    const texData = new Uint16Array(buf);//.map(v => Number.isNaN(v) ? -200 : v);
     if (texData.length !== frameInfo.width * frameInfo.height) {
       console.error(`that ain't gonna work - ${texData.length} isn't expected length (${frameInfo.width*frameInfo.height})`);
     }
