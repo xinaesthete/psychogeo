@@ -69,8 +69,8 @@ async function getTexData(url: string, fullFloat: boolean, compressionRatio = 1)
       if (typeof m.data === "string") reject(m.data);
       resolve(m.data as TexFrame);
     }
-    if (compressionRatio === 1) worker.postMessage({cmd: "tex", url: url, fullFloat: fullFloat});
-    else worker.postMessage({cmd: "recode", url: url, compressionRatio: compressionRatio});
+    if (compressionRatio === 1) worker.postMessage({cmd: "tex", url, fullFloat});
+    else worker.postMessage({cmd: "recode", url, compressionRatio: compressionRatio, fullFloat});
   });
   return promise;
 }

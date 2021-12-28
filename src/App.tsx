@@ -36,14 +36,16 @@ function App() {
   
   const beinnSgrithael = {east: 183786, north: 812828};
   const winchester = convertWgsToOSGB({lat: 51.064, lon: -1.3098227});
+  const cornwall = {east: 201582, north: 43954};
   const branscombe = {east: 320709, north: 88243};
   
+  const stmawes: Track = {url: "gpx/Gorran_Haven_to_St_Mawe_s_tandem_solo_.gpx", heightOffset: 2, colour: 0x902020};
   const stGiles: Track = {url: "data/stgiles.gpx", heightOffset: 2, colour: 0x902020};
   const palestine: Track = { url: "data/palestine.gpx", heightOffset: 2, colour: 0x70f0f0};
-  const kaw: Track = { url: "gpx/king_alfreds_way_2020_final_route.gpx", heightOffset: 2, colour: 0xf08050};
+  const kaw: Track = { url: "gpx/king_alfreds_way_2020_final_route.gpx", heightOffset: 20, colour: 0xf08050};
   const stonehenge: Track = { url: "gpx/Where_the_Banshees_live_and_they_do_live_well.gpx", heightOffset: 2, colour: 0xf08050};
   const bart: Track = { url: "gpx/Kings-Barton-Walking-1-Apr-2021-at-17-55.gpx", heightOffset: 2, colour: 0x70f0f0};
-  fetch('/ping');
+  // fetch('/ping');
   return (
     <div className="App">
       {/* <header className="App-header">
@@ -53,7 +55,7 @@ function App() {
         defra10mDTMLayer: true, defraDSMLayer: false, osTerr50Layer: false, camZ: 30000, tracks: [
       //  stGiles, palestine
       // bart,
-      // kaw,
+      kaw,
       // stonehenge
       ]}} />
       {/* <Terrain coord={beinnSgrithael} options={{defraDSMLayer: false, osTerr50Layer: true, camZ: 30000}} /> */}

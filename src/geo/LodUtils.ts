@@ -64,8 +64,10 @@ export async function getTileMesh(info: DsmCatItem, lowRes = false, lodBias = 5)
   const sources = info.sources;
   const source = !sources ? info.source_filename : sources[2000] || sources[1000] || sources[500]!;
   const url = getImageFilename(source, lowRes);
+  console.log("getTileMesh filename", url);
 
   const { texture, frameInfo } = await JP2.jp2Texture(url, lowRes); //lowRes also means 'fullFloat' at the moment
+  /// or does it? 
   const w = frameInfo.width, h = frameInfo.height;
   const lodObj = new GeoLOD();
   const s = lowRes ? 40960 : 1000;

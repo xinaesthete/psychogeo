@@ -154,7 +154,7 @@ onmessage = async m => {
                 postMessage(d, [d.texData.buffer]);
                 break;
             default:
-                throw new Error(`texture_worker expects {cmd: "tex"|"recode", url: string}`);
+                throw new Error(`texture_worker expects {cmd: "tex"|"recode", url: string, fullFloat: boolean}`);
         }
     } catch (error) {
         postMessage(`error ${error} caught processing texture_worker message ${JSON.stringify(m.data)}`);

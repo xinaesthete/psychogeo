@@ -312,6 +312,8 @@ function patchFragmentShader(fragmentShader: string) {
     `;
     //fragmentShader = fragPreamble + fragmentShader;
     //appending 'preamble' to that last #include before main()
+    //TODO: ensure that position & normal used for computing light etc are as accurate as possible
+    //(not based on interpolated vertex values).
     fragmentShader = substituteInclude("clipping_planes_pars_fragment", fragPreamble, fragmentShader, SubstitutionType.APPEND);
     fragmentShader = substituteInclude("emissivemap_fragment", emissivemap_fragmentChunk, fragmentShader, SubstitutionType.PREPEND);
 

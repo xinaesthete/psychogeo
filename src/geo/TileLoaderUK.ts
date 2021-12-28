@@ -51,7 +51,7 @@ export function getTileProperties(coord: EastNorth, lowRes = false) {
 }
 
 export function getImageFilename(source_filename: string, lowRes = false) {
-    if (lowRes) return "/ttile/" + source_filename;
+    if (lowRes) return "/ttile/" + source_filename; //ltile vs ttile...
     return "/tile/" + source_filename; // /tile/ interpreted as url for fetch, tile: uses electron api
 }
 
