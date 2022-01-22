@@ -20,7 +20,7 @@ const list = [
   'sy1589_DSM_1M',
   'sy2096_DSM_1M',
   'sy2090_DSM_1M'
-].map(f => `${f}.asc_normalised`);
+].map(f => `${f}.asc_normalised_rate0`);
 
 setTimeout(async () => {
   const jphEncoder = new jph.HTJ2KEncoder();
@@ -32,7 +32,7 @@ setTimeout(async () => {
   
   list.forEach(f => {
     try {
-      const testData = fs.readFileSync(`${jpxSourceFolder}${f}_rate0.jpx`);
+      const testData = fs.readFileSync(`${jpxSourceFolder}${f}.jpx`);
       const encodedBuffer = jpxDecoder.getEncodedBuffer(testData.length);
       encodedBuffer.set(testData);
       jpxDecoder.decode();
@@ -43,7 +43,7 @@ setTimeout(async () => {
       uncompressedBuffer.set(decodedBuffer);
       jphEncoder.encode();
       const recodedBuffer = jphEncoder.getEncodedBuffer();
-      fs.writeFileSync(`${testFolder}${f}.jpx`, recodedBuffer);
+      fs.writeFileSync(`${testFolder}${f}.j2c`, recodedBuffer);
       console.log('transcoded and saved', f);
     } catch (e) {
       console.log('failed to recode', f, e.message);
