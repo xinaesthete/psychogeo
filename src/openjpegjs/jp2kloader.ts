@@ -35,10 +35,22 @@ workers.maxAge = 9e9;
 //^^^ long life because I have a slight bug when new workers init.
 //not much point in retiring, I think I had a memory leak before because I kept making new decoders
 const times: number[] = [];
+function texDataStats(texData: Uint16Array) {
+  const t = Date.now();
+  const min = texData.reduce((a,b) => Math.min(a, b), Number.MAX_VALUE);
+  const max = texData.reduce((a,b) => Math.max(a, b), Number.MIN_VALUE);
+  const mean = texData.reduce((a, b) => a+b, 0) / texData.length;
+  console.log('got stats in', Date.now()-t);
+  
+  console.log('min', min);
+  console.log('max', max);
+  console.log('mean', mean);
+}
+
 async function getTexData(url: string, fullFloat: boolean, compressionRatio = 1) : Promise<TexFrame> {
   if (url.startsWith('/ttile')) {
     const r = await fetch(url);
-    const frameInfo:FrameInfo = {width: 4096, height: 4096, isSigned: true, bitsPerSample: 32, componentCount: 1};
+    const frameInfo:FrameInfo = {width: 4096, height: 4096, isSigned: true, bitsPerSample: 16, componentCount: 1};
     const buf = await r.arrayBuffer();
     
     //const texData = new Uint16Array(new Float32Array(buf).map(toHalf));//.map(v => Number.isNaN(v) ? -200 : v);
@@ -46,14 +58,6 @@ async function getTexData(url: string, fullFloat: boolean, compressionRatio = 1)
     if (texData.length !== frameInfo.width * frameInfo.height) {
       console.error(`that ain't gonna work - ${texData.length} isn't expected length (${frameInfo.width*frameInfo.height})`);
     }
-    // const min = texData.reduce((a,b) => Math.min(a, b), Number.MAX_VALUE);
-    // const max = texData.reduce((a,b) => Math.max(a, b), Number.MIN_VALUE);
-    // const mean = texData.reduce((a, b) => a+b, 0) / texData.length;
-    // console.log('got stats in', Date.now()-t);
-    
-    // console.log('min', min);
-    // console.log('max', max);
-    // console.log('mean', mean);
     
     return {frameInfo, texData};
   }
@@ -70,7 +74,7 @@ async function getTexData(url: string, fullFloat: boolean, compressionRatio = 1)
       resolve(m.data as TexFrame);
     }
     if (compressionRatio === 1) worker.postMessage({cmd: "tex", url, fullFloat});
-    else worker.postMessage({cmd: "recode", url, compressionRatio: compressionRatio, fullFloat});
+    else worker.postMessage({cmd: "recode", url, compressionRatio, fullFloat});
   });
   return promise;
 }

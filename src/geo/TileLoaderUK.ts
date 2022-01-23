@@ -31,10 +31,11 @@ export interface DsmCatItem {
  * return the lower-left corner of the grid cell containing coord
  * used to derive index for looking up in catalog / cache.
  */
-function truncateEastNorth(coord: EastNorth) {
+function truncateEastNorth(coord: EastNorth, lowRes = false) {
     //XXX: tried passing 4096 instead of 1000, but WRONG.
-    const e = Math.floor(coord.east /1000) * 1000;
-    const n = Math.floor(coord.north/1000) * 1000;
+    const s = lowRes ? 1000 : 40960; //is this properly tested (no)?
+    const e = Math.floor(coord.east /s) * s;
+    const n = Math.floor(coord.north/s) * s;
     return {east: e, north: n};
 }
 /**
@@ -43,11 +44,10 @@ function truncateEastNorth(coord: EastNorth) {
  * @param y 
  */
 export function getTileProperties(coord: EastNorth, lowRes = false) {
-    const low = truncateEastNorth(coord);
-    //almost robust enough for critical medical data...
+    const low = truncateEastNorth(coord, lowRes);
     const k = low.east + ", " + low.north;
 
-    return lowRes ? cat10m[k] : cat[k] as DsmCatItem;
+    return (lowRes ? cat10m[k] : cat[k]) as DsmCatItem;
 }
 
 export function getImageFilename(source_filename: string, lowRes = false) {
