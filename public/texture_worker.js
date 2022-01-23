@@ -13,6 +13,7 @@ let j;
 let decoder;
 Module.onRuntimeInitialized = async _ => {
     decoder = new Module.HTJ2KDecoder();
+    encoder = new Module.HTJ2KEncoder();
 }
 
 //https://discourse.threejs.org/t/three-datatexture-works-on-mobile-only-when-i-keep-the-type-three-floattype-but-not-as-three-halffloattype/1864/4
@@ -61,7 +62,7 @@ function toHalf(val) {
 
 function getPixelData(frameInfo, decodedBuffer) {
     if (frameInfo.bitsPerSample === 32) {
-        return new Float32Array(decodedBuffer.buffer, decodedBuffer.byteLength, decodedBuffer.byteLength / 4);
+        return new Float32Array(decodedBuffer.buffer, decodedBuffer.byteOffset, decodedBuffer.byteLength / 4);
     }
     if (frameInfo.bitsPerSample > 8) {
         if (frameInfo.isSigned) {
@@ -122,24 +123,29 @@ async function decodeTex(url, fullFloat) {
 
 async function recode(url, q) {
     const { pixelData, frameInfo } = await decodeFromURL(url);
-    const encoder = new j.J2KEncoder();
+    const encoded = await encode(pixelData, frameInfo, q);
+    console.log(`recompressed size ${encoded.byteLength / (1024)}kb`);
+    const recoded = (await decodeData(encoded)).pixelData;
+    const texData = recoded.map(v => toHalf(v / (1<<16))); //splitBytes(recoded.pixelData);
+    return { texData, frameInfo };
+}
+
+async function encode(pixelData, frameInfo, q) {    
+    //const encoder = new j.J2KEncoder();
     const uncompressedBuffer = encoder.getDecodedBuffer(frameInfo);
     //uncompressedBuffer.set(pixelData); // why twice as long? and 8bit? with 2nd half all 0s...
     const pixelData_8 = new Uint8Array(pixelData.buffer, pixelData.byteOffset, pixelData.byteLength);
     uncompressedBuffer.set(pixelData_8); // why twice as long? and 8bit? with 2nd half all 0s...
 
-    encoder.setQuality(1, 1);
+    const lossless = false;
+    encoder.setQuality(lossless, q);
 
-    encoder.setCompressionRatio(0, q);
+    // encoder.setCompressionRatio(0, q); // not in opnjph.js, was in openjpegwasm
     encoder.setDecompositions(8);
     // encoder.setProgressionOrder(0);
 
     encoder.encode();
-    const encoded = encoder.getEncodedBuffer();
-    console.log(`recompressed size ${encoded.byteLength / (1024)}kb`);
-    const recoded = await decodeData(encoded);
-    const texData = splitBytes(recoded.pixelData);
-    return { texData, frameInfo };
+    return encoder.getEncodedBuffer();
 }
 
 onmessage = async m => {
