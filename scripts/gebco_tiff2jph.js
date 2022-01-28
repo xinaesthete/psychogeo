@@ -3,14 +3,14 @@ const jph = require('../public/openjphjs.js');
 const fs = require('fs');
 
 const path = '/Volumes/BlackSea/GIS/bathymetry/';
-const outPath = '/Volumes/BlackSea/GIS/bathymetry/htj2k/';
+const outPath = '/Volumes/BlackSea/GIS/bathymetry/htj2k_lossy/';
 
 const tileSize = 2048;
 
 const inputFiles = fs.readdirSync(path).filter(f=> f.endsWith('.tif'));
-
+const existingFiles = fs.readdirSync(outPath);
 function stats(vals) {
-  // const t = Date.now();
+  const t = Date.now();
   let min = Number.MAX_VALUE;
   let max = Number.NEGATIVE_INFINITY;
   let mean = 0;
@@ -21,10 +21,10 @@ function stats(vals) {
     mean += v;
   };
   mean = mean / vals.length;
-  // console.log('got stats via loop in', Date.now()-t);
-  // console.log('min', min);
-  // console.log('max', max);
-  // console.log('mean', mean);
+  console.log('got stats via loop in', Date.now()-t);
+  console.log('min', min);
+  console.log('max', max);
+  console.log('mean', mean);
   return {min, max, mean};
 }
 
@@ -43,7 +43,7 @@ let encoder;
 
 function initHTJ2K() {
   encoder = new jph.HTJ2KEncoder();
-  encoder.setQuality(true, 0);
+  encoder.setQuality(false, 0.001); //not sure I understand the quantization; if I'm using int, then a value of '1' is clearly not meaining '1'
   encoder.setDecompositions(10); //higher value seems to be smaller file (up to a point)
 }
 //https://discourse.threejs.org/t/three-datatexture-works-on-mobile-only-when-i-keep-the-type-three-floattype-but-not-as-three-halffloattype/1864/4
@@ -87,13 +87,50 @@ function toHalf(val) {
     return bits;
 }
 
-setTimeout(main, 200);
+setTimeout(async () => {
+  try {
+    await main();
+  } catch (e) {
+    console.error(e);
+  }
+}, 200);
+function exists(f, x, y) {
+  let file = f.replace('.tif', `_x${x}_y${y}`);
+  return existingFiles.some(f=> f.startsWith(file));
+}
+async function main() {
+  initHTJ2K();
+  for (let i=0; i<inputFiles.length; i++) {
+    let inF = inputFiles[i];
+    const tiff = await GeoTIFF.fromFile(path + inF);
+    const image = await tiff.getImage();
+    const width = 2048, height = 2048
+    const t = Date.now();
+    const [data] = await image.readRasters({width, height, resampleMethod: 'linear'});
+    console.log('read raster in', Date.now()-t);
+    stats(data);
+    const frameInfo = {width, height, isSigned: true, componentCount: 1, bitsPerSample: 16};
+    const uncompressedBuffer = encoder.getDecodedBuffer(frameInfo);
+    uncompressedBuffer.set(data);
+    encoder.encode();
+    const encoded = encoder.getEncodedBuffer();
+    console.log(`recompressed size ${Math.floor(encoded.byteLength / 1024)}kb (${data.byteLength / encoded.byteLength}x compression)`);
+    const outF = outPath + inF.replace('.tif', '_2048x2048.j2c');
+    fs.writeFile(outF, new Uint8Array(encoded), (err) => {
+      if (err) console.error(err);
+      console.log(`Wrote ${outF}`);
+    });
+  }
+}
 
-function main(){
+async function mainNormalise(){
 initHTJ2K();
-let i = 0;
-inputFiles.forEach(async (inF) => {
-  // if (i++ >= 1) return;
+let skipped = 0, i=0;
+// inputFiles.forEach(async (inF) => {
+for (let i=0; i<inputFiles.length; i++) {
+  let inF = inputFiles[i];
+  if (i++ >= 1) return;
+  console.log('skipped', skipped);
   const tiff = await GeoTIFF.fromFile(path + inF);
   const image = await tiff.getImage();
   console.log(inF, image.getWidth(), image.getHeight());
@@ -106,6 +143,10 @@ inputFiles.forEach(async (inF) => {
 
   for (let x=0; x<n; x++) {
     for (let y=0; y<n; y++) {
+      if (exists(inF, x, y)) {
+        skipped++;
+        continue;
+      }
       const window = [x*s, y*s, (x+1)*s, (y+1)*s];
       const width = tileSize;
       const height = tileSize;
@@ -118,11 +159,11 @@ inputFiles.forEach(async (inF) => {
       uncompressedBuffer.set(normalised);
       encoder.encode();
       const encoded = encoder.getEncodedBuffer();
-      console.log(`recompressed size ${Math.floor(encoded.byteLength / 1024)}kb`);
+      console.log(`recompressed size ${Math.floor(encoded.byteLength / 1024)}kb (${data.byteLength / encoded.byteLength}x compression)`);
       fs.writeFile(outF, new Uint8Array(encoded), (err) => {
         if (err) console.error(err);
         console.log(`Wrote ${outF}`);
       });
     }
   }
-})};
+}}

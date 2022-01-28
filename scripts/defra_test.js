@@ -3,6 +3,7 @@
  * this is a script where I'm trying to establish ability to encode & decode some data without losing information.
  */
 const GeoTIFF = require('geotiff');
+//maybe use different library... would be nice if it was in npm
 const jph = require('../public/openjphjs.js');
 const fs = require('fs');
 const path = '/Volumes/BlackSea/GIS/DEFRA/LIDAR_10m_DTM_Composite_2019/LIDAR_10m_DTM_Composite.tif';
@@ -12,7 +13,9 @@ let encoder, decoder;
 function initHTJ2K() {
   encoder = new jph.HTJ2KEncoder(); //probably ready now...
   decoder = new jph.HTJ2KDecoder();
-  encoder.setQuality(true, 1e-2);
+  const lossless = true;
+  const quantizationStep = 1e-2;
+  encoder.setQuality(lossless, quantizationStep);
   // encoder.setIsUsingColorTransform(false);
   // encoder.setCompressionRatio(0, 0); //not a function??
   // encoder.setDecompositions(8);

@@ -77,7 +77,7 @@ async function compressAndSave(data, frameInfo, name, test) {
 function printStats(vals) {
   const t = Date.now();
   const min = vals.reduce((a,b) => Math.min(a, b), Number.MAX_VALUE);
-  const max = vals.reduce((a,b) => Math.max(a, b), Number.MIN_VALUE);
+  const max = vals.reduce((a,b) => Math.max(a, b), Number.NEGATIVE_INFINITY);
   const mean = vals.reduce((a, b) => a+b, 0) / vals.length;
   
   console.log('got stats in', Date.now()-t);
@@ -90,7 +90,7 @@ function initHTJ2K() {
   decoder = new jph.HTJ2KDecoder();
   encoder.setQuality(true, 0);
   //encoder.setCompressionRatio(0, 0); //not a function??
-  encoder.setDecompositions(8);
+  // encoder.setDecompositions(8); //a waste if we don't use them? defaults to 5.
 }
 //const pool = new GeoTIFF.Pool(); //seems to take ~2x as long to readRasters with pool.
 GeoTIFF.fromFile(path).then(async (tiff) => {
@@ -148,6 +148,8 @@ GeoTIFF.fromFile(path).then(async (tiff) => {
     console.log('decoded data', JSON.stringify(info));
     // printStats(decodedBuffer);
 
+    //--> ? what are we doing here? Is the view of the decoded data a true representation of the data,
+    // or is this the wrong way to retrieve it?
     const a = referenceData[0], b = dv.getFloat32(0, true), c = dv.getFloat32(0, false);// decodedBuffer[0];
     console.log(a, b, Math.sqrt((a-b)**2));
     console.log(a, c, Math.sqrt((a-c)**2));
@@ -169,9 +171,10 @@ GeoTIFF.fromFile(path).then(async (tiff) => {
   });
   (async function compress() {
     console.log(`making ${nx}x${ny} tiles...`);
+    const catalog = {};
     //https://github.com/chafey/openjphjs/blob/master/src/FrameInfo.hpp
     //bitsPerSample range [2, 16]?
-    const frameInfo = { bitsPerSample: 32, isSigned: true, width: s, height: s, componentCount: 1 };
+    const frameInfo = { bitsPerSample: 16, isSigned: false, width: s, height: s, componentCount: 1 };
     for (let y=0; y<ny; y++) {
       console.log(`row ${y+1}/${ny}...`);
       //readline.cursorTo(process.stdout, 0, 0);
@@ -188,7 +191,8 @@ GeoTIFF.fromFile(path).then(async (tiff) => {
         const t = Date.now();
         const X = x.toLocaleString(undefined, {minimumIntegerDigits: 3});
         const Y = y.toLocaleString(undefined, {minimumIntegerDigits: 3});
-        const name = `${X}_${Y}-32bit.j2c`;
+        const bits = frameInfo.bitsPerSample;
+        const name = `${X}_${Y}-${s}-${bits}bit.j2c`;
         // if (compressedFiles.includes(name)) continue;
         const data = await image.readRasters({window: win, fillValue: NEW_BAD_VALUE});
         // console.log(`got data in`, Date.now()-t);
