@@ -7,6 +7,7 @@
 
 //https://dev.to/loujaybee/using-create-react-app-with-express
 const port = process.env.PORT || 8082; //changed to 8082 to not conflict with snowpack default
+const gisRoot = process.env.MAPSYNTH_GIS_ROOT || '/Volumes/BlackSea/GIS/';
 console.log('starting express server on port ' + port);
 const express = require('express');
 //const bodyParser = require('body-parser')
@@ -20,14 +21,14 @@ app.get('/ping', function (req, res) {
   return res.send('pong ' + req.path);
 });
 
-const tileFolder = "/Users/peter/Dropbox/BlenderGIS/pyUtil/images/jph2/";
+const tileFolder = gisRoot + "j2k/jph2/";
 const tileSuffix = "_normalised_rate0.j2c";
 app.get('/tile*', function(req, res) {
   const name = req.url.substring(6);
   const p = path.join(tileFolder, name + tileSuffix);
   res.sendFile(p);
 });
-const ltileFolder = '/Volumes/BlackSea/GIS/DEFRA/LIDAR_10m_DTM_Composite_2019/htj2k/';
+const ltileFolder = gisRoot + 'DEFRA/LIDAR_10m_DTM_Composite_2019/htj2k/';
 app.get('/ltile*', function(req, res) {
   console.log('serving', req.url);
   const name = req.url.substring(7);
@@ -35,7 +36,7 @@ app.get('/ltile*', function(req, res) {
   res.sendFile(p);
 });
 // const osFolder = "G:/GIS/OS terr50/data/";
-const osFolder = "/Users/peter/Dropbox/BlenderGIS/OS terr50/data";
+const osFolder = gisRoot + "OS terr50/data";
 const osSuffix = "_OST50CONT_20190530.zip";
 app.get('/os*', function(req, res) {
   const name = req.url.substring(4);
@@ -58,7 +59,7 @@ app.get('/', function (req, res) {
 // using similar indexing to GET /ltile, add a GET /ttile which extracts data from tif & sends it.
 
 const GeoTIFF = require('geotiff');
-const dtmPath = '/Volumes/BlackSea/GIS/DEFRA/LIDAR_10m_DTM_Composite_2019/LIDAR_10m_DTM_Composite.tif';
+const dtmPath = gisRoot + 'DEFRA/LIDAR_10m_DTM_Composite_2019/LIDAR_10m_DTM_Composite.tif';
 //https://discourse.threejs.org/t/three-datatexture-works-on-mobile-only-when-i-keep-the-type-three-floattype-but-not-as-three-halffloattype/1864/4
 const floatView = new Float32Array(1);
 const int32View = new Int32Array(floatView.buffer);
