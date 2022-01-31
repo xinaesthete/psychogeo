@@ -182,6 +182,7 @@ export interface TerrainOptions {
     defraDSMLayer?: boolean;
     defra10mDTMLayer?: boolean;
     tracks?: Track[];
+    sun?: boolean;
     camZ: number;
 }
 export interface Track {
@@ -242,7 +243,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
         
         //todo: change to OrbitControls with no screenspace panning?
 
-        this.sunLight();
+        if (this.options.sun) this.sunLight();
         
         this.addMarker();
         if (onlyDebugGeometry) this.planeBaseTest();

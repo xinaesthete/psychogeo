@@ -12,7 +12,7 @@ function Terrain(opt: {coord: EastNorth, options?: TerrainOptions}) {
   const {coord, options} = {...opt};
   const [renderer] = React.useState(new TerrainRenderer(coord, options));
   const dom: DomAttributes = {
-    style: { height: "100vh", width: '100vw' }
+    style: { height: "100%", width: '100%' }
   }
   const {nodes, materials} = useGraph(renderer.scene);
   // useFrame((state, delta) => {
@@ -52,15 +52,15 @@ function App() {
         {JSON.stringify(winchester, undefined, 2)}
       </header> */}
       <Terrain coord={winchester} options={{
-        defra10mDTMLayer: true, defraDSMLayer: false, osTerr50Layer: false, camZ: 30000, tracks: [
+        defra10mDTMLayer: false, defraDSMLayer: true, osTerr50Layer: false, camZ: 3000, tracks: [
       //  stGiles, palestine
       // bart,
-      kaw,
+      // kaw,
       // stonehenge
       ]}} />
       {/* <Terrain coord={beinnSgrithael} options={{defraDSMLayer: false, osTerr50Layer: true, camZ: 30000}} /> */}
       {/* <Terrain coord={branscombe} options={{defraDSMLayer: true, osTerr50Layer: false, camZ: 10000}} /> */}
-      {/* {renderers.map((t, i) => <Threact key={i} gfx={t} />)} */}
+      {/* <Terrain coord={winchester} options={{defra10mDTMLayer: true, defraDSMLayer: false, osTerr50Layer: false, camZ: 10000}} /> */}
     </div>
   );
 }

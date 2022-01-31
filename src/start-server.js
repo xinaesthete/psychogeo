@@ -7,7 +7,7 @@
 
 //https://dev.to/loujaybee/using-create-react-app-with-express
 const port = process.env.PORT || 8082; //changed to 8082 to not conflict with snowpack default
-const gisRoot = process.env.MAPSYNTH_GIS_ROOT || '/Volumes/BlackSea/GIS/';
+const gisRoot = process.env.MAPSYNTH_GIS_ROOT || 'L:/GIS/';
 console.log('starting express server on port ' + port);
 const express = require('express');
 //const bodyParser = require('body-parser')
@@ -44,7 +44,7 @@ app.get('/os*', function(req, res) {
   const p = path.join(osFolder, letters, name + osSuffix);
   res.sendFile(p);
 });
-const gpxFolder = "/Users/peter/Dropbox/tracklogs/";
+const gpxFolder = gisRoot + "tracklogs/";
 app.get('/gpx*', function(req, res) {
   const name = req.url.substring(5);
   const p = path.join(gpxFolder, unescape(name));
@@ -111,7 +111,7 @@ GeoTIFF.fromFile(dtmPath).then(async tiff => {
   const h = image.getHeight();
   const [L, T, R, B] = box = image.getBoundingBox();
   console.log('DTM bbox', L, T, R, B);
-  const s = outTileSize = image.getTileWidth() * 16; //somewhat magic numbers here
+  const s = outTileSize = 4096; //image.getTileWidth() * 16; //somewhat magic numbers here
   const nx = Math.floor(w/outTileSize), ny = Math.floor(h/outTileSize);
   
   function geoLLCoordFromWindowOrName(win) {
