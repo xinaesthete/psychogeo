@@ -162,7 +162,7 @@ const shadowmap_vertexChunk = glsl`
 `;
 
 const emissivemap_fragmentChunk = glsl`
-    float h = getNormalisedHeight(vUv);
+    float h = getHeight(vUv);
     totalEmissiveRadiance.rgb += vec3(h/2000.);
     totalEmissiveRadiance.g += min(computeSteepness() * 0.01, 0.1);
     float majorContour = 10., minorContour = 0.2, speed = 1.;
