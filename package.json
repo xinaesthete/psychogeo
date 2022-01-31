@@ -36,7 +36,7 @@
     "build": "node scripts/build.js",
     "test": "node scripts/test.js",
     "electron": "electron .",
-    "react-start": "cross-env BROWSER=none node scripts/start.js",
+    "react-start": "npx snowpack dev --polyfill-node --open none",
     "electron-start": "node src/start-react --trace-warnings",
     "proxy-start": "node src/start-server"
   },
