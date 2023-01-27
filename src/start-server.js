@@ -5,6 +5,7 @@
  */
 
 
+require('dotenv').config();
 //https://dev.to/loujaybee/using-create-react-app-with-express
 const port = process.env.PORT || 8082; //changed to 8082 to not conflict with snowpack default
 const gisRoot = process.env.MAPSYNTH_GIS_ROOT || 'L:/GIS/';
