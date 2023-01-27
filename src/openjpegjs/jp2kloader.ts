@@ -30,7 +30,7 @@ export interface TexFrame {
   //not all code here is very clean wrt naming etc. at the moment.
 }
 
-const workers = new WorkerPool(8);
+const workers = new WorkerPool(4); //chrome doesn't like it when we assign too many
 workers.maxAge = 9e9;
 //^^^ long life because I have a slight bug when new workers init.
 //not much point in retiring, I think I had a memory leak before because I kept making new decoders
