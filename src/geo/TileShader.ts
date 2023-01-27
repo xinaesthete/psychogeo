@@ -164,7 +164,7 @@ const shadowmap_vertexChunk = glsl`
 const emissivemap_fragmentChunk = glsl`
     float h = getHeight(vUv);
     totalEmissiveRadiance.rgb += vec3(h/2000.);
-    totalEmissiveRadiance.g += min(computeSteepness() * 0.01, 0.1);
+    // totalEmissiveRadiance.g += min(computeSteepness() * 0.01, 0.1);
     float majorContour = 10., minorContour = 0.2, speed = 1.;
     vec3 col = vec3(0.1, 0.5, 0.7);
     totalEmissiveRadiance.rgb += computeContour(h) * vec3(0.3, 0.5, 0.7) * 0.3;
@@ -201,7 +201,7 @@ function patchFragmentShader(fragmentShader: string) {
     precision highp float;
     //out vec4 col;
     uniform sampler2D heightFeild;
-    uniform vec2 EPS;
+    //uniform vec2 EPS; //!don't use this in fragment shader unless you really think you want it.
     uniform float heightMin, heightMax;
     uniform float iTime;
     uniform float LOD;
@@ -257,10 +257,12 @@ function patchFragmentShader(fragmentShader: string) {
     vec3 computeNormal(vec2 uv, vec4 pos) {
         //what about the edges?
         vec3 p = pos.xyz;
-        vec3 dx = normalize(computePos(uv + vec2(EPS.x, 0.)).xyz - p);
-        vec3 dy = normalize(computePos(uv + vec2(0., EPS.y)).xyz - p);
+        // using EPS here is bad as fragments can be higher res than the geometry
+        ivec2 s = textureSize(heightFeild, 0); //not using mipmaps, so LOD=0
+        vec2 d = vec2(1./float(s.x), 1./float(s.y));
+        vec3 dx = normalize(computePos(uv + vec2(d.x, 0.)).xyz - p);
+        vec3 dy = normalize(computePos(uv + vec2(0., d.y)).xyz - p);
         return normalize(cross(dx, dy)).xyz;
-        // return vec3(0.,0.,1.);
     }
     float computeContour(float h) {
         // float h = getHeight(vUv);
