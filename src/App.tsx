@@ -1,39 +1,68 @@
-import React from 'react';
-import { Canvas, useGraph, useFrame } from '@react-three/fiber';
+import { Canvas, useFrame, useGraph } from '@react-three/fiber';
+import { useControls } from 'leva';
+import React, { useEffect } from 'react';
+// import { Canvas, useGraph, useFrame } from '@react-three/fiber';
 import './App.css';
 import { convertWgsToOSGB, EastNorth } from './geo/Coordinates';
 import { TerrainRenderer, newGLContext, TerrainOptions, Track } from './geo/TileLoaderUK';
+import { useTerrain } from './TerrainContext';
 import { DomAttributes, IThree, Threact } from './threact/threact';
+import { OrbitControls } from '@react-three/drei';
 
 newGLContext();
 
 /// refactor in process... we need to go a bit further & add UI controls etc.
 function Terrain(opt: {coord: EastNorth, options?: TerrainOptions}) {
   const {coord, options} = {...opt};
-  const [renderer] = React.useState(new TerrainRenderer(coord, options));
+  const renderer = React.useMemo(() => new TerrainRenderer(coord, options), [options]);
+  const dom: DomAttributes = {
+    style: { height: "100%", width: '100%' }
+  }
+  return (
+    <>
+    <div style={{width: '100vw', height: '100vh'}}>
+    <Threact gfx={renderer} domAttributes={dom}/>
+    </div>
+    </>
+  )
+}
+
+function TerrainR3F(opt: {coord: EastNorth, options?: TerrainOptions}) {
+  const {coord, options} = {...opt};
+  const renderer = useTerrain(coord, options);
   const dom: DomAttributes = {
     style: { height: "100%", width: '100%' }
   }
   const {nodes, materials} = useGraph(renderer.scene);
-  // useFrame((state, delta) => {
-  //   renderer.update();
-  // });
+  useFrame((state, delta) => {
+    renderer.update();
+  });
   return (
-    <div style={{width: '100vw', height: '100vh'}}>
-    {/* <Canvas camera={renderer.camera} color='red' >
-      <mesh position={[0, -10, -10]}>
-        <boxBufferGeometry />
-        <meshBasicMaterial color="white" />
-      </mesh>
-      <primitive object={renderer.scene} />
-    </Canvas> */}
-    <Threact gfx={renderer} domAttributes={dom}/>
+    <>
+    <OrbitControls camera={renderer.camera} />
+    <mesh position={[0, -10, -10]}>
+      <boxGeometry />
+      <meshBasicMaterial color="red" />
+    </mesh>
+    <primitive object={renderer.scene} />
+    </>
+  )
+}
+
+function MapLayersGUI() {
+  return (
+    <div className='MapLayers'>
+      <label>DEFRA 10m DTM</label><input type='checkbox' />
+      <label>DEFRA DSM (0.5m / 1m mixed)</label><input type='checkbox' />
+      <label>OS Terr50 </label><input type='checkbox' />
     </div>
   )
 }
 
 function App() {
-  
+  const {defra10mDTMLayer, defraDSMLayer, osTerr50Layer, r3f} = useControls({
+    defra10mDTMLayer: false, defraDSMLayer: true, osTerr50Layer: false, r3f: false
+  });
   const beinnSgrithael = {east: 183786, north: 812828};
   const winchester = convertWgsToOSGB({lat: 51.064, lon: -1.3098227});
   const cornwall = {east: 201582, north: 43954};
@@ -48,16 +77,19 @@ function App() {
   // fetch('/ping');
   return (
     <div className="App">
-      {/* <header className="App-header">
-        {JSON.stringify(winchester, undefined, 2)}
-      </header> */}
-      <Terrain coord={winchester} options={{
-        defra10mDTMLayer: false, defraDSMLayer: true, osTerr50Layer: false, camZ: 3000, tracks: [
-      //  stGiles, palestine
-      // bart,
-      // kaw,
-      // stonehenge
-      ]}} />
+      {/* <MapLayersGUI /> */}
+        {!r3f&& <Terrain coord={winchester} options={{
+          defra10mDTMLayer, defraDSMLayer, osTerr50Layer, camZ: 3000, tracks: [
+        //  stGiles, palestine
+        // bart,
+        // kaw,
+        // stonehenge
+        ]}} />}
+        {r3f && <Canvas>
+          <TerrainR3F coord={winchester} options={{
+            defra10mDTMLayer, defraDSMLayer, osTerr50Layer, camZ: 3000, tracks: []
+          }} />
+        </Canvas>}
       {/* <Terrain coord={beinnSgrithael} options={{defraDSMLayer: false, osTerr50Layer: true, camZ: 30000}} /> */}
       {/* <Terrain coord={branscombe} options={{defraDSMLayer: true, osTerr50Layer: false, camZ: 10000}} /> */}
       {/* <Terrain coord={winchester} options={{defra10mDTMLayer: true, defraDSMLayer: false, osTerr50Layer: false, camZ: 10000}} /> */}

@@ -40,7 +40,7 @@ function renderMip(renderer: WebGLRenderer, texture: THREE.Texture, size: number
   const camera = new THREE.OrthographicCamera(0, 1, 0, 1, 0, 2);
   camera.position.set(0.5, 0.5, -2);
   camera.lookAt(0.5, 0.5, 0);
-  const geo = new THREE.PlaneBufferGeometry(1, 1, 1, 1);
+  const geo = new THREE.PlaneGeometry(1, 1, 1, 1);
   //TODO: filter nicely.
   const mat = new THREE.MeshBasicMaterial({map: texture});
   const mesh = new THREE.Mesh(geo, mat);

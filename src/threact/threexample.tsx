@@ -1,5 +1,6 @@
 import * as THREE from "three";
-import { TrackballControls } from "three/examples/jsm/controls/TrackballControls";
+// import { TrackballControls } from "three/examples/jsm/controls/TrackballControls";
+import { TrackballControls } from "three-stdlib";
 import { jp2Texture } from "../openjpegjs/jp2kloader";
 import { IThree } from "./threact";
 
@@ -12,14 +13,17 @@ export abstract class ThreactTrackballBase implements IThree {
     ortho = new THREE.OrthographicCamera(0, 1, 1, 0, 0, 1);
     trackCtrl?: TrackballControls;
     overlay = new THREE.Scene(); //for debug graphics
+    dom?: HTMLElement;
     initThree(dom: HTMLElement) {
         this.camera.position.set(0, 1, -3);
         this.camera.lookAt(0, 0, 0);
         this.trackCtrl = new TrackballControls(this.camera, dom);
+        this.dom = dom;
         this.init();
     }
     init(): void {}
     update() {
+        if (!this.trackCtrl) this.trackCtrl = new TrackballControls(this.camera, this.dom);
         this.trackCtrl!.update();
     }
     disposeThree() {
@@ -39,7 +43,7 @@ export abstract class ThreactTrackballBase implements IThree {
     }
     debugTexture(texture: THREE.Texture) {
         const mat = new THREE.MeshBasicMaterial({map: texture});
-        const geo = new THREE.PlaneBufferGeometry(0.2, 0.2, 1, 1);
+        const geo = new THREE.PlaneGeometry(0.2, 0.2, 1, 1);
         const mesh = new THREE.Mesh(geo, mat);
         mesh.position.x = 0.15;
         mesh.position.y = 0.15;
