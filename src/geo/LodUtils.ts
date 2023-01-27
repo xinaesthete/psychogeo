@@ -36,6 +36,7 @@ function getLodUniforms(lod: number) {
 }
 
 function renderMip(renderer: WebGLRenderer, texture: THREE.Texture, size: number) {
+  return texture; //TODO: implement & use this properly.
   const camera = new THREE.OrthographicCamera(0, 1, 0, 1, 0, 2);
   camera.position.set(0.5, 0.5, -2);
   camera.lookAt(0.5, 0.5, 0);
@@ -55,7 +56,7 @@ function renderMip(renderer: WebGLRenderer, texture: THREE.Texture, size: number
   return target.texture;
 }
 
-export async function getTileMesh(info: DsmCatItem, lowRes = false, lodBias = 5) {
+export async function getTileMesh(info: DsmCatItem, lowRes = false, lodBias = 3) {
   //let's call this differently for a low-res layer.
   // let info = getTileProperties(coord, lowRes) || nullInfo;
   // if (info.mesh) return info; //!!! this breaks when more than one scene uses the same tile.
