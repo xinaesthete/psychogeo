@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import shp from 'shpjs'
 import Delaunator from 'delaunator'
-import { FeatureCollection } from 'geojson';
+import type { FeatureCollection } from 'geojson';
 import { convertWgsPointToOSGB, EastNorth, gridRefString } from './Coordinates';
 import { WorkerPool } from '../openjpegjs/workerPool';
 
