@@ -1,12 +1,15 @@
 type Backlog = (worker: Worker) => void;
+type WorkerFactory = () => Worker;
 export class WorkerPool {
     idle: Worker[] = [];
     backlog: Backlog[] = [];
     workerAge: Map<Worker, number>;
-    scriptName: string;
+    createWorker: WorkerFactory;
     maxAge = 10;
-    constructor(numWorkers = 4, scriptName = 'texture_worker.js') {
-        this.scriptName = scriptName;
+    constructor(numWorkers = 4, workerSource: string | WorkerFactory = 'texture_worker.js') {
+        this.createWorker = typeof workerSource === "string"
+            ? () => new Worker(workerSource)
+            : workerSource;
         this.workerAge = new Map();
         for (let i=0; i<numWorkers; i++) {
             const w = this.newWorker();
@@ -33,7 +36,7 @@ export class WorkerPool {
         }
     }
     private newWorker() {
-        const w = new Worker(this.scriptName);
+        const w = this.createWorker();
         this.workerAge.set(w, 0);
         console.log(`newWorker() : current count: ${this.workerAge.size}`);
         return w;
@@ -62,4 +65,3 @@ export class WorkerPool {
         return this.newWorker();
     }
 }
-

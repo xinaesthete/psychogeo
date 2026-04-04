@@ -1,9 +1,11 @@
 import * as THREE from 'three'
 import shp from 'shpjs'
 import Delaunator from 'delaunator'
-import type { FeatureCollection } from 'geojson';
 import { convertWgsPointToOSGB, EastNorth, gridRefString } from './Coordinates';
 import { WorkerPool } from '../openjpegjs/workerPool';
+import { collectShpPoints } from './shpPoints';
+import type { DelaunayBuffers, ShpWorkerRequest, ShpWorkerResponse } from './shpWorkerProtocol';
+import ShpTriangulationWorker from './shpWorker?worker';
 
 export async function threeGeometryFromShpZipX(coord: EastNorth) {
     const os = gridRefString(coord, 2); //"su" + i + j
@@ -11,11 +13,16 @@ export async function threeGeometryFromShpZipX(coord: EastNorth) {
     const file = await response.arrayBuffer();
 
     const s = await shp(file);
-    
-    let points: number[][];
-    if (Array.isArray(s)) points = s.flatMap(fc => getPoints(fc));
-    else points = getPoints(s);
-    points = points.map(convertWgsPointToOSGB);
+
+    const rawPoints = collectShpPoints(s);
+    const points: number[][] = [];
+    for (let index = 0; index < rawPoints.length; index += 3) {
+        points.push(convertWgsPointToOSGB([
+            rawPoints[index],
+            rawPoints[index + 1],
+            rawPoints[index + 2],
+        ]));
+    }
     const delaunay = Delaunator.from(points);
     
     const geo = new THREE.BufferGeometry();
@@ -27,7 +34,7 @@ export async function threeGeometryFromShpZipX(coord: EastNorth) {
     geo.setIndex(new THREE.BufferAttribute(reverseWinding(delaunay.triangles), 1));
     return geo;
 }
-type Delaun = {triangles: Uint32Array, coordinates: Float32Array, normals?: Float32Array, computeTime: number}; //maybe Delaunator<Float64Array>?
+type Delaun = DelaunayBuffers; //maybe Delaunator<Float64Array>?
 const times: number[] = [];
 const workerRegister: Map<EastNorth, Worker> = new Map();
 /** returns THREE.BufferGeometry based on shapefile at the given OS coordinate */
@@ -52,44 +59,57 @@ export async function threeGeometryFromShpZip(coord: EastNorth) {
     //e.g. user sweeps camera across a wide area and queues thousands of tiles, but by the time a worker is available
     //this tile is no longer visible.
     console.log(`ready to start ${os}`);
-    let alreadyTimedOut = false;
-    const promise = new Promise<Delaun>(async (resolve, reject) => {
-        const t = setTimeout(()=>{
-            alreadyTimedOut = true;
-            console.log(`timeout ${os}\t${new Date()}`);
-            //seems to fail the second time this happens
-            ///--- I think my problem is to do with WASM not yet being loaded in newWorker ---///
-            workers.releaseWorker(worker, false);
-            reject("timeout");
+    const promise = new Promise<Delaun>((resolve, reject) => {
+        let settled = false;
+        const finish = (callback: () => void) => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            clearTimeout(t);
+            clearTimeout(slow);
+            worker.onmessage = null;
+            worker.onerror = null;
+            callback();
+        };
+        const t = setTimeout(() => {
+            finish(() => {
+                console.log(`timeout ${os}\t${new Date()}`);
+                workers.releaseWorker(worker, true);
+                reject(new Error(`timeout while processing ${os}`));
+            });
         }, 30000);
         const slow = setTimeout(()=> {
             console.log(`slow ${os}`);
         }, 1000);
-        worker.onmessage = m => {
-            clearTimeout(t);
-            clearTimeout(slow);
-            console.log(`finished ${os} (${m.data.computeTime}ms)`);
-            if (!m.data.triangles) {
-                console.log(`error in ${os}: ${m.data}`);
+        worker.onmessage = (message: MessageEvent<ShpWorkerResponse>) => {
+            finish(() => {
+                const payload = message.data;
+                if (payload.kind === 'error') {
+                    console.log(`error in ${os}: ${payload.error}`);
+                    workers.releaseWorker(worker, true);
+                    reject(new Error(payload.error));
+                    return;
+                }
+                console.log(`finished ${os} via ${payload.backend} (${payload.computeTime}ms)`);
                 workers.releaseWorker(worker);
-                reject(m.data);
-            }
-            workers.releaseWorker(worker, false); //testing kill functionality, don't want 2nd arg otherwise
-            // *adding it seems to make the bug go away*, not quite sure what's happening...
-            if (alreadyTimedOut) {
-                //I would expect this to be nigh-on impossible given that the worker.terminate() is 'instantaneous'
-                //but I guess there could be an issue with thread-safety.
-                console.warn(`got a message from a worker that had already timed out`);
-            }
-            resolve(m.data as Delaun);
-        }
-        worker.postMessage({url: url});
+                resolve(payload);
+            });
+        };
+        worker.onerror = event => {
+            finish(() => {
+                workers.releaseWorker(worker, true);
+                reject(event.error instanceof Error ? event.error : new Error(event.message));
+            });
+        };
+        const request: ShpWorkerRequest = {url};
+        worker.postMessage(request);
     });
 
     const delaunay = await promise;
     const points = delaunay.coordinates;
     times.push(delaunay.computeTime);
-    console.log(`took ${delaunay.computeTime}, average: ${times.reduce((a, b) => a+b, 0)/times.length}\t${delaunay.triangles.length/3} triangles`);
+    console.log(`took ${delaunay.computeTime} via ${delaunay.backend}, average: ${times.reduce((a, b) => a+b, 0)/times.length}\t${delaunay.triangles.length/3} triangles`);
     
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.BufferAttribute(points, 3));
@@ -106,25 +126,7 @@ function reverseWinding(indices: Uint32Array, inPlace = true) {
     return newIndices;
 }
 
-function getPoints(featureCol: FeatureCollection) {
-    return featureCol.features.flatMap(f => {
-        const height = f.properties!['PROP_VALUE'] as number;
-        switch(f.geometry.type) {
-            case "Point":
-                return [f.geometry.coordinates.concat(height)];
-            case "MultiLineString":
-                return f.geometry.coordinates.flatMap(cA=>cA.map(c=>c.concat(height)));
-            case "MultiPoint":
-            case "LineString":
-                return f.geometry.coordinates.map(c => c.concat(height));
-            default:
-                return [];
-        }
-    });
-}
-
-const workers = new WorkerPool(8, "shp-worker.js");
-// const workers = new WorkerPool(8, "rust_experiment/worker.js");
+const workers = new WorkerPool(8, () => new ShpTriangulationWorker());
 workers.maxAge = 9e9;
 //may be a problem with first workers because module not loaded properly yet
 //2021-06-15::: needs review: Rust version had been working, but not now on MBP

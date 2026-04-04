@@ -5,18 +5,18 @@ This is a personal project that I work on from time to time, there are various d
 In its current form, it is somewhat demanding of the computer it runs on to render the graphics, which are based on high-resolution digital surface models. The data it uses is based on freely available sources from DEFRA (currently only covering a small area around Winchester as it requires laborious manual downloading followed by post-processing to make it suitable for rendering) and Ordnance Survey. You'd probably need to talk to me to get it set up (although I should make a public website, with less demanding graphic modes, at some point soon).
 
 ## Development
-This repo now uses `pnpm`, managed through Corepack:
+This repo now uses `pnpm`. If you prefer using Corepack, enable it first, then:
 
 ```bash
-corepack pnpm install
-corepack pnpm dev
+pnpm install
+pnpm dev
 ```
 
-The helper scripts in [`scripts/package.json`](/Users/petertodd/.codex/worktrees/9507/psychogeo/scripts/package.json) are part of the same workspace, so you can run them directly from that folder:
+The helper scripts in `scripts/package.json` are part of the same workspace, so you can run them directly from that folder:
 
 ```bash
-corepack pnpm --dir scripts test
-corepack pnpm --dir scripts defra
+pnpm --dir scripts test
+pnpm --dir scripts defra
 ```
 
 ## Animated contours
@@ -36,3 +36,15 @@ The current implementation is able to follow a path recorded as a `GPX` tracklog
 ![st giles hill viewshed](viewshed.webp)
 
 This visualisation is currently rather glitchy particularly as a result of using the elevation data as recorded in a `GPX` file, which is highly inaccurate; I should base it on the height of the ground plus some offset. The quality of GPS data will still be a limiting factor, unfortunately.
+
+## SHP WASM worker
+
+The SHP triangulation worker now lives in-repo as a Rust/WASM crate under `rust/shp_processor_wasm` and is built automatically by the main frontend scripts.
+
+Use `pnpm install` to install dependencies, then:
+
+- `pnpm dev` to rebuild the WASM crate in dev mode and start Vite
+- `pnpm build` to rebuild the WASM crate in release mode before producing `dist`
+- `pnpm run build:shp-wasm:dev` if you only want to refresh the worker package after changing the Rust source
+
+The worker itself is bundled from `src/geo/shpWorker.ts`, so there is no longer any need to manually copy generated `.wasm` files into `public`.

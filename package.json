@@ -27,13 +27,19 @@
     "three-stdlib": "^2.36.1"
   },
   "scripts": {
+    "build:shp-wasm": "wasm-pack build rust/shp_processor_wasm --target web --out-dir pkg --out-name shp_processor_wasm",
+    "build:shp-wasm:dev": "wasm-pack build rust/shp_processor_wasm --target web --dev --out-dir pkg --out-name shp_processor_wasm",
+    "predev": "pnpm run build:shp-wasm:dev",
     "dev": "vite",
+    "predev:web": "pnpm run build:shp-wasm:dev",
     "dev:web": "vite",
     "dev:proxy": "node src/start-server",
     "dev:electron": "node src/start-react --trace-warnings",
+    "prebuild": "pnpm run build:shp-wasm",
     "start": "vite",
     "build": "vite build",
-    "test": "tsc --noEmit",
+    "pretypecheck": "pnpm run build:shp-wasm:dev",
+    "test": "pnpm run typecheck",
     "electron": "electron .",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
