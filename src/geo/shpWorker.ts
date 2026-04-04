@@ -3,6 +3,7 @@
 import Delaunator from 'delaunator';
 import shp from 'shpjs';
 import initShpProcessor, { triangulate_shp_zip } from '../../rust/shp_processor_wasm/pkg/shp_processor_wasm.js';
+import { convertWgsToOSGB } from './Coordinates';
 import { collectShpPoints } from './shpPoints';
 import type { ShpWorkerRequest, ShpWorkerResponse, ShpWorkerSuccess } from './shpWorkerProtocol';
 
@@ -50,6 +51,20 @@ async function parseShpPointsWithJavascript(shpBuffer: ArrayBuffer) {
         throw new Error('no geometry found in shapefile archive');
     }
     return points;
+}
+
+function projectJavascriptPointsToOSGB(pointsWgs: Float64Array) {
+    const pointsOsgb = new Float64Array(pointsWgs.length);
+    for (let pointIndex = 0; pointIndex < pointsWgs.length; pointIndex += 3) {
+        const osgb = convertWgsToOSGB({
+            lon: pointsWgs[pointIndex],
+            lat: pointsWgs[pointIndex + 1],
+        });
+        pointsOsgb[pointIndex] = osgb.east;
+        pointsOsgb[pointIndex + 1] = osgb.north;
+        pointsOsgb[pointIndex + 2] = pointsWgs[pointIndex + 2];
+    }
+    return pointsOsgb;
 }
 
 function readRustTriangulationResult(result: object): RustTriangulationResult {
@@ -102,7 +117,7 @@ async function triangulate(url: string): Promise<ShpWorkerResponse> {
                 console.warn('Rust SHP triangulation failed; retrying in JavaScript:', error);
             }
         }
-        const points = await parseShpPointsWithJavascript(shpZip);
+        const points = projectJavascriptPointsToOSGB(await parseShpPointsWithJavascript(shpZip));
         return triangulateWithJavascript(points, startedAt);
     } catch (error) {
         return {

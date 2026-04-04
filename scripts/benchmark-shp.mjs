@@ -6,6 +6,7 @@ import { performance } from 'node:perf_hooks';
 import { promisify } from 'node:util';
 
 import Delaunator from 'delaunator';
+import { LatLon as GeodesyLatLon } from 'geodesy/osgridref.js';
 
 globalThis.self = globalThis;
 
@@ -153,6 +154,18 @@ async function parseShpPointsWithJavascript(zipArrayBuffer) {
   return points;
 }
 
+function projectJavascriptPointsToOSGB(pointsWgs) {
+  const pointsOsgb = new Float64Array(pointsWgs.length);
+  for (let pointIndex = 0; pointIndex < pointsWgs.length; pointIndex += 3) {
+    const latLon = new GeodesyLatLon(pointsWgs[pointIndex + 1], pointsWgs[pointIndex]);
+    const grid = latLon.toOsGrid();
+    pointsOsgb[pointIndex] = grid.easting;
+    pointsOsgb[pointIndex + 1] = grid.northing;
+    pointsOsgb[pointIndex + 2] = pointsWgs[pointIndex + 2];
+  }
+  return pointsOsgb;
+}
+
 function triangulateWithJavascript(pointsXYZ) {
   const pointCount = pointsXYZ.length / 3;
   const coordinates = new Float32Array(pointsXYZ.length);
@@ -278,7 +291,8 @@ initSync(wasmBytes);
 
 const zipArrayBuffer = zipBytes.buffer.slice(zipBytes.byteOffset, zipBytes.byteOffset + zipBytes.byteLength);
 const jsPointsReference = await parseShpPointsWithJavascript(zipArrayBuffer);
-const jsReference = triangulateWithJavascript(jsPointsReference);
+const jsProjectedPointsReference = projectJavascriptPointsToOSGB(jsPointsReference);
+const jsReference = triangulateWithJavascript(jsProjectedPointsReference);
 const rustReference = readRustTriangulationResult(triangulate_shp_zip(zipBytes));
 
 if (jsReference.coordinates.length !== rustReference.coordinates.length) {
@@ -290,15 +304,20 @@ const benchmarkFactories = {
     const points = await parseShpPointsWithJavascript(zipArrayBuffer);
     return { coordinatesLength: points.length, trianglesLength: 0 };
   },
+  'js-project': () => {
+    const points = projectJavascriptPointsToOSGB(jsPointsReference);
+    return { coordinatesLength: points.length, trianglesLength: 0 };
+  },
   'js-triangulate': () => {
-    return triangulateWithJavascript(jsPointsReference);
+    return triangulateWithJavascript(jsProjectedPointsReference);
   },
   'js-total': async () => {
     const points = await parseShpPointsWithJavascript(zipArrayBuffer);
-    return triangulateWithJavascript(points);
+    const projectedPoints = projectJavascriptPointsToOSGB(points);
+    return triangulateWithJavascript(projectedPoints);
   },
   'rust-triangulate': () => {
-    return readRustTriangulationResult(triangulate_coordinates3d(jsPointsReference));
+    return readRustTriangulationResult(triangulate_coordinates3d(jsProjectedPointsReference));
   },
   'rust-total': () => {
     return readRustTriangulationResult(triangulate_shp_zip(zipBytes));
