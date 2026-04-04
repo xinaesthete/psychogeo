@@ -23,13 +23,13 @@ app.get('/ping', function (req, res) {
 
 const tileFolder = gisRoot + "j2k/jph2/";
 const tileSuffix = "_normalised_rate0.j2c";
-app.get('/tile*', function(req, res) {
+app.get(/^\/tile.*/, function(req, res) {
   const name = req.url.substring(6);
   const p = path.join(tileFolder, name + tileSuffix);
   res.sendFile(p);
 });
 const ltileFolder = gisRoot + 'DEFRA/LIDAR_10m_DTM_Composite_2019/htj2k/';
-app.get('/ltile*', function(req, res) {
+app.get(/^\/ltile.*/, function(req, res) {
   console.log('serving', req.url);
   const name = req.url.substring(7);
   const p = path.join(ltileFolder, name);
@@ -38,14 +38,14 @@ app.get('/ltile*', function(req, res) {
 // const osFolder = "G:/GIS/OS terr50/data/";
 const osFolder = gisRoot + "OS terr50/data";
 const osSuffix = "_OST50CONT_20190530.zip";
-app.get('/os*', function(req, res) {
+app.get(/^\/os.*/, function(req, res) {
   const name = req.url.substring(4);
   const letters = name.substring(0, 2);
   const p = path.join(osFolder, letters, name + osSuffix);
   res.sendFile(p);
 });
 const gpxFolder = gisRoot + "tracklogs/";
-app.get('/gpx*', function(req, res) {
+app.get(/^\/gpx.*/, function(req, res) {
   const name = req.url.substring(5);
   const p = path.join(gpxFolder, unescape(name));
   res.sendFile(p);
@@ -143,7 +143,7 @@ GeoTIFF.fromFile(dtmPath).then(async tiff => {
   
   let nextID = 0;
   const cache = new Map();
-  app.get('/ttile*', async (req, res) => {
+  app.get(/^\/ttile.*/, async (req, res) => {
     const name = req.url.substring(7);
     if (cache.has(name)) {
       res.end(cache.get(name), 'binary');
