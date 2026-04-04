@@ -287,7 +287,7 @@ const [zipBytes, wasmBytes] = await Promise.all([
   readFile(wasmPath),
 ]);
 
-initSync(wasmBytes);
+initSync({ module: wasmBytes });
 
 const zipArrayBuffer = zipBytes.buffer.slice(zipBytes.byteOffset, zipBytes.byteOffset + zipBytes.byteLength);
 const jsPointsReference = await parseShpPointsWithJavascript(zipArrayBuffer);
