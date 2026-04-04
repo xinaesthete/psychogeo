@@ -18,6 +18,8 @@ node_modules
 .env.development.local
 .env.test.local
 .env.production.local
+rust/shp_processor_wasm/pkg
+rust/shp_processor_wasm/target
 
 npm-debug.log*
 pnpm-debug.log*

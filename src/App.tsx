@@ -68,8 +68,8 @@ function MapLayersGUI() {
 }
 
 function App() {
-  const {defra10mDTMLayer, defraDSMLayer, osTerr50Layer, r3f} = useControls({
-    defra10mDTMLayer: false, defraDSMLayer: true, osTerr50Layer: false, r3f: false
+  const {defra10mDTMLayer, defraDSMLayer, osTerr50Layer, inspectionLight, r3f} = useControls({
+    defra10mDTMLayer: false, defraDSMLayer: true, osTerr50Layer: false, inspectionLight: true, r3f: false
   });
   const beinnSgrithael = {east: 183786, north: 812828};
   const winchester = convertWgsToOSGB({lat: 51.064, lon: -1.3098227});
@@ -87,7 +87,7 @@ function App() {
     <div className="App">
       {/* <MapLayersGUI /> */}
         {!r3f&& <Terrain coord={winchester} options={{
-          defra10mDTMLayer, defraDSMLayer, osTerr50Layer, camZ: 3000, tracks: [
+          defra10mDTMLayer, defraDSMLayer, osTerr50Layer, sun: inspectionLight, camZ: 3000, tracks: [
         //  stGiles, palestine
         // bart,
         // kaw,
@@ -95,7 +95,7 @@ function App() {
         ]}} />}
         {r3f && <Canvas>
           <TerrainR3F coord={winchester} options={{
-            defra10mDTMLayer, defraDSMLayer, osTerr50Layer, camZ: 3000, tracks: []
+            defra10mDTMLayer, defraDSMLayer, osTerr50Layer, sun: inspectionLight, camZ: 3000, tracks: []
           }} />
         </Canvas>}
       {/* <Terrain coord={beinnSgrithael} options={{defraDSMLayer: false, osTerr50Layer: true, camZ: 30000}} /> */}
