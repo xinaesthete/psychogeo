@@ -15,11 +15,12 @@ export default defineConfig({
     },
   },
   optimizeDeps: {
-    esbuildOptions: {
-      define: {
-        global: 'globalThis',
+    rolldownOptions: {
+      transform: {
+        define: {
+          global: 'globalThis',
+        },
       },
-      inject: [resolve('src/vite/buffer-shim.js')],
     },
   },
   server: {

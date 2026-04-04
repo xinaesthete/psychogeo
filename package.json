@@ -2,69 +2,50 @@
   "name": "psychogeo",
   "version": "0.1.0",
   "private": true,
-  "homepage": "./",
   "main": "src/start.js",
-  "proxy": "http://localhost:8082",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "dependencies": {
-    "@react-three/drei": "^9.56.4",
-    "@react-three/fiber": "^8.10.1",
-    "@testing-library/jest-dom": "^4.2.4",
-    "@testing-library/react": "^9.5.0",
-    "@testing-library/user-event": "^7.2.1",
-    "@types/delaunator": "^3.0.0",
-    "@types/geodesy": "^2.2.2",
-    "@types/jest": "^26.0.14",
-    "@types/node": "^20.17.50",
-    "@types/shpjs": "^3.4.0",
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.5.0",
     "buffer": "^6.0.3",
-    "cross-env": "^7.0.2",
     "delaunator": "^4.0.1",
     "dotenv": "^16.0.3",
     "electron": "^22.1.0",
     "express": "^4.17.1",
     "geodesy": "^2.2.1",
+    "geotiff": "^1.0.4",
     "geojson": "^0.5.0",
     "http-proxy": "^1.18.1",
-    "leva": "^0.9.36",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
+    "leva": "^0.10.1",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
     "shpjs": "^3.6.2",
-    "three": "^0.149.0",
-    "three-stdlib": "^2.21.6",
-    "typescript": "^4.9.5"
+    "three": "^0.183.2",
+    "three-stdlib": "^2.36.1"
   },
   "scripts": {
+    "dev": "vite",
+    "dev:web": "vite",
+    "dev:proxy": "node src/start-server",
+    "dev:electron": "node src/start-react --trace-warnings",
     "start": "vite",
     "build": "vite build",
     "test": "npm run typecheck",
     "electron": "electron .",
-    "react-start": "vite",
-    "electron-start": "node src/start-react --trace-warnings",
-    "proxy-start": "node src/start-server",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },
-  "eslintConfig": {
-    "extends": "react-app"
-  },
-  "browserslist": {
-    "production": [
-      ">0.2%",
-      "not dead",
-      "not op_mini all"
-    ],
-    "development": [
-      "last 1 chrome version",
-      "last 1 firefox version",
-      "last 1 safari version"
-    ]
-  },
   "devDependencies": {
-    "@types/react": "^18.3.28",
-    "@types/react-dom": "^18.3.7",
-    "@types/three": "^0.148.1",
-    "@vitejs/plugin-react": "^4.3.4",
-    "geotiff": "^1.0.4",
-    "vite": "^5.4.19"
+    "@types/delaunator": "^3.0.0",
+    "@types/geodesy": "^2.2.2",
+    "@types/node": "^25.5.2",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@types/shpjs": "^3.4.0",
+    "@vitejs/plugin-react": "^6.0.1",
+    "typescript": "^6.0.2",
+    "vite": "^8.0.3"
   }
 }

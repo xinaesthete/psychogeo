@@ -44,10 +44,6 @@ function parsePoint(p: Element) {
 }
 function trksegProcess(trkseg: Element): GpxTrackpoint[] {
     //turn into a point[] with a lat/lon, time, ele
-
-    //https://stackoverflow.com/questions/53441292/why-downleveliteration-is-not-on-by-default
-    //was worried create-react-app might interfere, but it doesn't seem to so far:
-    //something to check if this gives compiler error in future.
     const pointsRaw = getEls(trkseg, 'trkpt');
     const points: GpxTrackpoint[] = pointsRaw.map(p => {
         return {

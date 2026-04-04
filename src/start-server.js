@@ -6,16 +6,15 @@
 
 
 require('dotenv').config();
-//https://dev.to/loujaybee/using-create-react-app-with-express
-const port = process.env.PORT || 8082; //changed to 8082 to not conflict with snowpack default
+const port = process.env.PORT || 8082;
 const gisRoot = process.env.MAPSYNTH_GIS_ROOT || 'L:/GIS/';
 console.log('starting express server on port ' + port);
 const express = require('express');
 //const bodyParser = require('body-parser')
 const path = require('path');
 const app = express();
-app.use(express.static(path.join(__dirname, '../build')));
-console.log('using ' + path.join(__dirname, '../build'));
+app.use(express.static(path.join(__dirname, '../dist')));
+console.log('using ' + path.join(__dirname, '../dist'));
 
 app.get('/ping', function (req, res) {
   console.log('ping');
@@ -53,7 +52,7 @@ app.get('/gpx*', function(req, res) {
 });
 
 app.get('/', function (req, res) {
-  res.sendFile(path.join(__dirname, '../build', 'index.html'));
+  res.sendFile(path.join(__dirname, '../dist', 'index.html'));
 });
 
 // QUICK HACK (famous last words)

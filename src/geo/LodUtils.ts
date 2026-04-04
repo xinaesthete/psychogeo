@@ -49,7 +49,15 @@ function renderMip(renderer: WebGLRenderer, texture: THREE.Texture, size: number
   const scene = new THREE.Scene();
   scene.add(mesh);
   const oldTarget = renderer.getRenderTarget();
-  const target = new THREE.WebGLRenderTarget(size, size, {...texture});
+  const target = new THREE.WebGLRenderTarget(size, size);
+  target.texture.format = texture.format;
+  target.texture.type = texture.type;
+  target.texture.magFilter = texture.magFilter;
+  target.texture.minFilter = texture.minFilter;
+  target.texture.wrapS = texture.wrapS;
+  target.texture.wrapT = texture.wrapT;
+  target.texture.colorSpace = texture.colorSpace;
+  target.texture.generateMipmaps = false;
   renderer.setRenderTarget(target);
   renderer.render(scene, camera);
   renderer.setRenderTarget(oldTarget);
@@ -170,7 +178,6 @@ class GeoLOD extends THREE.Object3D {
   get isLOD() { return true; }
   constructor() {
     super();
-    this.type = 'GeoLOD';
     this.levels = [];
     this.frustumCulled = false;
   }
@@ -251,11 +258,14 @@ class GeoLOD extends THREE.Object3D {
   }
   toJSON( meta: any ) {
     const data = super.toJSON(meta);
-    data.object.levels = [];
+    const objectData = data.object as THREE.Object3DJSONObject & {
+      levels: { object: string; distance: number }[];
+    };
+    objectData.levels = [];
     const levels = this.levels;
     for (let i=0, l=levels.length; i<l; i++) {
       const level = levels[i];
-      data.object.levels.push({
+      objectData.levels.push({
         object: level.object.uuid,
         distance: level.distance
       });
