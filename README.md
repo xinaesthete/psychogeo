@@ -44,6 +44,8 @@ pnpm install
 pnpm dev
 ```
 
+`pnpm dev` starts both the local data proxy and the Vite frontend. If you only want one side of that setup, use `pnpm dev:proxy` or `pnpm dev:web`.
+
 The helper scripts in `scripts/package.json` are part of the same workspace, so you can run them directly from that folder:
 
 ```bash
@@ -75,8 +77,10 @@ The SHP triangulation worker now lives in-repo as a Rust/WASM crate under `rust/
 
 After the tooling above is installed:
 
-- `pnpm dev` to rebuild the WASM crate in dev mode and start Vite
+- `pnpm dev` to rebuild the WASM crate in dev mode, start the local proxy on `localhost:8082`, and then start Vite on `localhost:3000`
 - `pnpm build` to rebuild the WASM crate in release mode before producing `dist`
+- `pnpm dev:web` if you only want the Vite frontend and already have the proxy running
+- `pnpm dev:proxy` if you only want the local data proxy
 - `pnpm run build:shp-wasm:dev` if you only want to refresh the worker package after changing the Rust source
 - `pnpm run bench:shp` to run the JS-vs-Rust benchmark harness kept in `scripts/benchmark-shp.mjs`
 
