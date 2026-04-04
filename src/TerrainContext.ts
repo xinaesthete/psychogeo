@@ -15,7 +15,10 @@ export const useTerrain = (coord: EastNorth, options?: TerrainOptions) => {
     t.dom = gl.domElement;
     // update options if provided
     if (options) {
-        t.options = options;
+        t.options = {
+            ...t.options,
+            ...options,
+        };
     }
     return t;
 }

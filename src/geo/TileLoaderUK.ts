@@ -190,22 +190,32 @@ export interface Track {
     heightOffset?: number;
     colour?: number;
 }
+const defaultTerrainOptions: TerrainOptions = {
+    osTerr50Layer: false,
+    defraDSMLayer: false,
+    defra10mDTMLayer: true,
+    camZ: 15000,
+    sun: true,
+};
 export class TerrainRenderer extends ThreactTrackballBase {
     coord: EastNorth;
     tileProp: DsmCatItem;
     tiles: LazyTile[] = [];
     options: TerrainOptions;
-    constructor(coord: EastNorth, options: TerrainOptions = {
-        osTerr50Layer: false, defraDSMLayer: false, camZ: 15000, defra10mDTMLayer: true
-    }) {
+    lightRig?: THREE.Group;
+    constructor(coord: EastNorth, options: TerrainOptions = defaultTerrainOptions) {
         super();
-        console.table(options);
+        this.options = {
+            ...defaultTerrainOptions,
+            ...options,
+            sun: options.sun ?? defaultTerrainOptions.sun,
+        };
+        console.table(this.options);
         this.coord = {...coord};
         this.tileProp = getTileProperties(coord);
         this.addAxes();
-        this.options = options; //AKA props
-        if (options.tracks) {
-            options.tracks.forEach(t=>this.addTrack(t));
+        if (this.options.tracks) {
+            this.options.tracks.forEach(t=>this.addTrack(t));
         }
     }
     addMarker() {
@@ -244,7 +254,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
         
         //todo: change to OrbitControls with no screenspace panning?
 
-        if (this.options.sun) this.sunLight();
+        this.syncLightRig();
         
         this.addMarker();
         if (onlyDebugGeometry) this.planeBaseTest();
@@ -253,13 +263,39 @@ export class TerrainRenderer extends ThreactTrackballBase {
         if (this.options.defraDSMLayer && !onlyDebugGeometry) this.makeTiles().then(v => {console.log('finished making tiles')});
         if (this.options.defra10mDTMLayer) this.makeTiles(true).then(v => {console.log('finished making low-res tiles')});
     }
-    sunLight() {
-        //at some point I may want to have something more usefully resembling sun, just testing for now.
-        const sun = new THREE.DirectionalLight(0xa09080, 0.9);
-        sun.position.set(-10000, -3000, 400);
-        sun.up = new THREE.Vector3(0, 0.5, 0.5).normalize();
+    private createLightRig() {
+        const rig = new THREE.Group();
+        // A small fill rig keeps terrain readable when we are just inspecting geometry,
+        // while still preserving directional shading cues from a "sun" key light.
+        const skyFill = new THREE.HemisphereLight(0xe8f3ff, 0x2d3b1f, 0.85);
+        rig.add(skyFill);
+
+        const sun = new THREE.DirectionalLight(0xffefcf, 1.15);
+        sun.position.set(-12000, -7000, 16000);
+        sun.target.position.set(this.coord.east, this.coord.north, 0);
         sun.castShadow = true;
-        this.scene.add(sun);
+        rig.add(sun.target);
+        rig.add(sun);
+
+        const rim = new THREE.DirectionalLight(0x8aa7d6, 0.3);
+        rim.position.set(9000, 14000, 6000);
+        rim.target.position.set(this.coord.east, this.coord.north, 0);
+        rig.add(rim.target);
+        rig.add(rim);
+        return rig;
+    }
+    private syncLightRig() {
+        if (this.options.sun) {
+            if (!this.lightRig) {
+                this.lightRig = this.createLightRig();
+                this.scene.add(this.lightRig);
+            }
+            return;
+        }
+        if (this.lightRig) {
+            this.scene.remove(this.lightRig);
+            this.lightRig = undefined;
+        }
     }
     planeBaseTest() {
         const geo = new THREE.PlaneGeometry(10000, 10000, 2000, 2000);
@@ -299,6 +335,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
     update() {
         //LOD is now done with THREE.LOD, although we may benefit from a different distance function.
         //if so, we won't have a separate updateLOD() pass here.
+        this.syncLightRig();
         super.update();
     }
 }
