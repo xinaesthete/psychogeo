@@ -14,14 +14,22 @@ newGLContext();
 /// refactor in process... we need to go a bit further & add UI controls etc.
 function Terrain(opt: {coord: EastNorth, options?: TerrainOptions}) {
   const {coord, options} = {...opt};
-  const renderer = React.useMemo(() => new TerrainRenderer(coord, options), [options]);
+  const renderer = React.useMemo(
+    () => new TerrainRenderer(coord, options),
+    [coord.east, coord.north, options]
+  );
+  const rendererKey = JSON.stringify({
+    east: coord.east,
+    north: coord.north,
+    options
+  });
   const dom: DomAttributes = {
     style: { height: "100%", width: '100%' }
   }
   return (
     <>
     <div style={{width: '100vw', height: '100vh'}}>
-    <Threact gfx={renderer} domAttributes={dom}/>
+    <Threact key={rendererKey} gfx={renderer} domAttributes={dom}/>
     </div>
     </>
   )
