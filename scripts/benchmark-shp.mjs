@@ -1,8 +1,8 @@
-import { readFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import Delaunator from 'delaunator';

@@ -1,39 +1,9 @@
 import * as THREE from 'three'
-import shp from 'shpjs'
-import Delaunator from 'delaunator'
-import { convertWgsPointToOSGB, EastNorth, gridRefString } from './Coordinates';
+import { EastNorth, gridRefString } from './Coordinates';
 import { WorkerPool } from '../openjpegjs/workerPool';
-import { collectShpPoints } from './shpPoints';
 import type { DelaunayBuffers, ShpWorkerRequest, ShpWorkerResponse } from './shpWorkerProtocol';
 import ShpTriangulationWorker from './shpWorker?worker';
 
-export async function threeGeometryFromShpZipX(coord: EastNorth) {
-    const os = gridRefString(coord, 2); //"su" + i + j
-    const response = await fetch("/os/" + os);
-    const file = await response.arrayBuffer();
-
-    const s = await shp(file);
-
-    const rawPoints = collectShpPoints(s);
-    const points: number[][] = [];
-    for (let index = 0; index < rawPoints.length; index += 3) {
-        points.push(convertWgsPointToOSGB([
-            rawPoints[index],
-            rawPoints[index + 1],
-            rawPoints[index + 2],
-        ]));
-    }
-    const delaunay = Delaunator.from(points);
-    
-    const geo = new THREE.BufferGeometry();
-    const pArr = new Float32Array(points.length * 3);
-    for (let i=0; i<points.length; i++) {
-        pArr.set(points[i], i*3);
-    }
-    geo.setAttribute("position", new THREE.BufferAttribute(pArr, 3));
-    geo.setIndex(new THREE.BufferAttribute(reverseWinding(delaunay.triangles), 1));
-    return geo;
-}
 type Delaun = DelaunayBuffers; //maybe Delaunator<Float64Array>?
 const times: number[] = [];
 const workerRegister: Map<EastNorth, Worker> = new Map();
@@ -116,14 +86,6 @@ export async function threeGeometryFromShpZip(coord: EastNorth) {
     if (delaunay.normals) geo.setAttribute("normal", new THREE.BufferAttribute(delaunay.normals, 3));
     geo.setIndex(new THREE.BufferAttribute(delaunay.triangles, 1));
     return geo;
-}
-
-function reverseWinding(indices: Uint32Array, inPlace = true) {
-    const newIndices = inPlace ? indices : new Uint32Array(indices.length);
-    for (let i=0; i<indices.length/3; i++) {
-        newIndices.set(indices.slice(i*3, 3+(i*3)).reverse(), i*3);
-    }
-    return newIndices;
 }
 
 const workers = new WorkerPool(8, () => new ShpTriangulationWorker());
