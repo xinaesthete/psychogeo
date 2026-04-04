@@ -38,6 +38,7 @@
     "prebuild": "pnpm run build:shp-wasm",
     "start": "vite",
     "build": "vite build",
+    "bench:shp": "node scripts/benchmark-shp.mjs",
     "pretypecheck": "pnpm run build:shp-wasm:dev",
     "test": "pnpm run typecheck",
     "electron": "electron .",
