@@ -4,6 +4,21 @@ This is a personal project that I work on from time to time, there are various d
 
 In its current form, it is somewhat demanding of the computer it runs on to render the graphics, which are based on high-resolution digital surface models. The data it uses is based on freely available sources from DEFRA (currently only covering a small area around Winchester as it requires laborious manual downloading followed by post-processing to make it suitable for rendering) and Ordnance Survey. You'd probably need to talk to me to get it set up (although I should make a public website, with less demanding graphic modes, at some point soon).
 
+## Development
+This repo now uses `pnpm`, managed through Corepack:
+
+```bash
+corepack pnpm install
+corepack pnpm dev
+```
+
+The helper scripts in [`scripts/package.json`](/Users/petertodd/.codex/worktrees/9507/psychogeo/scripts/package.json) are part of the same workspace, so you can run them directly from that folder:
+
+```bash
+corepack pnpm --dir scripts test
+corepack pnpm --dir scripts defra
+```
+
 ## Animated contours
 Simple adaptation of the rendering that reveals features of the landscape in a unique and interesting way:
 

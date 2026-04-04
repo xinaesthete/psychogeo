@@ -2,6 +2,7 @@
   "name": "psychogeo",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@9.4.0",
   "main": "src/start.js",
   "engines": {
     "node": ">=22.12.0"
@@ -32,7 +33,7 @@
     "dev:electron": "node src/start-react --trace-warnings",
     "start": "vite",
     "build": "vite build",
-    "test": "npm run typecheck",
+    "test": "tsc --noEmit",
     "electron": "electron .",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
@@ -40,10 +41,12 @@
   "devDependencies": {
     "@types/delaunator": "^5.0.3",
     "@types/geodesy": "^2.2.8",
+    "@types/geojson": "^7946.0.7",
     "@types/node": "^25.5.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@types/shpjs": "^3.4.7",
+    "@types/three": "^0.183.1",
     "@vitejs/plugin-react": "^6.0.1",
     "typescript": "^6.0.2",
     "vite": "^8.0.3"

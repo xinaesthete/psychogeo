@@ -22,7 +22,8 @@ const tryConnection = () => {
       console.log('starting electron');
       startedElectron = true;
       const exec = childProcess.exec;
-      exec('npm run electron');
+      // Use Corepack so the repo does not rely on a globally installed pnpm.
+      exec('corepack pnpm run electron');
     }
   });
 }
