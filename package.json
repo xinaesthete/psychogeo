@@ -14,8 +14,9 @@
     "@types/delaunator": "^3.0.0",
     "@types/geodesy": "^2.2.2",
     "@types/jest": "^26.0.14",
-    "@types/node": "^14.11.5",
+    "@types/node": "^20.17.50",
     "@types/shpjs": "^3.4.0",
+    "buffer": "^6.0.3",
     "cross-env": "^7.0.2",
     "delaunator": "^4.0.1",
     "dotenv": "^16.0.3",
@@ -24,22 +25,24 @@
     "geodesy": "^2.2.1",
     "geojson": "^0.5.0",
     "http-proxy": "^1.18.1",
-    "leva": "^0.9.34",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
+    "leva": "^0.9.36",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "shpjs": "^3.6.2",
     "three": "^0.149.0",
     "three-stdlib": "^2.21.6",
-    "typescript": "^4.1.5"
+    "typescript": "^4.9.5"
   },
   "scripts": {
-    "start": "nf start -p 3000",
-    "build": "node scripts/build.js",
-    "test": "node scripts/test.js",
+    "start": "vite",
+    "build": "vite build",
+    "test": "npm run typecheck",
     "electron": "electron .",
-    "react-start": "npx snowpack dev --polyfill-node --open none",
+    "react-start": "vite",
     "electron-start": "node src/start-react --trace-warnings",
-    "proxy-start": "node src/start-server"
+    "proxy-start": "node src/start-server",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
   },
   "eslintConfig": {
     "extends": "react-app"
@@ -57,10 +60,11 @@
     ]
   },
   "devDependencies": {
-    "@types/react": "^18.0.27",
-    "@types/react-dom": "^18.0.10",
+    "@types/react": "^18.3.28",
+    "@types/react-dom": "^18.3.7",
     "@types/three": "^0.148.1",
+    "@vitejs/plugin-react": "^4.3.4",
     "geotiff": "^1.0.4",
-    "snowpack": "^3.0.11"
+    "vite": "^5.4.19"
   }
 }
