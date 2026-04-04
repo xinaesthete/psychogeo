@@ -6,9 +6,8 @@ const childProcess = require('child_process');
 
 
 //declare const process: NodeJS.Process;
-//may want to have another look at this file in general, fix how ports are working with Snowpack.
-//how about getting rid of nf / Procfile?
-const port = process.env.PORT ? parseInt(process.env.PORT) - 100 : 3000;
+// Vite now owns the frontend dev server directly, so we default to its port.
+const port = parseInt(process.env.VITE_PORT || process.env.PORT || '3000', 10);
 process.env.ELECTRON_START_URL = `http://localhost:${port}`;
 console.log(`PORT env variable: ${process.env.PORT}`);
 console.log(`electron url: ${process.env.ELECTRON_START_URL}`);

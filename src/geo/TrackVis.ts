@@ -79,7 +79,7 @@ export async function loadGpxGeometry(url: string, eleOffset = 30, color = 0xfff
     g.add(l);
     const n = track.length;
     
-    const m = new THREE.Mesh(new THREE.SphereBufferGeometry(15, 15, 30, 30), new THREE.MeshBasicMaterial({transparent: true, opacity: 0.6, color: color}));
+    const m = new THREE.Mesh(new THREE.SphereGeometry(15, 15, 30, 30), new THREE.MeshBasicMaterial({transparent: true, opacity: 0.6, color: color}));
     m.frustumCulled = false;
     g.add(m);
     m.matrixAutoUpdate = true;
@@ -146,5 +146,4 @@ export async function loadGpxGeometry(url: string, eleOffset = 30, color = 0xfff
 
     return g;
 }
-
 

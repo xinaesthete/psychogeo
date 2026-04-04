@@ -73,7 +73,7 @@ nullInfo.mesh!.userData.isNull = true;
 //may consider throttling how many tiles load at a time & having a status to indicate that.
 enum TileStatus { UnTouched, Loading, Loaded, Error } 
 class LazyTile {
-    static loaderGeometry = new THREE.BoxBufferGeometry();
+    static loaderGeometry = new THREE.BoxGeometry();
     static loaderMat = new THREE.MeshBasicMaterial({transparent: true, color: 0x800000, opacity: 0.5, blending: THREE.AdditiveBlending});
     object3D: THREE.Object3D;
     status = TileStatus.UnTouched;
@@ -127,7 +127,7 @@ const osTerrainMat = new THREE.MeshStandardMaterial({
 osTerrainMat.shadowSide = THREE.DoubleSide;
 
 class LazyTileOS {
-    static loaderGeometry = new THREE.BoxBufferGeometry(10000, 10000, 200);
+    static loaderGeometry = new THREE.BoxGeometry(10000, 10000, 200);
     object3D: THREE.Object3D;
     status = TileStatus.UnTouched;
     constructor(coord: EastNorth, parent: THREE.Object3D) {
@@ -199,6 +199,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
         osTerr50Layer: false, defraDSMLayer: false, camZ: 15000, defra10mDTMLayer: true
     }) {
         super();
+        console.table(options);
         this.coord = {...coord};
         this.tileProp = getTileProperties(coord);
         this.addAxes();
@@ -211,7 +212,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
         const info = this.tileProp;
         if (!info) return;
         const markerMat = new THREE.MeshBasicMaterial({transparent: true, opacity: 0.5, color: 0xffffff});
-        const m = new THREE.Mesh(new THREE.SphereBufferGeometry(5, 30, 30), markerMat);
+        const m = new THREE.Mesh(new THREE.SphereGeometry(5, 30, 30), markerMat);
         // m.position.x = this.coord.east - info.xllcorner;
         // m.position.y = this.coord.north - info.yllcorner;
         m.position.z = info.min_ele??0;
@@ -239,7 +240,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
         this.camera.position.z = this.options.camZ;
         // this.camera.lookAt(this.coord.east, this.coord.north, 0); //will be overriden by trackball control
         // this.camera.quaternion._onChange(()=>{debugger});
-        this.trackCtrl!.target.set(this.coord.east, this.coord.north, 0);
+        (this.trackCtrl! as any).target.set(this.coord.east, this.coord.north, 0);
         
         //todo: change to OrbitControls with no screenspace panning?
 
@@ -261,7 +262,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
         this.scene.add(sun);
     }
     planeBaseTest() {
-        const geo = new THREE.PlaneBufferGeometry(10000, 10000, 2000, 2000);
+        const geo = new THREE.PlaneGeometry(10000, 10000, 2000, 2000);
         const mat = new THREE.MeshStandardMaterial();
         JP2.jp2Texture(getImageFilename(this.tileProp.source_filename), false).then(({texture, frameInfo}) => {
             mat.displacementMap = texture;

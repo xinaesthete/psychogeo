@@ -110,7 +110,7 @@ export interface IThreact {
     //reactChildren?: React.Component[]; //React components already have children.
 }
 
-const basePlane = new THREE.PlaneBufferGeometry(1, 1, 1, 1);
+const basePlane = new THREE.PlaneGeometry(1, 1, 1, 1);
 
 /**
  * XXX: Really need to use this a bit to figure out how it should work...
@@ -242,6 +242,6 @@ export class Threact extends React.Component<IThreact, any> {
         ctx.drawImage(renderer.domElement, 0, 0);
     }
     render() {
-        return <canvas {...this.props.domAttributes} className={this.state.className} ref={(mount) => this.mount = mount as HTMLCanvasElement} />
+        return <canvas {...this.props.domAttributes} className={this.state.className} ref={(mount) => { this.mount = mount as HTMLCanvasElement; }} />
     }
 }

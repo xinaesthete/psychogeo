@@ -100,7 +100,10 @@ export async function jp2Texture(url: string, simplerDecodeHack: boolean) {
   const texture = new THREE.DataTexture(d, frameInfo.width, frameInfo.height, format, type);
   texture.minFilter = texture.magFilter = THREE.LinearFilter;
   texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.flipY = false;
+  texture.generateMipmaps = false;
   texture.anisotropy = 16;
+  texture.needsUpdate = true;
   // texture.generateMipmaps = true; //TODO: test & make sure full use being made...
   const t = {texture, frameInfo};
   textureCache.set(url, t);

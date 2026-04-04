@@ -21,6 +21,8 @@ export const tileLoadingMat = new THREE.ShaderMaterial({
     `
 });
 
+type CompiledShader = Parameters<NonNullable<THREE.Material['onBeforeCompile']>>[0];
+
 //currently debugging, 'frankenShader' here means start with StandardMaterial & modify
 //false for ShaderMaterial (not Raw, but not Standard)
 //see also 'attributeless' in TileLoaderUK for using standard displacement map.
@@ -47,7 +49,7 @@ function patchShaderBeforeCompile(uniforms: any) {
 
     //I want something a bit more like a Unity surface shader, where I write some code to procedurally determine
     //what the properties of the standard PBR material will be & let standard shader do the shading.
-    return (shader: THREE.Shader) => {
+    return (shader: CompiledShader) => {
         //nb, I'm *not* using UniformsUtils to merge, because I want to keep a common reference to eg iTime
         for (let n in uniforms) shader.uniforms[n] = uniforms[n];
         shader.vertexShader = patchVertexShader(shader.vertexShader);
@@ -359,7 +361,7 @@ export function applyCustomDepthForViewshed(mesh: THREE.Mesh) {
     // if (mesh.material instanceof THREE.Material) mesh.material.onBeforeCompile = earthCurveVert;
 }
 
-function earthCurveVert(shader: THREE.Shader) {
+function earthCurveVert(shader: CompiledShader) {
     shader.vertexShader = substituteInclude(
         'begin_vertex',
         glsl`
