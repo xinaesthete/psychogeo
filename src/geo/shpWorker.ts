@@ -2,7 +2,7 @@
 
 import Delaunator from 'delaunator';
 import shp from 'shpjs';
-import initShpProcessor, { triangulate_coordinates3d } from '../../rust/shp_processor_wasm/pkg/shp_processor_wasm.js';
+import initShpProcessor, { triangulate_shp_zip } from '../../rust/shp_processor_wasm/pkg/shp_processor_wasm.js';
 import { collectShpPoints } from './shpPoints';
 import type { ShpWorkerRequest, ShpWorkerResponse, ShpWorkerSuccess } from './shpWorkerProtocol';
 
@@ -35,16 +35,19 @@ async function ensureRustBackend() {
     return rustBackendPromise;
 }
 
-async function fetchShpPoints(url: string) {
+async function fetchShpZip(url: string) {
     const response = await fetch(url);
     if (!response.ok) {
         throw new Error(`failed to fetch '${url}': ${response.status} ${response.statusText}`);
     }
-    const shpBuffer = await response.arrayBuffer();
+    return response.arrayBuffer();
+}
+
+async function parseShpPointsWithJavascript(shpBuffer: ArrayBuffer) {
     const source = await shp(shpBuffer);
     const points = collectShpPoints(source);
     if (points.length === 0) {
-        throw new Error(`no geometry found from shp '${url}'`);
+        throw new Error('no geometry found in shapefile archive');
     }
     return points;
 }
@@ -84,10 +87,10 @@ function triangulateWithJavascript(pointsXYZ: Float64Array, startedAt: number): 
 async function triangulate(url: string): Promise<ShpWorkerResponse> {
     const startedAt = Date.now();
     try {
-        const points = await fetchShpPoints(url);
+        const shpZip = await fetchShpZip(url);
         if (await ensureRustBackend()) {
             try {
-                const result = readRustTriangulationResult(triangulate_coordinates3d(points));
+                const result = readRustTriangulationResult(triangulate_shp_zip(new Uint8Array(shpZip)));
                 return {
                     kind: 'success',
                     backend: 'rust-wasm',
@@ -99,6 +102,7 @@ async function triangulate(url: string): Promise<ShpWorkerResponse> {
                 console.warn('Rust SHP triangulation failed; retrying in JavaScript:', error);
             }
         }
+        const points = await parseShpPointsWithJavascript(shpZip);
         return triangulateWithJavascript(points, startedAt);
     } catch (error) {
         return {

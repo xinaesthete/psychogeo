@@ -18,7 +18,7 @@ export class WorkerPool {
     }
     async getWorker() {
         if (this.idle.length > 0) {
-            return this.idle.shift()!;
+            return this.idle.shift();
         }
         const promise = new Promise<Worker>(resolve => {
             this.backlog.push(worker=>{
@@ -30,7 +30,7 @@ export class WorkerPool {
     releaseWorker(worker: Worker, kill = false) {
         const nextWorker = kill ? this.terminateWorker(worker) : this.maybeRetireWorker(worker);
         if (this.backlog.length > 0) {
-            this.backlog.shift()!(nextWorker);
+            this.backlog.shift()?.(nextWorker);
         } else {
             this.idle.push(nextWorker);
         }
@@ -44,7 +44,7 @@ export class WorkerPool {
     //I seem to face ever-growing heap, so simplest strategy appears to be to terminate
     //(or, y'know, not leak memory)
     private maybeRetireWorker(worker: Worker) {
-        const age = this.workerAge.get(worker)! + 1;
+        const age = (this.workerAge.get(worker) ?? 0) + 1;
         if (age > this.maxAge) {
             return this.terminateWorker(worker);
         }
