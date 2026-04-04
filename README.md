@@ -44,7 +44,7 @@ pnpm install
 pnpm dev
 ```
 
-`pnpm dev` starts both the local data proxy and the Vite frontend. If you only want one side of that setup, use `pnpm dev:proxy` or `pnpm dev:web`.
+`pnpm dev` starts both the local data proxy and the Vite frontend, and now rebuilds the Rust worker in release mode first so the app behaves closer to production. If you only want one side of that setup, use `pnpm dev:proxy` or `pnpm dev:web`. If you want a quicker Rust rebuild while actively iterating on the worker, use `pnpm dev:fast`.
 
 The helper scripts in `scripts/package.json` are part of the same workspace, so you can run them directly from that folder:
 
@@ -77,16 +77,18 @@ The SHP triangulation worker now lives in-repo as a Rust/WASM crate under `rust/
 
 After the tooling above is installed:
 
-- `pnpm dev` to rebuild the WASM crate in dev mode, start the local proxy on `localhost:8082`, and then start Vite on `localhost:3000`
+- `pnpm dev` to rebuild the WASM crate in release mode, start the local proxy on `localhost:8082`, and then start Vite on `localhost:3000`
+- `pnpm dev:fast` to use a Rust `--dev` wasm build for a quicker worker rebuild/startup loop
 - `pnpm build` to rebuild the WASM crate in release mode before producing `dist`
 - `pnpm dev:web` if you only want the Vite frontend and already have the proxy running
 - `pnpm dev:proxy` if you only want the local data proxy
 - `pnpm run build:shp-wasm:dev` if you only want to refresh the worker package after changing the Rust source
-- `pnpm run bench:shp` to run the JS-vs-Rust benchmark harness kept in `scripts/benchmark-shp.mjs`
+- `pnpm run bench:shp` to run the JS-vs-Rust benchmark harness kept in `scripts/benchmark-shp.mjs` after rebuilding the wasm worker in release mode
 
 The worker itself is bundled from `src/geo/shpWorker.ts`, so there is no longer any need to manually copy generated `.wasm` files into `public`.
 
 The benchmark script still uses JS parsing/triangulation dependencies for comparison, but those are development-only and are not part of the frontend runtime bundle.
+The benchmark command forces a release wasm rebuild first, so the Rust results do not depend on whether `pnpm dev` happened to leave a `--dev` artifact in `rust/shp_processor_wasm/pkg`.
 
 ### Verification
 
