@@ -1,26 +1,26 @@
 import * as THREE from "three";
 import type { OrbitControls } from "three-stdlib";
+import {
+    dampWheelScaleForAltitude,
+    getControlsReferenceDistance,
+    zoomSensitivityMultiplier,
+} from "./cameraSensitivity";
 import { TERRAIN_WORLD_UP } from "./mapControls";
 
 export type SmoothZoomOptions = {
-    /** Scales wheel delta → zoom step (deck.gl default 0.01). */
     speed?: number;
-    /** Smoothing time constant (ms); lower = snappier. */
     smoothMs?: number;
-    /** Ms after last wheel event before zoom inertia is cancelled. */
     wheelIdleMs?: number;
-    /** Ignore wheel deltas for this long after idle (trackpad momentum). */
     wheelCooldownMs?: number;
 };
 
 export const DEFAULT_SMOOTH_ZOOM: Required<SmoothZoomOptions> = {
-    speed: 0.028,
+    speed: 0.035,
     smoothMs: 90,
     wheelIdleMs: 80,
     wheelCooldownMs: 180,
 };
 
-/** Live tuning (e.g. from Leva); read on each wheel tick / frame. */
 let tuning: Required<SmoothZoomOptions> = { ...DEFAULT_SMOOTH_ZOOM };
 
 export function getSmoothZoomTuning(): Readonly<Required<SmoothZoomOptions>> {
@@ -37,7 +37,6 @@ const _ndc = new THREE.Vector2();
 const _anchor = new THREE.Vector3();
 const _offset = new THREE.Vector3();
 
-/** deck.gl-style wheel scale from pixel delta. */
 export function wheelDeltaToScale(delta: number, speed = 0.01): number {
     let scale = 2 / (1 + Math.exp(-Math.abs(delta * speed)));
     if (delta < 0 && scale !== 0) {
@@ -46,21 +45,11 @@ export function wheelDeltaToScale(delta: number, speed = 0.01): number {
     return scale;
 }
 
-function distanceToTarget(controls: OrbitControls, camera: THREE.PerspectiveCamera): number {
-    return camera.position.distanceTo(controls.target);
-}
-
-function clampDistance(controls: OrbitControls, d: number): number {
-    return Math.max(controls.minDistance, Math.min(controls.maxDistance, d));
-}
-
-/** Ground plane through the orbit target (horizontal in Z-up OSGB space). */
 function groundPlane(controls: OrbitControls): THREE.Plane {
     _plane.setFromNormalAndCoplanarPoint(TERRAIN_WORLD_UP, controls.target);
     return _plane;
 }
 
-/** World point on the ground under the cursor, if the ray hits the plane. */
 function anchorUnderCursor(
     camera: THREE.PerspectiveCamera,
     domElement: HTMLElement,
@@ -78,12 +67,32 @@ function anchorUnderCursor(
     return _raycaster.ray.intersectPlane(groundPlane(controls), _anchor) ? _anchor : null;
 }
 
-/**
- * Zoom about the ground point under the cursor.
- * Camera and target move together so the orbit offset is unchanged — avoids a
- * lookAt() snap when OrbitControls.update() runs after smoothing ends.
- */
-function zoomAboutAnchor(
+export function groundDistanceAtCursor(
+    camera: THREE.PerspectiveCamera,
+    domElement: HTMLElement,
+    controls: OrbitControls,
+    clientX: number,
+    clientY: number,
+): number {
+    const anchor = anchorUnderCursor(camera, domElement, controls, clientX, clientY);
+    if (anchor) {
+        return Math.max(camera.position.distanceTo(anchor), 1);
+    }
+    return Math.max(camera.position.z - controls.target.z, 1);
+}
+
+function groundZoomLimits(controls: OrbitControls): { min: number; max: number } {
+    const ref = getControlsReferenceDistance(controls);
+    return { min: Math.max(ref / 50, 10), max: ref * 20 };
+}
+
+function clampGroundDistance(controls: OrbitControls, d: number): number {
+    const { min, max } = groundZoomLimits(controls);
+    return Math.max(min, Math.min(max, d));
+}
+
+/** Zoom about cursor; moves camera + target together (stable orbit bearing). */
+export function zoomAboutAnchor(
     controls: OrbitControls,
     camera: THREE.PerspectiveCamera,
     domElement: HTMLElement,
@@ -104,7 +113,8 @@ function zoomAboutAnchor(
     const dist = _offset.length();
     if (dist < 1e-6) return false;
 
-    const nextDist = clampDistance(controls, dist * distanceRatio);
+    const limits = groundZoomLimits(controls);
+    const nextDist = Math.max(limits.min, Math.min(limits.max, dist * distanceRatio));
     _offset.multiplyScalar(nextDist / dist);
 
     const newCamera = _anchor.copy(anchor).add(_offset);
@@ -114,10 +124,6 @@ function zoomAboutAnchor(
     return true;
 }
 
-/**
- * deck.gl-style scroll zoom: delta-proportional scale + smooth approach to target distance.
- * Disables OrbitControls built-in wheel handling.
- */
 export function attachSmoothWheelZoom(
     controls: OrbitControls,
     camera: THREE.PerspectiveCamera,
@@ -130,7 +136,7 @@ export function attachSmoothWheelZoom(
 
     controls.enableZoom = false;
 
-    let targetDistance = distanceToTarget(controls, camera);
+    let targetGroundDistance = groundDistanceAtCursor(camera, domElement, controls, 0, 0);
     let cursorX = 0;
     let cursorY = 0;
     let smoothing = false;
@@ -139,7 +145,13 @@ export function attachSmoothWheelZoom(
 
     const stopSmoothing = () => {
         smoothing = false;
-        targetDistance = distanceToTarget(controls, camera);
+        targetGroundDistance = groundDistanceAtCursor(
+            camera,
+            domElement,
+            controls,
+            cursorX,
+            cursorY,
+        );
     };
 
     const scheduleWheelIdle = () => {
@@ -153,41 +165,73 @@ export function attachSmoothWheelZoom(
 
     const onWheel = (event: WheelEvent) => {
         event.preventDefault();
+        event.stopPropagation();
         if (performance.now() < ignoreWheelUntil) return;
 
         cursorX = event.clientX;
         cursorY = event.clientY;
 
-        const scale = wheelDeltaToScale(event.deltaY, tuning.speed);
-        const current = distanceToTarget(controls, camera);
-        targetDistance = clampDistance(controls, current * scale);
+        const ground = groundDistanceAtCursor(
+            camera,
+            domElement,
+            controls,
+            cursorX,
+            cursorY,
+        );
+        const speed =
+            tuning.speed * zoomSensitivityMultiplier(ground, controls);
+        let scale = wheelDeltaToScale(event.deltaY, speed);
+        scale = dampWheelScaleForAltitude(scale, ground, controls);
+
+        if (tuning.smoothMs <= 0) {
+            zoomAboutAnchor(controls, camera, domElement, cursorX, cursorY, scale);
+            return;
+        }
+
+        targetGroundDistance = clampGroundDistance(controls, ground * scale);
         smoothing = true;
         scheduleWheelIdle();
     };
 
-    const originalUpdate = controls.update.bind(controls);
+    const panWrappedUpdate = controls.update.bind(controls);
     controls.update = function updateWithSmoothZoom() {
         if (smoothing) {
-            const current = distanceToTarget(controls, camera);
-            const alpha =
-                tuning.smoothMs <= 0 ? 1 : 1 - Math.exp(-20 / tuning.smoothMs);
-            const next = current + (targetDistance - current) * alpha;
+            const current = groundDistanceAtCursor(
+                camera,
+                domElement,
+                controls,
+                cursorX,
+                cursorY,
+            );
+            const alpha = 1 - Math.exp(-20 / tuning.smoothMs);
+            const next = current + (targetGroundDistance - current) * alpha;
             const ratio = current > 1e-6 ? next / current : 1;
             zoomAboutAnchor(controls, camera, domElement, cursorX, cursorY, ratio);
-            if (Math.abs(targetDistance - distanceToTarget(controls, camera)) < 0.5) {
+            if (
+                Math.abs(
+                    targetGroundDistance -
+                        groundDistanceAtCursor(
+                            camera,
+                            domElement,
+                            controls,
+                            cursorX,
+                            cursorY,
+                        ),
+                ) < 0.5
+            ) {
                 smoothing = false;
             }
             return true;
         }
-        return originalUpdate();
+        return panWrappedUpdate();
     };
 
-    domElement.addEventListener("wheel", onWheel, { passive: false });
+    domElement.addEventListener("wheel", onWheel, { passive: false, capture: true });
 
     return () => {
         if (wheelIdleTimer !== undefined) clearTimeout(wheelIdleTimer);
-        domElement.removeEventListener("wheel", onWheel);
-        controls.update = originalUpdate;
+        domElement.removeEventListener("wheel", onWheel, { capture: true });
+        controls.update = panWrappedUpdate;
         controls.enableZoom = true;
     };
 }

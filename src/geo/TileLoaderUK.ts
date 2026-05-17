@@ -221,6 +221,10 @@ export class TerrainRenderer extends ThreactTrackballBase {
     constructor(coord: EastNorth, options: TerrainOptions = defaultTerrainOptions) {
         super();
         this.externalControls = options.externalControls ?? false;
+        this.mapControlsOptions = {
+            initialDistance: options.camZ,
+            referenceDistance: options.camZ,
+        };
         this.options = {
             ...defaultTerrainOptions,
             ...options,

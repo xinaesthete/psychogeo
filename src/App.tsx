@@ -9,6 +9,10 @@ import {
   mapStyleOrbitProps,
   setTerrainCameraTarget,
 } from './camera/mapControls';
+import {
+  DEFAULT_SENSITIVITY,
+  setSensitivityTuning,
+} from './camera/cameraSensitivity';
 import { DEFAULT_SMOOTH_ZOOM, setSmoothZoomTuning } from './camera/smoothZoom';
 import { convertWgsToOSGB, EastNorth } from './geo/Coordinates';
 import { TerrainRenderer, newGLContext, TerrainOptions, Track } from './geo/TileLoaderUK';
@@ -53,7 +57,7 @@ function MapStyleOrbitControls({
   useEffect(() => {
     const controls = ref.current;
     if (!controls || !(camera instanceof THREE.PerspectiveCamera)) return;
-    const detach = enhanceMapStyleControls(controls, camera, gl.domElement);
+    const detach = enhanceMapStyleControls(controls, camera, gl.domElement, camZ);
     configureTerrainZoomLimits(controls, camZ);
     setTerrainCameraTarget(controls, camera, coord, camZ);
     return detach;
@@ -100,11 +104,11 @@ function App() {
   const {defra10mDTMLayer, defraDSMLayer, osTerr50Layer, inspectionLight, r3f} = useControls({
     defra10mDTMLayer: false, defraDSMLayer: true, osTerr50Layer: false, inspectionLight: true, r3f: false
   });
-  const {zoomSpeed, zoomSmoothMs} = useControls('Camera', {
+  const {zoomSpeed, zoomSmoothMs, panGain, zoomGain, sensitivityPower} = useControls('Camera', {
     zoomSpeed: {
       value: DEFAULT_SMOOTH_ZOOM.speed,
       min: 0.005,
-      max: 0.08,
+      max: 0.15,
       step: 0.001,
       label: 'zoom speed',
     },
@@ -115,10 +119,36 @@ function App() {
       step: 5,
       label: 'zoom smooth (ms)',
     },
+    panGain: {
+      value: DEFAULT_SENSITIVITY.panGain,
+      min: 0.5,
+      max: 20,
+      step: 0.5,
+      label: 'pan gain',
+    },
+    zoomGain: {
+      value: DEFAULT_SENSITIVITY.zoomGain,
+      min: 0.5,
+      max: 20,
+      step: 0.5,
+      label: 'zoom gain',
+    },
+    sensitivityPower: {
+      value: DEFAULT_SENSITIVITY.power,
+      min: 1,
+      max: 3,
+      step: 0.1,
+      label: 'distance power',
+    },
   });
   useEffect(() => {
     setSmoothZoomTuning({speed: zoomSpeed, smoothMs: zoomSmoothMs});
-  }, [zoomSpeed, zoomSmoothMs]);
+    setSensitivityTuning({
+      panGain,
+      zoomGain,
+      power: sensitivityPower,
+    });
+  }, [zoomSpeed, zoomSmoothMs, panGain, zoomGain, sensitivityPower]);
   const beinnSgrithael = {east: 183786, north: 812828};
   const winchester = convertWgsToOSGB({lat: 51.064, lon: -1.3098227});
   const cornwall = {east: 201582, north: 43954};

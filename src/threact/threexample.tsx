@@ -3,6 +3,7 @@ import type { OrbitControls } from "three-stdlib";
 import {
     attachDoubleClickZoom,
     createMapStyleControls,
+    type MapControlsOptions,
 } from "../camera/mapControls";
 import { onTerrainViewStateChange, type TerrainViewState } from "../camera/viewState";
 import { jp2Texture } from "../openjpegjs/jp2kloader";
@@ -18,6 +19,7 @@ export abstract class ThreactTrackballBase implements IThree {
     mapCtrl?: OrbitControls;
     /** When true, camera controls are owned elsewhere (e.g. R3F MapControls). */
     externalControls = false;
+    protected mapControlsOptions?: MapControlsOptions;
     overlay = new THREE.Scene(); //for debug graphics
     dom?: HTMLElement;
     private detachDblClick?: () => void;
@@ -28,7 +30,7 @@ export abstract class ThreactTrackballBase implements IThree {
         this.camera.lookAt(0, 0, 0);
         this.dom = dom;
         if (!this.externalControls) {
-            this.mapCtrl = createMapStyleControls(this.camera, dom);
+            this.mapCtrl = createMapStyleControls(this.camera, dom, this.mapControlsOptions);
             this.detachDblClick = attachDoubleClickZoom(this.mapCtrl, this.camera, dom);
         }
         this.init();

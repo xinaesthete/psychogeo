@@ -2,24 +2,24 @@ import * as THREE from "three";
 import { MOUSE, TOUCH } from "three";
 import { OrbitControls } from "three-stdlib";
 import type { EastNorth } from "../geo/Coordinates";
+import { setControlsReferenceDistance } from "./cameraSensitivity";
+import { attachGroundPlanePan } from "./groundPan";
 import { attachSmoothWheelZoom } from "./smoothZoom";
 
 export type MapControlsOptions = {
-    /** Initial camera distance; also used to derive min/max zoom when set. */
     initialDistance?: number;
+    referenceDistance?: number;
 };
 
 const DEFAULT_MIN_POLAR = 0.15;
 const DEFAULT_MAX_POLAR = Math.PI / 2 - 0.05;
 
-/** Scene uses OSGB east/north on XY and elevation on Z (not Three.js default Y-up). */
 export const TERRAIN_WORLD_UP = new THREE.Vector3(0, 0, 1);
 
 export function configureTerrainCamera(camera: THREE.PerspectiveCamera): void {
     camera.up.copy(TERRAIN_WORLD_UP);
 }
 
-/** Google Maps–style mouse/touch bindings on OrbitControls. */
 export function createMapStyleControls(
     camera: THREE.PerspectiveCamera,
     domElement: HTMLElement,
@@ -27,26 +27,39 @@ export function createMapStyleControls(
 ): OrbitControls {
     const controls = new OrbitControls(camera, domElement);
     applyMapStylePreset(controls);
+    const refDistance =
+        options.referenceDistance ?? options.initialDistance ?? 3000;
     if (options.initialDistance !== undefined) {
         configureTerrainZoomLimits(controls, options.initialDistance);
     }
+    setControlsReferenceDistance(controls, refDistance);
+
+    const detachPan = attachGroundPlanePan(controls, camera, domElement);
     const detachSmoothZoom = attachSmoothWheelZoom(controls, camera, domElement);
+
     const nativeDispose = controls.dispose.bind(controls);
     controls.dispose = () => {
         detachSmoothZoom();
+        detachPan();
         nativeDispose();
     };
     return controls;
 }
 
-/** Attach deck.gl-style wheel zoom to existing controls (e.g. drei OrbitControls). */
 export function enhanceMapStyleControls(
     controls: OrbitControls,
     camera: THREE.PerspectiveCamera,
     domElement: HTMLElement,
+    referenceDistance = 3000,
 ): () => void {
     applyMapStylePreset(controls);
-    return attachSmoothWheelZoom(controls, camera, domElement);
+    setControlsReferenceDistance(controls, referenceDistance);
+    const detachPan = attachGroundPlanePan(controls, camera, domElement);
+    const detachZoom = attachSmoothWheelZoom(controls, camera, domElement);
+    return () => {
+        detachZoom();
+        detachPan();
+    };
 }
 
 export function applyMapStylePreset(controls: OrbitControls): void {
@@ -59,9 +72,9 @@ export function applyMapStylePreset(controls: OrbitControls): void {
         ONE: TOUCH.PAN,
         TWO: TOUCH.DOLLY_ROTATE,
     };
+    controls.enablePan = false;
     controls.screenSpacePanning = false;
     controls.zoomToCursor = true;
-    // Damping makes pan/zoom feel mushy; wheel zoom uses deck.gl-style smoothing instead.
     controls.enableDamping = false;
     controls.minPolarAngle = DEFAULT_MIN_POLAR;
     controls.maxPolarAngle = DEFAULT_MAX_POLAR;
@@ -79,9 +92,9 @@ export function setTerrainCameraTarget(
     camZ: number,
 ): void {
     configureTerrainCamera(camera);
+    setControlsReferenceDistance(controls, camZ);
     controls.target.set(coord.east, coord.north, 0);
     camera.position.set(coord.east, coord.north, camZ);
-    // Let OrbitControls orient the camera; lookAt() assumes Y-up and breaks ground-plane pan.
     controls.update();
 }
 
@@ -90,7 +103,6 @@ const _raycaster = new THREE.Raycaster();
 const _ndc = new THREE.Vector2();
 const _intersection = new THREE.Vector3();
 
-/** Double-click zooms toward the ground point under the cursor. */
 export function attachDoubleClickZoom(
     controls: OrbitControls,
     camera: THREE.PerspectiveCamera,
@@ -116,12 +128,12 @@ export function attachDoubleClickZoom(
     return () => domElement.removeEventListener("dblclick", onDblClick);
 }
 
-/** Props compatible with @react-three/drei OrbitControls. */
 export const mapStyleOrbitProps = {
     screenSpacePanning: false,
     zoomToCursor: true,
     enableDamping: false,
     enableZoom: false,
+    enablePan: false,
     minPolarAngle: DEFAULT_MIN_POLAR,
     maxPolarAngle: DEFAULT_MAX_POLAR,
     mouseButtons: {
