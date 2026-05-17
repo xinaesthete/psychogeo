@@ -33,7 +33,7 @@ function App() {
   const {defra10mDTMLayer, defraDSMLayer, osTerr50Layer, inspectionLight, r3f} = useControls({
     defra10mDTMLayer: false, defraDSMLayer: true, osTerr50Layer: false, inspectionLight: true, r3f: false
   });
-  const {zoomSpeed, zoomSmoothMs, panGain, zoomGain, sensitivityPower} = useControls('Camera', {
+  const {zoomSpeed, zoomSmoothMs, panGain, zoomGain} = useControls('Camera', {
     zoomSpeed: {
       value: DEFAULT_SMOOTH_ZOOM.speed,
       min: 0.005,
@@ -62,22 +62,11 @@ function App() {
       step: 0.5,
       label: 'zoom gain',
     },
-    sensitivityPower: {
-      value: DEFAULT_SENSITIVITY.power,
-      min: 0.5,
-      max: 3,
-      step: 0.1,
-      label: 'distance power',
-    },
   });
   useEffect(() => {
     setSmoothZoomTuning({speed: zoomSpeed, smoothMs: zoomSmoothMs});
-    setSensitivityTuning({
-      panGain,
-      zoomGain,
-      power: sensitivityPower,
-    });
-  }, [zoomSpeed, zoomSmoothMs, panGain, zoomGain, sensitivityPower]);
+    setSensitivityTuning({panGain, zoomGain});
+  }, [zoomSpeed, zoomSmoothMs, panGain, zoomGain]);
 
   const winchester = useMemo(() => DEV_LOCATIONS.winchester(), []);
 

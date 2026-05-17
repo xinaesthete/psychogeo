@@ -1,10 +1,6 @@
 import { Vector3, type PerspectiveCamera } from "three";
 import type { OrbitControls } from "three-stdlib";
-import {
-    dampWheelScaleForAltitude,
-    getControlsReferenceDistance,
-    zoomSensitivityMultiplier,
-} from "./cameraSensitivity";
+import { getSensitivityTuning } from "./cameraSensitivity";
 import {
     anchorOnGroundAtCursor,
     groundDistanceAtCursor,
@@ -45,16 +41,6 @@ export function wheelDeltaToScale(delta: number, speed = 0.01): number {
     return scale;
 }
 
-function groundZoomLimits(controls: OrbitControls): { min: number; max: number } {
-    const ref = getControlsReferenceDistance(controls);
-    return { min: Math.max(ref / 50, 10), max: ref * 20 };
-}
-
-function clampGroundDistance(controls: OrbitControls, d: number): number {
-    const { min, max } = groundZoomLimits(controls);
-    return Math.max(min, Math.min(max, d));
-}
-
 /**
  * Zoom toward the ground point under the cursor.
  * Camera and target move by the same delta so bearing is stable; slant range still changes.
@@ -88,8 +74,8 @@ export function zoomAboutAnchor(
     const dist = _offset.length();
     if (dist < 1e-6) return false;
 
-    const limits = groundZoomLimits(controls);
-    const nextDist = Math.max(limits.min, Math.min(limits.max, dist * distanceRatio));
+    const nextDist = dist * distanceRatio;
+    if (nextDist < 1e-6) return false;
     _offset.multiplyScalar(nextDist / dist);
     _delta.copy(anchor).add(_offset).sub(camera.position);
     camera.position.add(_delta);
@@ -152,17 +138,15 @@ export function attachSmoothWheelZoom(
             cursorX,
             cursorY,
         );
-        const speed =
-            tuning.speed * zoomSensitivityMultiplier(actualGround, controls);
-        let scale = wheelDeltaToScale(event.deltaY, speed);
-        scale = dampWheelScaleForAltitude(scale, actualGround, controls);
+        const { zoomGain } = getSensitivityTuning();
+        const scale = wheelDeltaToScale(event.deltaY, tuning.speed * zoomGain);
 
         if (tuning.smoothMs <= 0) {
             zoomAboutAnchor(controls, camera, domElement, cursorX, cursorY, scale);
             return;
         }
 
-        targetGroundDistance = clampGroundDistance(controls, actualGround * scale);
+        targetGroundDistance = Math.max(actualGround * scale, 1e-3);
         smoothing = true;
         scheduleWheelIdle();
     };

@@ -36,18 +36,18 @@ export function groundDistanceAtCursor(
 ): number {
     const anchor = anchorUnderCursor(camera, domElement, controls, clientX, clientY);
     if (anchor) {
-        return Math.max(camera.position.distanceTo(anchor), 1);
+        return Math.max(camera.position.distanceTo(anchor), 1e-3);
     }
 
     camera.getWorldDirection(_viewDir);
     if (Math.abs(_viewDir.z) < 1e-6) {
-        return Math.max(camera.position.z, 1);
+        return Math.max(camera.position.z, 1e-3);
     }
     const t = -camera.position.z / _viewDir.z;
     if (t <= 0) {
-        return Math.max(camera.position.z, 1);
+        return Math.max(camera.position.z, 1e-3);
     }
-    return Math.max(t, 1);
+    return Math.max(t, 1e-3);
 }
 
 export function anchorOnGroundAtCursor(
