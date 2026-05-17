@@ -1,13 +1,18 @@
-import { Canvas, useFrame, useGraph } from '@react-three/fiber';
+import { Canvas, useFrame, useGraph, useThree } from '@react-three/fiber';
+import { OrbitControls } from '@react-three/drei';
 import { useControls } from 'leva';
-import React, { useEffect } from 'react';
-// import { Canvas, useGraph, useFrame } from '@react-three/fiber';
+import React, { useEffect, useLayoutEffect, useRef } from 'react';
 import './App.css';
+import {
+  mapStyleOrbitProps,
+  setTerrainCameraTarget,
+} from './camera/mapControls';
 import { convertWgsToOSGB, EastNorth } from './geo/Coordinates';
 import { TerrainRenderer, newGLContext, TerrainOptions, Track } from './geo/TileLoaderUK';
 import { useTerrain } from './TerrainContext';
-import { DomAttributes, IThree, Threact } from './threact/threact';
-import { OrbitControls } from '@react-three/drei';
+import { DomAttributes, Threact } from './threact/threact';
+import * as THREE from 'three';
+import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 
 newGLContext();
 
@@ -27,34 +32,54 @@ function Terrain(opt: {coord: EastNorth, options?: TerrainOptions}) {
     style: { height: "100%", width: '100%' }
   }
   return (
-    <>
     <div style={{width: '100vw', height: '100vh'}}>
-    <Threact key={rendererKey} gfx={renderer} domAttributes={dom}/>
+      <Threact key={rendererKey} gfx={renderer} domAttributes={dom}/>
     </div>
-    </>
-  )
+  );
+}
+
+function MapStyleOrbitControls({
+  coord,
+  camZ,
+}: {
+  coord: EastNorth;
+  camZ: number;
+}) {
+  const ref = useRef<OrbitControlsImpl>(null);
+  const { camera } = useThree();
+  useEffect(() => {
+    const controls = ref.current;
+    if (!controls) return;
+    if (camera instanceof THREE.PerspectiveCamera) {
+      setTerrainCameraTarget(controls, camera, coord, camZ);
+    }
+  }, [camera, coord, camZ]);
+  return (
+    <OrbitControls
+      ref={ref}
+      target={[coord.east, coord.north, 0]}
+      {...mapStyleOrbitProps}
+    />
+  );
 }
 
 function TerrainR3F(opt: {coord: EastNorth, options?: TerrainOptions}) {
   const {coord, options} = {...opt};
-  const renderer = useTerrain(coord, options);
-  const dom: DomAttributes = {
-    style: { height: "100%", width: '100%' }
-  }
-  const {nodes, materials} = useGraph(renderer.scene);
-  useFrame((state, delta) => {
+  const camZ = options?.camZ ?? 3000;
+  const renderer = useTerrain(coord, { ...options, externalControls: true, camZ });
+  useGraph(renderer.scene);
+  useLayoutEffect(() => {
+    renderer.ensureTerrainInit();
+  }, [renderer]);
+  useFrame(() => {
     renderer.update();
   });
   return (
     <>
-    <OrbitControls camera={renderer.camera} />
-    <mesh position={[0, -10, -10]}>
-      <boxGeometry />
-      <meshBasicMaterial color="red" />
-    </mesh>
-    <primitive object={renderer.scene} />
+      <MapStyleOrbitControls coord={coord} camZ={camZ} />
+      <primitive object={renderer.scene} />
     </>
-  )
+  );
 }
 
 function MapLayersGUI() {
@@ -93,7 +118,7 @@ function App() {
         // kaw,
         // stonehenge
         ]}} />}
-        {r3f && <Canvas>
+        {r3f && <Canvas camera={{ up: [0, 0, 1] }}>
           <TerrainR3F coord={winchester} options={{
             defra10mDTMLayer, defraDSMLayer, osTerr50Layer, sun: inspectionLight, camZ: 3000, tracks: []
           }} />

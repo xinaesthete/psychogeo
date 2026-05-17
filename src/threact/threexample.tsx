@@ -1,6 +1,10 @@
 import * as THREE from "three";
-// import { TrackballControls } from "three/examples/jsm/controls/TrackballControls";
-import { TrackballControls } from "three-stdlib";
+import type { OrbitControls } from "three-stdlib";
+import {
+    attachDoubleClickZoom,
+    createMapStyleControls,
+} from "../camera/mapControls";
+import { onTerrainViewStateChange, type TerrainViewState } from "../camera/viewState";
 import { jp2Texture } from "../openjpegjs/jp2kloader";
 import { IThree } from "./threact";
 
@@ -11,22 +15,41 @@ export abstract class ThreactTrackballBase implements IThree {
     scene = new THREE.Scene();
     camera = new THREE.PerspectiveCamera();
     ortho = new THREE.OrthographicCamera(0, 1, 1, 0, 0, 1);
-    trackCtrl?: TrackballControls;
+    mapCtrl?: OrbitControls;
+    /** When true, camera controls are owned elsewhere (e.g. R3F MapControls). */
+    externalControls = false;
     overlay = new THREE.Scene(); //for debug graphics
     dom?: HTMLElement;
+    private detachDblClick?: () => void;
+    private detachViewState?: () => void;
+
     initThree(dom: HTMLElement) {
         this.camera.position.set(0, 1, -3);
         this.camera.lookAt(0, 0, 0);
-        this.trackCtrl = new TrackballControls(this.camera, dom);
         this.dom = dom;
+        if (!this.externalControls) {
+            this.mapCtrl = createMapStyleControls(this.camera, dom);
+            this.detachDblClick = attachDoubleClickZoom(this.mapCtrl, this.camera, dom);
+        }
         this.init();
     }
     init(): void {}
     update() {
-        if (!this.trackCtrl) this.trackCtrl = new TrackballControls(this.camera, this.dom);
-        this.trackCtrl!.update();
+        if (this.externalControls || !this.mapCtrl) return;
+        this.mapCtrl.update();
     }
     disposeThree() {
+        this.detachDblClick?.();
+        this.detachDblClick = undefined;
+        this.detachViewState?.();
+        this.detachViewState = undefined;
+        this.mapCtrl?.dispose();
+        this.mapCtrl = undefined;
+    }
+    protected watchViewState(listener: (state: TerrainViewState) => void) {
+        if (!this.mapCtrl) return;
+        this.detachViewState?.();
+        this.detachViewState = onTerrainViewStateChange(this.mapCtrl, this.camera, listener);
     }
     resize(rect: DOMRect): void {
         const w = rect.width, h = rect.height;

@@ -1,5 +1,10 @@
 import * as THREE from 'three';
 import * as JP2 from '../openjpegjs/jp2kloader';
+import {
+    configureTerrainCamera,
+    configureTerrainZoomLimits,
+    setTerrainCameraTarget,
+} from '../camera/mapControls';
 import { ThreactTrackballBase } from '../threact/threexample';
 import { EastNorth } from './Coordinates';
 import * as dsm_cat from './dsm_catalog.json' //pending rethink of API...
@@ -184,6 +189,8 @@ export interface TerrainOptions {
     tracks?: Track[];
     sun?: boolean;
     camZ: number;
+    /** R3F / external OrbitControls own the camera; skip internal map controls. */
+    externalControls?: boolean;
 }
 export interface Track {
     url: string;
@@ -203,8 +210,17 @@ export class TerrainRenderer extends ThreactTrackballBase {
     tiles: LazyTile[] = [];
     options: TerrainOptions;
     lightRig?: THREE.Group;
+    private terrainInited = false;
+
+    /** Call when using external controls (R3F) instead of Threact initThree. */
+    ensureTerrainInit(): void {
+        if (this.terrainInited) return;
+        this.terrainInited = true;
+        this.init();
+    }
     constructor(coord: EastNorth, options: TerrainOptions = defaultTerrainOptions) {
         super();
+        this.externalControls = options.externalControls ?? false;
         this.options = {
             ...defaultTerrainOptions,
             ...options,
@@ -237,22 +253,21 @@ export class TerrainRenderer extends ThreactTrackballBase {
     addAxes() {
         const ax = new THREE.AxesHelper(100);
         ax.position.set(this.coord.east, this.coord.north, 0);//this.tileProp.min_ele);
-        // ax.position = this.trackCtrl!.target
+        // ax.position = this.mapCtrl!.target
         
         this.scene.add(ax);
     }
     init() {
-        //const info = this.tileProp;
         this.camera.near = 1;
         this.camera.far = 2000000;
-        this.camera.position.x = this.coord.east;
-        this.camera.position.y = this.coord.north;// - 100;
-        this.camera.position.z = this.options.camZ;
-        // this.camera.lookAt(this.coord.east, this.coord.north, 0); //will be overriden by trackball control
-        // this.camera.quaternion._onChange(()=>{debugger});
-        (this.trackCtrl! as any).target.set(this.coord.east, this.coord.north, 0);
-        
-        //todo: change to OrbitControls with no screenspace panning?
+        const camZ = this.options.camZ;
+        if (this.mapCtrl) {
+            configureTerrainZoomLimits(this.mapCtrl, camZ);
+            setTerrainCameraTarget(this.mapCtrl, this.camera, this.coord, camZ);
+        } else {
+            configureTerrainCamera(this.camera);
+            this.camera.position.set(this.coord.east, this.coord.north, camZ);
+        }
 
         this.syncLightRig();
         

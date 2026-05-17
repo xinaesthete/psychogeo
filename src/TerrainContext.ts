@@ -19,6 +19,9 @@ export const useTerrain = (coord: EastNorth, options?: TerrainOptions) => {
             ...t.options,
             ...options,
         };
+        if (options.externalControls) {
+            t.externalControls = true;
+        }
     }
     return t;
 }
