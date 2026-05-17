@@ -10,7 +10,11 @@ import { EastNorth } from './Coordinates';
 import * as dsm_cat from './dsm_catalog.json' //pending rethink of API...
 import * as dtm_10m from './10m_dtm_catalog.json' //similarly pending rethink of API...
 import { threeGeometryFromShpZip } from './ShpProcessor';
-import { applyCustomDepth, applyCustomDepthForViewshed, tileLoadingMat } from './TileShader';
+import {
+    applyCustomDepth,
+    applyCustomDepthForViewshed,
+    getTileLoadingMaterial,
+} from './tileShaderRuntime';
 import { loadGpxGeometry } from './TrackVis';
 import { getTileMesh } from './LodUtils';
 
@@ -102,7 +106,7 @@ class LazyTile {
         obj.onBeforeRender = () => {
             this.status = TileStatus.Loading;
             parent.remove(obj);
-            const loadingMesh = new THREE.Mesh(obj.geometry, tileLoadingMat);
+            const loadingMesh = new THREE.Mesh(obj.geometry, getTileLoadingMaterial());
             loadingMesh.position.x = dx + s/2;
             loadingMesh.position.y = dy + s/2;
             loadingMesh.position.z = info.min_ele??0;
@@ -146,7 +150,7 @@ class LazyTileOS {
         obj.onBeforeRender = () => {
             this.status = TileStatus.Loading;
             parent.remove(obj);
-            const loadingMesh = new THREE.Mesh(obj.geometry, tileLoadingMat);
+            const loadingMesh = new THREE.Mesh(obj.geometry, getTileLoadingMaterial());
             loadingMesh.position.copy(obj.position);
             parent.add(loadingMesh);
             getOSDelaunayMesh(coord).then(mesh => {
@@ -424,7 +428,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
             m.receiveShadow = true;
             m.castShadow = true;
             m.position.z = -mat.displacementScale/2;
-            applyCustomDepth(m, null);
+            applyCustomDepth(m, {});
             this.scene.add(m);
         });
     }

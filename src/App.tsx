@@ -13,8 +13,14 @@ import { TerrainHost, TerrainRenderMode } from './terrain/TerrainHost';
 import { CameraViewControls } from './camera/CameraViewControls';
 import { TrackCatalogPanel } from './tracks/TrackCatalogPanel';
 import { tracksFromCatalogSelection } from './tracks/trackCatalog';
+import { TileShaderControls } from './geo/TileShaderControls';
 
-newGLContext();
+if (!import.meta.hot?.data.glInited) {
+  newGLContext();
+  if (import.meta.hot) {
+    import.meta.hot.data.glInited = true;
+  }
+}
 
 /**
  * UI / data roadmap
@@ -114,6 +120,7 @@ function App() {
         onSelectionChange={onTrackSelectionChange}
       />
       <CameraViewControls />
+      <TileShaderControls />
     </div>
   );
 }

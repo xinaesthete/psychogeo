@@ -18,8 +18,8 @@ import {
 } from '../camera/mapControls';
 import { registerCameraViewCommands } from '../camera/cameraViewCommands';
 import { EastNorth } from '../geo/Coordinates';
-import { TerrainOptions, TerrainRenderer } from '../geo/TileLoaderUK';
-import { useTerrain } from '../TerrainContext';
+import { TerrainOptions } from '../geo/TileLoaderUK';
+import { getTerrainRenderer, useTerrain } from '../TerrainContext';
 import { DomAttributes, Threact } from '../threact/threact';
 
 export type TerrainRenderMode = 'threact' | 'r3f';
@@ -34,7 +34,7 @@ function trackSelectionKey(tracks: TerrainOptions['tracks']): string {
 
 function useTerrainRenderer(coord: EastNorth, options: TerrainOptions) {
   const renderer = useMemo(
-    () => new TerrainRenderer(coord, options),
+    () => getTerrainRenderer(coord, options),
     [coord.east, coord.north],
   );
   const locationKey = `${coord.east},${coord.north}`;

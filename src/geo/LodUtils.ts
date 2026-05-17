@@ -4,7 +4,7 @@ import * as JP2 from '../openjpegjs/jp2kloader';
 import { globalUniforms } from '../threact/threact';
 import { computeTriangleGridIndices } from '../threact/threexample';
 import { DsmCatItem, getImageFilename } from './TileLoaderUK';
-import { applyCustomDepth, getTileMaterial } from './TileShader';
+import { applyCustomDepth, getTileMaterial } from './tileShaderRuntime';
 
 //BBox & BSphere centred rather than at tile origin
 const tileBSphere = new THREE.Sphere(new THREE.Vector3(0.5, 0.5, 0), 1); //nb radius is wide, but could still potentially miss hills?

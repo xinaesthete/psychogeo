@@ -6,7 +6,11 @@ function terrainCacheKey(coord: EastNorth): string {
     return `${coord.east},${coord.north}`;
 }
 
-const terrains = new Map<string, TerrainRenderer>();
+const terrains: Map<string, TerrainRenderer> =
+    import.meta.hot?.data.terrains ?? new Map<string, TerrainRenderer>();
+if (import.meta.hot) {
+    import.meta.hot.data.terrains = terrains;
+}
 
 export function getTerrainRenderer(coord: EastNorth, options?: TerrainOptions): TerrainRenderer {
     const key = terrainCacheKey(coord);
