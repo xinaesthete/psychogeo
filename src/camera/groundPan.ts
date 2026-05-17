@@ -1,11 +1,8 @@
 import * as THREE from "three";
 import type { PerspectiveCamera } from "three";
 import type { OrbitControls } from "three-stdlib";
-import {
-    getControlsReferenceDistance,
-    getSensitivityTuning,
-    viewScaleDistance,
-} from "./cameraSensitivity";
+import { getSensitivityTuning } from "./cameraSensitivity";
+import { groundDistanceAtCursor } from "./groundDistance";
 import { TERRAIN_WORLD_UP } from "./mapControls";
 
 const _right = new THREE.Vector3();
@@ -16,24 +13,40 @@ const _move = new THREE.Vector3();
 export function groundMetersPerPixel(
     camera: PerspectiveCamera,
     controls: OrbitControls,
-    viewportHeightPx: number,
+    domElement: HTMLElement,
+    clientX: number,
+    clientY: number,
 ): number {
-    const d = viewScaleDistance(camera, controls);
-    const ref = getControlsReferenceDistance(controls);
-    const { panGain } = getSensitivityTuning();
+    const g = groundDistanceAtCursor(
+        camera,
+        domElement,
+        controls,
+        clientX,
+        clientY,
+    );
     const fovRad = (camera.fov * Math.PI) / 180;
-    const base = (2 * d * Math.tan(fovRad / 2)) / Math.max(viewportHeightPx, 1);
-    return base * panGain * (d / ref);
+    const base =
+        (2 * g * Math.tan(fovRad / 2)) / Math.max(domElement.clientHeight, 1);
+    const { panGain } = getSensitivityTuning();
+    return base * panGain;
 }
 
 export function applyGroundPan(
     camera: PerspectiveCamera,
     controls: OrbitControls,
     domElement: HTMLElement,
+    clientX: number,
+    clientY: number,
     deltaX: number,
     deltaY: number,
 ): void {
-    const mpp = groundMetersPerPixel(camera, controls, domElement.clientHeight);
+    const mpp = groundMetersPerPixel(
+        camera,
+        controls,
+        domElement,
+        clientX,
+        clientY,
+    );
     _right.setFromMatrixColumn(camera.matrix, 0);
     _forward.crossVectors(TERRAIN_WORLD_UP, _right).normalize();
     _move
@@ -73,7 +86,15 @@ export function attachGroundPlanePan(
         lastX = event.clientX;
         lastY = event.clientY;
         if (dx === 0 && dy === 0) return;
-        applyGroundPan(camera, controls, domElement, dx, dy);
+        applyGroundPan(
+            camera,
+            controls,
+            domElement,
+            event.clientX,
+            event.clientY,
+            dx,
+            dy,
+        );
     };
 
     const endDrag = (event: PointerEvent) => {

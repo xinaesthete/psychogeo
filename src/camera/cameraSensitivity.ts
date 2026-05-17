@@ -11,9 +11,9 @@ export type SensitivityTuning = {
 };
 
 export const DEFAULT_SENSITIVITY: SensitivityTuning = {
-    panGain: 2,
-    zoomGain: 2,
-    power: 1.5,
+    panGain: 1,
+    zoomGain: 1,
+    power: 1,
 };
 
 let sensitivityTuning: SensitivityTuning = { ...DEFAULT_SENSITIVITY };

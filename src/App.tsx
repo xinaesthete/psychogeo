@@ -64,7 +64,7 @@ function App() {
     },
     sensitivityPower: {
       value: DEFAULT_SENSITIVITY.power,
-      min: 1,
+      min: 0.5,
       max: 3,
       step: 0.1,
       label: 'distance power',
