@@ -11,10 +11,10 @@ import * as dsm_cat from './dsm_catalog.json' //pending rethink of API...
 import * as dtm_10m from './10m_dtm_catalog.json' //similarly pending rethink of API...
 import { threeGeometryFromShpZip } from './ShpProcessor';
 import {
-    advanceContourPhase,
     applyCustomDepth,
     applyCustomDepthForViewshed,
     getTileLoadingMaterial,
+    tickTileShader,
 } from './tileShaderRuntime';
 import { loadGpxGeometry } from './TrackVis';
 import { getTileMesh } from './LodUtils';
@@ -452,7 +452,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
         });
     }
     update() {
-        advanceContourPhase();
+        tickTileShader();
         //LOD is now done with THREE.LOD, although we may benefit from a different distance function.
         //if so, we won't have a separate updateLOD() pass here.
         this.syncLightRig();

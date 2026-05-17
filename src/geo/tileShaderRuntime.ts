@@ -3,40 +3,30 @@ import * as THREE from 'three';
 /** Per-material uniform bag (per-tile refs + shared tileShaderUniforms). */
 export type TileUniformBag = Record<string, THREE.IUniform>;
 
-/** Shared terrain-shader tunables (Leva + GLSL). Same object refs on every tile. */
-export const tileShaderUniforms = {
-  /** Integrated each frame from contourSpeed so Leva tweaks do not reset animation phase. */
-  contourPhase: { value: 0 },
-  contourSpeed: { value: 3.0 },
-  contourInterval: { value: 5.0 },
-  contourEmissive: { value: new THREE.Vector3(0.3, 0.5, 0.7) },
-  majorContourInterval: { value: 10.0 },
-  majorContourEmissive: { value: new THREE.Vector3(0.8, 0.5, 0.7) },
-  heightEmissiveScale: { value: 1 / 2000 },
-  lodSat: { value: 0.8 },
-  lodVal: { value: 0.1 },
-  contourStrength: { value: 0.3 },
-} satisfies Record<string, THREE.IUniform>;
+/**
+ * Stable shared uniforms — same object identity for Leva, materials, and HMR.
+ * Keys are added by the hot-reloadable module via `ensureUniforms`; values are preserved across reloads.
+ */
+export const tileShaderUniforms: Record<string, THREE.IUniform> = {};
 
 export function mergeTileUniforms(perTile: TileUniformBag): TileUniformBag {
   return { ...tileShaderUniforms, ...perTile };
 }
 
-let lastContourAdvanceMs = 0;
-
-/** Call once per frame before terrain render (e.g. from TerrainRenderer.update). */
-export function advanceContourPhase(nowMs = performance.now()): void {
-  if (lastContourAdvanceMs > 0) {
-    const dt = Math.min((nowMs - lastContourAdvanceMs) / 1000, 0.2);
-    tileShaderUniforms.contourPhase.value +=
-      tileShaderUniforms.contourSpeed.value * dt;
-  }
-  lastContourAdvanceMs = nowMs;
-}
-
 type PatchBeforeCompile = NonNullable<THREE.Material['onBeforeCompile']>;
 
-export type TileShaderImpl = {
+export type TileShaderFrameContext = {
+  uniforms: typeof tileShaderUniforms;
+  dt: number;
+  nowMs: number;
+};
+
+/** Hot-reloadable tile shader module (see TileShader.ts). */
+export type TileShaderModule = {
+  /** Register any missing uniform keys on the stable shared bag (do not reset existing values). */
+  ensureUniforms: (shared: typeof tileShaderUniforms) => void;
+  /** Per-frame logic (contour phase, etc.) — replaced on HMR without losing uniform values. */
+  updateFrame: (ctx: TileShaderFrameContext) => void;
   patchShaderBeforeCompile: (uniforms: TileUniformBag) => PatchBeforeCompile;
   createTileLoadingMaterial: () => THREE.ShaderMaterial;
   applyCustomDepthForViewshed: (mesh: THREE.Mesh) => void;
@@ -44,14 +34,15 @@ export type TileShaderImpl = {
 
 type RegisteredEntry = {
   mat: THREE.MeshStandardMaterial;
-  uniforms: TileUniformBag;
+  perTileUniforms: TileUniformBag;
   depth?: THREE.MeshDepthMaterial;
   dist?: THREE.MeshDistanceMaterial;
 };
 
-let currentImpl: TileShaderImpl | null = null;
+let currentModule: TileShaderModule | null = null;
 let shaderGeneration = 0;
 let tileLoadingMaterial: THREE.ShaderMaterial | null = null;
+let lastTickMs = 0;
 
 const registry = new Set<RegisteredEntry>();
 
@@ -67,11 +58,32 @@ function registerEntry(entry: RegisteredEntry): void {
   registry.add(entry);
 }
 
-export function installTileShaderImpl(impl: TileShaderImpl): void {
-  currentImpl = impl;
-  tileLoadingMaterial = impl.createTileLoadingMaterial();
+/**
+ * Install or hot-reload the tile shader module: sync uniforms, refresh loading material,
+ * re-merge uniforms on all registered tiles, recompile GPU programs.
+ */
+export function installTileShaderModule(module: TileShaderModule): void {
+  currentModule = module;
+  module.ensureUniforms(tileShaderUniforms);
+  tileLoadingMaterial = module.createTileLoadingMaterial();
+  applyModuleUpdate();
+}
+
+/** Re-run after HMR when GLSL, uniform layout, or update logic changed. */
+export function applyModuleUpdate(): void {
   recompileRegisteredMaterials();
 }
+
+/** Once per frame before terrain render (Threact + R3F). Survives HMR via module delegate. */
+export function tickTileShader(nowMs = performance.now()): void {
+  if (!currentModule) return;
+  const dt = lastTickMs > 0 ? Math.min((nowMs - lastTickMs) / 1000, 0.2) : 0;
+  lastTickMs = nowMs;
+  currentModule.updateFrame({ uniforms: tileShaderUniforms, dt, nowMs });
+}
+
+/** @deprecated Use tickTileShader */
+export const advanceContourPhase = tickTileShader;
 
 export function getTileLoadingMaterial(): THREE.ShaderMaterial {
   if (!tileLoadingMaterial) {
@@ -81,19 +93,19 @@ export function getTileLoadingMaterial(): THREE.ShaderMaterial {
 }
 
 export function getTileMaterial(perTileUniforms: TileUniformBag): THREE.MeshStandardMaterial {
-  if (!currentImpl) {
+  if (!currentModule) {
     throw new Error('TileShader not installed — import ./TileShader from the app entry');
   }
   const uniforms = mergeTileUniforms(perTileUniforms);
   const mat = new THREE.MeshStandardMaterial({ flatShading: false });
-  mat.onBeforeCompile = currentImpl.patchShaderBeforeCompile(uniforms);
+  mat.onBeforeCompile = currentModule.patchShaderBeforeCompile(uniforms);
   attachCacheKey(mat);
-  registerEntry({ mat, uniforms });
+  registerEntry({ mat, perTileUniforms });
   return mat;
 }
 
 export function applyCustomDepth(mesh: THREE.Mesh, perTileUniforms: TileUniformBag): void {
-  if (!currentImpl) {
+  if (!currentModule) {
     throw new Error('TileShader not installed — import ./TileShader from the app entry');
   }
   const uniforms = mergeTileUniforms(perTileUniforms);
@@ -110,7 +122,7 @@ export function applyCustomDepth(mesh: THREE.Mesh, perTileUniforms: TileUniformB
     return;
   }
 
-  const patch = currentImpl.patchShaderBeforeCompile(uniforms);
+  const patch = currentModule.patchShaderBeforeCompile(uniforms);
   depth.onBeforeCompile = patch;
   dist.onBeforeCompile = patch;
   attachCacheKey(depth);
@@ -121,22 +133,23 @@ export function applyCustomDepth(mesh: THREE.Mesh, perTileUniforms: TileUniformB
     entry.depth = depth;
     entry.dist = dist;
   } else {
-    registerEntry({ mat: surface, uniforms, depth, dist });
+    registerEntry({ mat: surface, perTileUniforms });
   }
 }
 
 export function applyCustomDepthForViewshed(mesh: THREE.Mesh): void {
-  if (!currentImpl) {
+  if (!currentModule) {
     throw new Error('TileShader not installed — import ./TileShader from the app entry');
   }
-  currentImpl.applyCustomDepthForViewshed(mesh);
+  currentModule.applyCustomDepthForViewshed(mesh);
 }
 
 export function recompileRegisteredMaterials(): void {
-  if (!currentImpl) return;
+  if (!currentModule) return;
   shaderGeneration += 1;
   for (const entry of registry) {
-    const patch = currentImpl.patchShaderBeforeCompile(entry.uniforms);
+    const uniforms = mergeTileUniforms(entry.perTileUniforms);
+    const patch = currentModule.patchShaderBeforeCompile(uniforms);
     entry.mat.onBeforeCompile = patch;
     entry.mat.needsUpdate = true;
     attachCacheKey(entry.mat);

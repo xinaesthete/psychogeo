@@ -2,14 +2,45 @@ import * as THREE from 'three'
 import { globalUniforms } from '../threact/threact';
 import { glsl } from '../threact/threexample';
 import {
-    installTileShaderImpl,
-    type TileShaderImpl,
+    installTileShaderModule,
+    type TileShaderFrameContext,
+    type TileShaderModule,
     type TileUniformBag,
 } from './tileShaderRuntime';
 
 // stop press: https://www.donmccurdy.com/2019/03/17/three-nodematerial-introduction/
 
 type CompiledShader = Parameters<NonNullable<THREE.Material['onBeforeCompile']>>[0];
+
+function ensureUniform(
+    shared: Record<string, THREE.IUniform>,
+    key: string,
+    create: () => THREE.IUniform,
+): void {
+    if (!(key in shared)) shared[key] = create();
+}
+
+/** Add missing keys only — preserves Leva tweaks and contourPhase across HMR. */
+function ensureUniforms(shared: Record<string, THREE.IUniform>): void {
+    ensureUniform(shared, 'contourPhase', () => ({ value: 0 }));
+    ensureUniform(shared, 'contourSpeed', () => ({ value: 3.0 }));
+    ensureUniform(shared, 'contourInterval', () => ({ value: 5.0 }));
+    ensureUniform(shared, 'contourEmissive', () => ({ value: new THREE.Vector3(0.3, 0.5, 0.7) }));
+    ensureUniform(shared, 'majorContourInterval', () => ({ value: 10.0 }));
+    ensureUniform(shared, 'majorContourEmissive', () => ({ value: new THREE.Vector3(0.8, 0.5, 0.7) }));
+    ensureUniform(shared, 'heightEmissiveScale', () => ({ value: 1 / 2000 }));
+    ensureUniform(shared, 'lodSat', () => ({ value: 0.8 }));
+    ensureUniform(shared, 'lodVal', () => ({ value: 0.1 }));
+    ensureUniform(shared, 'contourStrength', () => ({ value: 0.3 }));
+}
+
+function updateFrame({ uniforms, dt }: TileShaderFrameContext): void {
+    const phase = uniforms.contourPhase;
+    const speed = uniforms.contourSpeed;
+    if (phase && speed) {
+        phase.value += speed.value * dt;
+    }
+}
 
 function createTileLoadingMaterial(): THREE.ShaderMaterial {
     return new THREE.ShaderMaterial({
@@ -306,14 +337,16 @@ function earthCurveVert(shader: CompiledShader) {
         `, shader.vertexShader, SubstitutionType.APPEND);
 }
 
-// Installed into tileShaderRuntime; module may hot-reload without invalidating the terrain stack.
-const tileShaderImpl: TileShaderImpl = {
+// Installed into tileShaderRuntime; whole module hot-reloads via installTileShaderModule.
+const tileShaderModule: TileShaderModule = {
+    ensureUniforms,
+    updateFrame,
     patchShaderBeforeCompile,
     createTileLoadingMaterial,
     applyCustomDepthForViewshed,
 };
 
-installTileShaderImpl(tileShaderImpl);
+installTileShaderModule(tileShaderModule);
 
 if (import.meta.hot) {
     import.meta.hot.accept();
