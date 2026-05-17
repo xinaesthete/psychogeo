@@ -5,6 +5,8 @@ export type TileUniformBag = Record<string, THREE.IUniform>;
 
 /** Shared terrain-shader tunables (Leva + GLSL). Same object refs on every tile. */
 export const tileShaderUniforms = {
+  /** Integrated each frame from contourSpeed so Leva tweaks do not reset animation phase. */
+  contourPhase: { value: 0 },
   contourSpeed: { value: 3.0 },
   contourInterval: { value: 5.0 },
   contourEmissive: { value: new THREE.Vector3(0.3, 0.5, 0.7) },
@@ -18,6 +20,18 @@ export const tileShaderUniforms = {
 
 export function mergeTileUniforms(perTile: TileUniformBag): TileUniformBag {
   return { ...tileShaderUniforms, ...perTile };
+}
+
+let lastContourAdvanceMs = 0;
+
+/** Call once per frame before terrain render (e.g. from TerrainRenderer.update). */
+export function advanceContourPhase(nowMs = performance.now()): void {
+  if (lastContourAdvanceMs > 0) {
+    const dt = Math.min((nowMs - lastContourAdvanceMs) / 1000, 0.2);
+    tileShaderUniforms.contourPhase.value +=
+      tileShaderUniforms.contourSpeed.value * dt;
+  }
+  lastContourAdvanceMs = nowMs;
 }
 
 type PatchBeforeCompile = NonNullable<THREE.Material['onBeforeCompile']>;

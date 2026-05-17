@@ -158,7 +158,7 @@ function patchFragmentShader(fragmentShader: string) {
     uniform float heightMin, heightMax;
     uniform float iTime;
     uniform float LOD;
-    uniform float contourSpeed;
+    uniform float contourPhase;
     uniform float contourInterval;
     uniform float contourStrength;
     uniform float majorContourInterval;
@@ -224,8 +224,8 @@ function patchFragmentShader(fragmentShader: string) {
     }
     float computeContour(float h) {
         float afwidth = length(vec2(dFdx(h), dFdy(h))) * 0.70710678118654757;
-        // contourSpeed / contourInterval from Leva; consider prefers-reduced-motion
-        h = mod(h + contourSpeed * iTime, contourInterval) / contourInterval;
+        // contourPhase advanced in JS from contourSpeed; interval from Leva
+        h = mod(h + contourPhase, contourInterval) / contourInterval;
         float sm = 0.2*afwidth;
         h = max(smoothstep(1.-sm, 1.0, h), smoothstep(sm, 0., h));
         return h;
