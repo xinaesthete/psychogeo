@@ -17,6 +17,7 @@ import {
     tickTileShader,
 } from './tileShaderRuntime';
 import { loadGpxGeometry } from './TrackVis';
+import { syncCompressionExperiment } from './compressionExperiment';
 import { getTileMesh } from './LodUtils';
 
 
@@ -191,6 +192,8 @@ export interface TerrainOptions {
     osTerr50Layer?: boolean;
     defraDSMLayer?: boolean;
     defra10mDTMLayer?: boolean;
+    /** Runtime JP2 recode + dual-height shader experiment (off by default). */
+    compressionExperimentEnabled?: boolean;
     tracks?: Track[];
     sun?: boolean;
     camZ: number;
@@ -206,6 +209,7 @@ const defaultTerrainOptions: TerrainOptions = {
     osTerr50Layer: false,
     defraDSMLayer: false,
     defra10mDTMLayer: true,
+    compressionExperimentEnabled: false,
     camZ: 15000,
     sun: true,
 };
@@ -245,6 +249,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
             initialDistance: this.options.camZ,
             referenceDistance: this.options.camZ,
         };
+        syncCompressionExperiment(!!this.options.compressionExperimentEnabled);
         if (this.terrainInited) {
             this.applyTerrainOptions();
         }
@@ -268,6 +273,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
             ...options,
             sun: options.sun ?? defaultTerrainOptions.sun,
         };
+        syncCompressionExperiment(!!this.options.compressionExperimentEnabled);
         console.table(this.options);
         this.coord = {...coord};
         this.tileProp = getTileProperties(coord);
@@ -358,6 +364,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
     }
 
     applyTerrainOptions() {
+        syncCompressionExperiment(!!this.options.compressionExperimentEnabled);
         this.syncLightRig();
         this.syncLayerVisibility();
         if (!this.markerAdded) {

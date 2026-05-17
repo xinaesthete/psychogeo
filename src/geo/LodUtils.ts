@@ -3,8 +3,12 @@ import { WebGLRenderer } from 'three';
 import * as JP2 from '../openjpegjs/jp2kloader';
 import { globalUniforms } from '../threact/threact';
 import { computeTriangleGridIndices } from '../threact/threexample';
+import {
+  isCompressionExperimentEnabled,
+  registerCompressionTile,
+} from './compressionExperiment';
 import { DsmCatItem, getImageFilename } from './TileLoaderUK';
-import { applyCustomDepth, getTileMaterial } from './tileShaderRuntime';
+import { applyCustomDepth, getTileMaterial, type TileUniformBag } from './tileShaderRuntime';
 
 //BBox & BSphere centred rather than at tile origin
 const tileBSphere = new THREE.Sphere(new THREE.Vector3(0.5, 0.5, 0), 1); //nb radius is wide, but could still potentially miss hills?
@@ -64,57 +68,56 @@ function renderMip(renderer: WebGLRenderer, texture: THREE.Texture, size: number
   return target.texture;
 }
 
-export async function getTileMesh(info: DsmCatItem, lowRes = false, lodBias = 3) {
-  //let's call this differently for a low-res layer.
-  // let info = getTileProperties(coord, lowRes) || nullInfo;
-  // if (info.mesh) return info; //!!! this breaks when more than one scene uses the same tile.
-  //// but we'll still be using a cached texture.
+export interface GetTileMeshOptions {
+  compressionExperiment?: boolean;
+}
 
+export async function getTileMesh(
+  info: DsmCatItem,
+  lowRes = false,
+  lodBias = 3,
+  meshOptions: GetTileMeshOptions = {},
+) {
   const sources = info.sources;
   const source = !sources ? info.source_filename : sources[2000] || sources[1000] || sources[500]!;
   const url = getImageFilename(source, lowRes);
   console.log("getTileMesh filename", url);
 
-  const { texture, frameInfo } = await JP2.jp2Texture(url, lowRes); //lowRes also means 'fullFloat' at the moment
-  /// or does it? 
+  const compressionOn =
+    meshOptions.compressionExperiment ?? isCompressionExperimentEnabled();
+
+  const { texture, frameInfo } = await JP2.jp2Texture(url, lowRes);
   const w = frameInfo.width, h = frameInfo.height;
   const lodObj = new GeoLOD();
   const s = lowRes ? 40960 : 1000;
-  // for now there's a weak convention that lowRes also means non-normalised data
-  // and doesn't include stats. that might change, and we should more clearly flag.
   const eleScale = lowRes ? 1 : info.max_ele! - info.min_ele!;
   lodObj.scale.set(s, s, eleScale);
   lodObj.position.z = info.min_ele ?? 0;
 
+  const uniformBags: TileUniformBag[] = [];
+
   for (let lod = 0; lod < LOD_LEVELS; lod++) {
     if (false && lod <= 3) {
-      //considering QuadTree so that when zoomed-in we can cull some parts
-      //first pass, non-recursive but splitting up first few lod levels
-      //needs more work to be useful.
       let g = new THREE.Group();
       for (let y=0; y<2; y++) {
         for (let x=0; x<2; x++) {
           const uvTransform = new THREE.Matrix3();
-          // uvTransform.translate(x/2, y/2);
-          // uvTransform.scale(0.5, 0.5);
           uvTransform.setUvTransform(0, 0, 0.5, 0.5, 0, x, y);
-          const uniforms = {
+          const uniforms: TileUniformBag = {
             heightFeild: { value: texture },
             heightMin: { value: info.min_ele ?? 0 }, heightMax: { value: info.max_ele ?? 1 },
             ...getLodUniforms(lod+1),
             uvTransform: { value: uvTransform },
             iTime: globalUniforms.iTime,
           };
-          //nb, using regular bbox will mean no culling of submeshes.
+          if (compressionOn) {
+            uniforms.heightFeildLossy = { value: texture };
+          }
+          uniformBags.push(uniforms);
           const geo = tileGeom[lod+1];
-      
           const mat = getTileMaterial(uniforms);
-          // mat.wireframe = true;
           const mesh = new THREE.Mesh(geo, mat);
           applyCustomDepth(mesh, uniforms);
-          // mesh.scale.set(1, 1, 1);
-          // mesh.position.set(x/2, y/2, 0);
-          // mesh.updateMatrix();
           mesh.castShadow = true;
           mesh.receiveShadow = true;
           g.add(mesh);
@@ -124,24 +127,26 @@ export async function getTileMesh(info: DsmCatItem, lowRes = false, lodBias = 3)
       continue;
     }
     const uvTransform = new THREE.Matrix3();
-    // uvTransform.scale(0.5, 0.5);
-    const uniforms = {
+    const uniforms: TileUniformBag = {
       heightFeild: { value: texture },
       heightMin: { value: info.min_ele ?? 0 }, heightMax: { value: info.max_ele ?? 1 },
       ...getLodUniforms(lod),
       uvTransform: { value: uvTransform },
       iTime: globalUniforms.iTime,
     };
-    const geo = tileGeom[lod]; //regardless of image geom, for now
+    if (compressionOn) {
+      uniforms.heightFeildLossy = { value: texture };
+    }
+    uniformBags.push(uniforms);
+    const geo = tileGeom[lod];
 
     const mat = getTileMaterial(uniforms);
-    // mat.wireframe = true;
     const mesh = new THREE.Mesh(geo, mat);
     if (lowRes && lod > 4) {
       const oldBeforeRender = mesh.onBeforeRender;
       mesh.onBeforeRender = (renderer) => {
-        const s = w / Math.pow(2, lod - 4);
-        uniforms.heightFeild.value = renderMip(renderer, texture, s);
+        const mipSize = w / Math.pow(2, lod - 4);
+        uniforms.heightFeild.value = renderMip(renderer, texture, mipSize);
         mesh.onBeforeRender = oldBeforeRender;
       }
     }
@@ -149,8 +154,11 @@ export async function getTileMesh(info: DsmCatItem, lowRes = false, lodBias = 3)
     mesh.castShadow = true;
     mesh.receiveShadow = true;
 
-    //lodBias is a +ve integer, higher values mean lower geometric detail
     lodObj.addLevel(mesh, Math.pow(2, lod - lodBias) * s);
+  }
+
+  if (!lowRes) {
+    registerCompressionTile(url, lowRes, uniformBags);
   }
 
   info.mesh = lodObj;
@@ -239,7 +247,7 @@ class GeoLOD extends THREE.Object3D {
     if (levels.length > 1) {
       _v1.setFromMatrixPosition(camera.matrixWorld);
       //_v2.setFromMatrixPosition(this.matrixWorld);
-      const distance = _bbox.distanceToPoint(_v1) / (camera as any).zoom;
+      const distance = _bbox.distanceToPoint(_v1) / (camera as THREE.PerspectiveCamera).zoom;
       levels[0].object.visible = true;
       let i = 1, l = levels.length;
       for (; i<l; i++) {
@@ -256,7 +264,7 @@ class GeoLOD extends THREE.Object3D {
       }
     }
   }
-  toJSON( meta: any ) {
+  toJSON( meta?: THREE.JSONMeta ) {
     const data = super.toJSON(meta);
     const objectData = data.object as THREE.Object3DJSONObject & {
       levels: { object: string; distance: number }[];

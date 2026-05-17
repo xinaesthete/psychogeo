@@ -1,0 +1,227 @@
+.CompressionAnalysisPanel {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 20;
+  width: min(22rem, calc(100vw - 2rem));
+  max-height: min(42rem, calc(100vh - 2rem));
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.65rem 0.75rem;
+  color: #e8eaed;
+  background: rgba(18, 20, 24, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  backdrop-filter: blur(8px);
+  text-align: left;
+  pointer-events: auto;
+  overflow-y: auto;
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.CompressionAnalysisPanel-header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.CompressionAnalysisPanel-title {
+  margin: 0;
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.CompressionAnalysisPanel-meta {
+  font-size: 0.7rem;
+  opacity: 0.7;
+}
+
+.CompressionAnalysisPanel-lead {
+  margin: 0;
+  opacity: 0.75;
+  font-size: 0.72rem;
+}
+
+.CompressionAnalysisPanel-row--check {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+
+.CompressionAnalysisPanel-fieldset {
+  margin: 0;
+  padding: 0.5rem 0 0;
+  border: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.CompressionAnalysisPanel-fieldset:disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.CompressionAnalysisPanel-fieldset legend {
+  font-weight: 600;
+  font-size: 0.75rem;
+  padding: 0 0 0.35rem;
+}
+
+.CompressionAnalysisPanel-hint {
+  margin: 0 0 0.5rem;
+  font-size: 0.68rem;
+  opacity: 0.6;
+}
+
+.CompressionAnalysisPanel-hint code {
+  font-size: 0.65rem;
+}
+
+.CompressionAnalysisPanel-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.5rem;
+}
+
+.CompressionAnalysisPanel-preset {
+  padding: 0.2rem 0.45rem;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.04);
+  color: inherit;
+  font: inherit;
+  font-size: 0.68rem;
+  cursor: pointer;
+}
+
+.CompressionAnalysisPanel-preset:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.CompressionAnalysisPanel-preset--active {
+  border-color: rgba(120, 180, 255, 0.5);
+  background: rgba(80, 120, 200, 0.2);
+}
+
+.CompressionAnalysisPanel-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-bottom: 0.45rem;
+  font-size: 0.72rem;
+}
+
+.CompressionAnalysisPanel-label input[type='range'] {
+  width: 100%;
+}
+
+.CompressionAnalysisPanel-qualityInput {
+  font: inherit;
+  padding: 0.25rem 0.4rem;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.35);
+  color: inherit;
+}
+
+.CompressionAnalysisPanel-primary {
+  width: 100%;
+  margin-top: 0.25rem;
+  padding: 0.45rem;
+  border: none;
+  border-radius: 6px;
+  background: rgba(90, 140, 220, 0.85);
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.CompressionAnalysisPanel-primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.CompressionAnalysisPanel-stats {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 0.5rem;
+}
+
+.CompressionAnalysisPanel-statsTitle {
+  margin: 0 0 0.4rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.CompressionAnalysisPanel-dl {
+  margin: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.CompressionAnalysisPanel-dl > div {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: 0.35rem;
+  align-items: baseline;
+}
+
+.CompressionAnalysisPanel-dl dt {
+  margin: 0;
+  opacity: 0.65;
+  font-size: 0.68rem;
+}
+
+.CompressionAnalysisPanel-dl dd {
+  margin: 0;
+  font-size: 0.72rem;
+  text-align: right;
+}
+
+.CompressionAnalysisPanel-details {
+  margin-top: 0.5rem;
+}
+
+.CompressionAnalysisPanel-details summary {
+  cursor: pointer;
+  font-size: 0.72rem;
+  opacity: 0.85;
+}
+
+.CompressionAnalysisPanel-tableWrap {
+  margin-top: 0.35rem;
+  max-height: 10rem;
+  overflow: auto;
+}
+
+.CompressionAnalysisPanel-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.65rem;
+}
+
+.CompressionAnalysisPanel-table th,
+.CompressionAnalysisPanel-table td {
+  padding: 0.2rem 0.25rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  text-align: right;
+}
+
+.CompressionAnalysisPanel-table th:first-child,
+.CompressionAnalysisPanel-table td:first-child {
+  text-align: left;
+  max-width: 5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.CompressionAnalysisPanel-table th {
+  opacity: 0.6;
+  font-weight: 500;
+}

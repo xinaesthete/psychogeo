@@ -73,6 +73,10 @@ flowchart TB
 - **Forces**: spring (edge length), repulsion, optional anchor to true geography.
 - **Coupling to terrain**: per-tile control points or shared warp texture; update each frame during playback; optional persistence of layout between sessions.
 
+## Auxiliary height channels
+
+Beyond primary DSM/DTM height tiles, the pipeline may carry **auxiliary rasters** baked offline. One candidate is the **first-return minus last-return** DSM difference: a sparse, low-bit-depth, aggressively compressed field encoding vertical structure in vegetation and built form. Unlike runtime JP2 recompression experiments (gated `compressionExperimentEnabled` in the app — synthetic loss from re-encoding the same DSM), this is real survey signal. Possible uses include approximating **partial shade**, canopy penetration, or modulating emissive/contour response without replacing the main height displacement. Format and resolution TBD; likely much coarser than 4096² full DSM. The tile loader should treat primary height and aux channels as separate optional layers behind a small provider API, not as special cases of j2c decode.
+
 ## Open questions
 
 - Deform full 4096²-equivalent mesh vs coarse warp field updated at 64²–256²?

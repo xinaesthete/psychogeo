@@ -121,31 +121,94 @@ async function decodeTex(url, fullFloat) {
     return { texData, frameInfo };
 }
 
-async function recode(url, q) {
-    const { pixelData, frameInfo } = await decodeFromURL(url);
-    const encoded = await encode(pixelData, frameInfo, q);
-    console.log(`recompressed size ${encoded.byteLength / (1024)}kb`);
-    const recoded = (await decodeData(encoded)).pixelData;
-    const texData = recoded.map(v => toHalf(v / (1<<16))); //splitBytes(recoded.pixelData);
-    return { texData, frameInfo };
+function computeHeightError(full, lossy) {
+    const n = Math.min(full.length, lossy.length);
+    if (n === 0) {
+        return {
+            pixelCount: 0,
+            identicalPixels: 0,
+            rmseRaw: 0,
+            meanAbsRaw: 0,
+            maxAbsRaw: 0,
+            rmseNorm: 0,
+            meanAbsNorm: 0,
+            maxAbsNorm: 0,
+        };
+    }
+    let sumSq = 0;
+    let sumAbs = 0;
+    let maxAbs = 0;
+    let identicalPixels = 0;
+    const scale = 1 << 16;
+    for (let i = 0; i < n; i++) {
+        const d = full[i] - lossy[i];
+        const a = Math.abs(d);
+        if (a === 0) identicalPixels += 1;
+        sumSq += d * d;
+        sumAbs += a;
+        if (a > maxAbs) maxAbs = a;
+    }
+    const rmseRaw = Math.sqrt(sumSq / n);
+    const meanAbsRaw = sumAbs / n;
+    return {
+        pixelCount: n,
+        identicalPixels,
+        rmseRaw,
+        meanAbsRaw,
+        maxAbsRaw: maxAbs,
+        rmseNorm: rmseRaw / scale,
+        meanAbsNorm: meanAbsRaw / scale,
+        maxAbsNorm: maxAbs / scale,
+    };
 }
 
-async function encode(pixelData, frameInfo, q) {    
-    //const encoder = new j.J2KEncoder();
+async function recode(url, q) {
+    const response = await fetch(url);
+    if (!response.ok) throw 'failed to fetch ' + url;
+    const encodedBitstream = new Uint8Array(await response.arrayBuffer());
+    const sourceBytes = encodedBitstream.byteLength;
+    const { pixelData, frameInfo } = await decodeData(encodedBitstream);
+    const encoded = await encode(pixelData, frameInfo, q);
+    const encodedBytes = encoded.byteLength;
+    const recoded = (await decodeData(encoded)).pixelData;
+    const heightError = computeHeightError(pixelData, recoded);
+    const texData = recoded.map(v => toHalf(v / (1 << 16)));
+    return {
+        texData,
+        frameInfo,
+        recodeStats: {
+            quality: q,
+            sourceBytes,
+            encodedBytes,
+            bytesPerPixel: encodedBytes / heightError.pixelCount,
+            sourceBytesPerPixel: sourceBytes / heightError.pixelCount,
+            compressionVsSource: sourceBytes > 0 ? encodedBytes / sourceBytes : 0,
+            width: frameInfo.width,
+            height: frameInfo.height,
+            ...heightError,
+        },
+    };
+}
+
+async function encode(pixelData, frameInfo, q) {
     const uncompressedBuffer = encoder.getDecodedBuffer(frameInfo);
-    //uncompressedBuffer.set(pixelData); // why twice as long? and 8bit? with 2nd half all 0s...
     const pixelData_8 = new Uint8Array(pixelData.buffer, pixelData.byteOffset, pixelData.byteLength);
-    uncompressedBuffer.set(pixelData_8); // why twice as long? and 8bit? with 2nd half all 0s...
+    uncompressedBuffer.set(pixelData_8);
 
-    const lossless = false;
-    encoder.setQuality(lossless, q);
-
-    // encoder.setCompressionRatio(0, q); // not in opnjph.js, was in openjpegwasm
+    encoder.setQuality(false, q);
     encoder.setDecompositions(8);
-    // encoder.setProgressionOrder(0);
 
-    encoder.encode();
-    return encoder.getEncodedBuffer();
+    try {
+        encoder.encode();
+    } catch (e) {
+        const detail = e instanceof Error ? e.message : String(e);
+        throw new Error(`HTJ2K encode failed at q=${q}: ${detail}`);
+    }
+    const encoded = encoder.getEncodedBuffer();
+    if (!encoded || encoded.byteLength === 0) {
+        throw new Error(`HTJ2K encode produced empty bitstream at q=${q}`);
+    }
+    return encoded;
 }
 
 onmessage = async m => {
@@ -163,6 +226,7 @@ onmessage = async m => {
                 throw new Error(`texture_worker expects {cmd: "tex"|"recode", url: string, fullFloat: boolean}`);
         }
     } catch (error) {
-        postMessage(`error ${error} caught processing texture_worker message ${JSON.stringify(m.data)}`);
+        const detail = error instanceof Error ? error.message : String(error);
+        postMessage(`error ${detail} (message ${JSON.stringify(m.data)})`);
     }
 }
