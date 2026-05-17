@@ -5,6 +5,7 @@ import {
   DEFAULT_SENSITIVITY,
   setSensitivityTuning,
 } from './camera/cameraSensitivity';
+import { DEFAULT_PAN_INERTIA, setPanInertiaTuning } from './camera/panInertia';
 import { DEFAULT_SMOOTH_ZOOM, setSmoothZoomTuning } from './camera/smoothZoom';
 import { convertWgsToOSGB, EastNorth } from './geo/Coordinates';
 import { newGLContext, TerrainOptions, Track } from './geo/TileLoaderUK';
@@ -34,7 +35,7 @@ function App() {
   const {defra10mDTMLayer, defraDSMLayer, osTerr50Layer, inspectionLight, r3f} = useControls({
     defra10mDTMLayer: false, defraDSMLayer: true, osTerr50Layer: false, inspectionLight: true, r3f: false
   });
-  const {zoomSpeed, zoomSmoothMs, panGain, zoomGain} = useControls('Camera', {
+  const {zoomSpeed, zoomSmoothMs, panGain, zoomGain, panDamping} = useControls('Camera', {
     zoomSpeed: {
       value: DEFAULT_SMOOTH_ZOOM.speed,
       min: 0.005,
@@ -63,11 +64,19 @@ function App() {
       step: 0.5,
       label: 'zoom gain',
     },
+    panDamping: {
+      value: DEFAULT_PAN_INERTIA.damping,
+      min: 0,
+      max: 24,
+      step: 0.5,
+      label: 'pan damping',
+    },
   });
   useEffect(() => {
     setSmoothZoomTuning({speed: zoomSpeed, smoothMs: zoomSmoothMs});
     setSensitivityTuning({panGain, zoomGain});
-  }, [zoomSpeed, zoomSmoothMs, panGain, zoomGain]);
+    setPanInertiaTuning({damping: panDamping});
+  }, [zoomSpeed, zoomSmoothMs, panGain, zoomGain, panDamping]);
 
   const winchester = useMemo(() => DEV_LOCATIONS.winchester(), []);
 

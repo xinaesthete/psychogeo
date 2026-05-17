@@ -9,6 +9,7 @@ import {
 import type { EastNorth } from "../geo/Coordinates";
 import { getSensitivityTuning, setControlsReferenceDistance } from "./cameraSensitivity";
 import { TERRAIN_WORLD_UP, configureTerrainCamera } from "./mapControls";
+import { getPanInertiaTuning } from "./panInertia";
 import {
     DEFAULT_SMOOTH_ZOOM,
     getSmoothZoomTuning,
@@ -86,6 +87,14 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
     private wheelCursorY = 0;
     private wheelIdleTimer: ReturnType<typeof setTimeout> | undefined;
     private ignoreWheelUntil = 0;
+
+    private panInertiaActive = false;
+    private panVelX = 0;
+    private panVelY = 0;
+    private lastPanClientX = 0;
+    private lastPanClientY = 0;
+    private lastPointerMoveTime = 0;
+    private lastUpdateTime = 0;
 
     constructor(
         camera: PerspectiveCamera,
@@ -193,10 +202,21 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
     }
 
     update(): boolean {
-        if (this.smoothing) {
-            return this.tickSmoothZoom();
+        const now = performance.now();
+        const dtSec =
+            this.lastUpdateTime > 0
+                ? Math.min((now - this.lastUpdateTime) / 1000, 0.05)
+                : 0;
+        this.lastUpdateTime = now;
+
+        let changed = false;
+        if (this.panInertiaActive && dtSec > 0) {
+            changed = this.tickPanInertia(dtSec);
         }
-        return false;
+        if (this.smoothing) {
+            changed = this.tickSmoothZoom() || changed;
+        }
+        return changed;
     }
 
     dispose(): void {
@@ -282,8 +302,15 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
             return;
         }
 
+        this.stopPanInertia();
+        this.panVelX = 0;
+        this.panVelY = 0;
+        this.lastPointerMoveTime = performance.now();
+
         this.lastPointerX = event.clientX;
         this.lastPointerY = event.clientY;
+        this.lastPanClientX = event.clientX;
+        this.lastPanClientY = event.clientY;
         this.domElement.setPointerCapture(event.pointerId);
         this.dispatchEvent({ type: "start" });
     };
@@ -297,6 +324,9 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
         if (dx === 0 && dy === 0) return;
 
         if (this.dragMode === "pan") {
+            this.trackPanVelocity(dx, dy);
+            this.lastPanClientX = event.clientX;
+            this.lastPanClientY = event.clientY;
             this.panPixels(dx, dy, event.clientX, event.clientY);
         } else if (this.dragMode === "rotate") {
             this.rotatePixels(dx, dy);
@@ -313,8 +343,11 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
 
     private onPointerUp = (event: PointerEvent) => {
         if (!this.dragMode) return;
-        if (this.dragMode === "rotate") {
+        const mode = this.dragMode;
+        if (mode === "rotate") {
             this.commitOrbitAboutPivot();
+        } else if (mode === "pan") {
+            this.beginPanInertiaIfNeeded();
         }
         this.dragMode = null;
         if (this.domElement.hasPointerCapture(event.pointerId)) {
@@ -327,6 +360,7 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
         event.preventDefault();
         event.stopPropagation();
         if (performance.now() < this.ignoreWheelUntil) return;
+        this.stopPanInertia();
 
         this.wheelCursorX = event.clientX;
         this.wheelCursorY = event.clientY;
@@ -381,6 +415,65 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
             this.ignoreWheelUntil =
                 performance.now() + tuning.wheelCooldownMs;
         }, tuning.wheelIdleMs);
+    }
+
+    private stopPanInertia(): void {
+        this.panInertiaActive = false;
+        this.panVelX = 0;
+        this.panVelY = 0;
+    }
+
+    private trackPanVelocity(dx: number, dy: number): void {
+        const now = performance.now();
+        const dtSec = (now - this.lastPointerMoveTime) / 1000;
+        this.lastPointerMoveTime = now;
+        if (dtSec <= 0 || dtSec > 0.25) return;
+
+        const instX = dx / dtSec;
+        const instY = dy / dtSec;
+        const { velocitySmoothMs } = getPanInertiaTuning();
+        const alpha = 1 - Math.exp(-dtSec / (velocitySmoothMs / 1000));
+        this.panVelX += (instX - this.panVelX) * alpha;
+        this.panVelY += (instY - this.panVelY) * alpha;
+    }
+
+    private beginPanInertiaIfNeeded(): void {
+        const { damping, minSpeedPxPerSec } = getPanInertiaTuning();
+        if (damping <= 0) {
+            this.stopPanInertia();
+            return;
+        }
+        const speed = Math.hypot(this.panVelX, this.panVelY);
+        if (speed < minSpeedPxPerSec) {
+            this.stopPanInertia();
+            return;
+        }
+        this.panInertiaActive = true;
+        this.lastUpdateTime = performance.now();
+    }
+
+    private tickPanInertia(dtSec: number): boolean {
+        const dx = this.panVelX * dtSec;
+        const dy = this.panVelY * dtSec;
+        if (dx !== 0 || dy !== 0) {
+            this.panPixels(
+                dx,
+                dy,
+                this.lastPanClientX,
+                this.lastPanClientY,
+            );
+            this.dispatchChange();
+        }
+
+        const { damping, minSpeedPxPerSec } = getPanInertiaTuning();
+        const decay = Math.exp(-damping * dtSec);
+        this.panVelX *= decay;
+        this.panVelY *= decay;
+
+        if (Math.hypot(this.panVelX, this.panVelY) < minSpeedPxPerSec) {
+            this.stopPanInertia();
+        }
+        return true;
     }
 
     private tickSmoothZoom(): boolean {
