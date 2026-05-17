@@ -211,11 +211,38 @@ export class TerrainRenderer extends ThreactTrackballBase {
     options: TerrainOptions;
     lightRig?: THREE.Group;
     private terrainInited = false;
+    private markerAdded = false;
+    private dsmTilesLoaded = false;
+    private dtmTilesLoaded = false;
+    private osTerr50Loaded = false;
+
+    isTerrainInited(): boolean {
+        return this.terrainInited;
+    }
+
+    /** Merge Leva / React options without resetting the camera. */
+    updateOptions(patch: Partial<TerrainOptions>): void {
+        this.options = {
+            ...this.options,
+            ...patch,
+            camZ: patch.camZ ?? this.options.camZ,
+            sun: patch.sun ?? this.options.sun,
+        };
+        if (patch.externalControls) {
+            this.externalControls = true;
+        }
+        this.mapControlsOptions = {
+            initialDistance: this.options.camZ,
+            referenceDistance: this.options.camZ,
+        };
+        if (this.terrainInited) {
+            this.applyTerrainOptions();
+        }
+    }
 
     /** Call when using external controls (R3F) instead of Threact initThree. */
     ensureTerrainInit(): void {
         if (this.terrainInited) return;
-        this.terrainInited = true;
         this.init();
     }
     constructor(coord: EastNorth, options: TerrainOptions = defaultTerrainOptions) {
@@ -262,6 +289,12 @@ export class TerrainRenderer extends ThreactTrackballBase {
         this.scene.add(ax);
     }
     init() {
+        this.resetCamera();
+        this.applyTerrainOptions();
+        this.terrainInited = true;
+    }
+
+    resetCamera() {
         this.camera.near = 1;
         this.camera.far = 2000000;
         const camZ = this.options.camZ;
@@ -272,15 +305,30 @@ export class TerrainRenderer extends ThreactTrackballBase {
             configureTerrainCamera(this.camera);
             this.camera.position.set(this.coord.east, this.coord.north, camZ);
         }
+    }
 
+    applyTerrainOptions() {
         this.syncLightRig();
-        
-        this.addMarker();
-        if (onlyDebugGeometry) this.planeBaseTest();
-        //this.shpTest();
-        if (this.options.osTerr50Layer) this.bigShpTest();
-        if (this.options.defraDSMLayer && !onlyDebugGeometry) this.makeTiles().then(v => {console.log('finished making tiles')});
-        if (this.options.defra10mDTMLayer) this.makeTiles(true).then(v => {console.log('finished making low-res tiles')});
+        if (!this.markerAdded) {
+            this.addMarker();
+            this.markerAdded = true;
+        }
+        if (onlyDebugGeometry) {
+            this.planeBaseTest();
+            return;
+        }
+        if (this.options.osTerr50Layer && !this.osTerr50Loaded) {
+            this.osTerr50Loaded = true;
+            void this.bigShpTest();
+        }
+        if (this.options.defraDSMLayer && !this.dsmTilesLoaded) {
+            this.dsmTilesLoaded = true;
+            void this.makeTiles().then(() => console.log('finished making tiles'));
+        }
+        if (this.options.defra10mDTMLayer && !this.dtmTilesLoaded) {
+            this.dtmTilesLoaded = true;
+            void this.makeTiles(true).then(() => console.log('finished making low-res tiles'));
+        }
     }
     private createLightRig() {
         const rig = new THREE.Group();

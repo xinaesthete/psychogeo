@@ -1,27 +1,26 @@
 import { useThree } from "@react-three/fiber";
-import { createContext } from "react";
 import { EastNorth } from "./geo/Coordinates";
 import { TerrainOptions, TerrainRenderer } from "./geo/TileLoaderUK";
 
-const terrains = new Map<EastNorth, TerrainRenderer>();
-export const useTerrain = (coord: EastNorth, options?: TerrainOptions) => {
-    const { gl } = useThree();
-    // coord should be id.
-    // Why is this failing to build?
-    if (!terrains.has(coord)) {
-        terrains.set(coord, new TerrainRenderer(coord, options));
-    }
-    const t = terrains.get(coord)!;
-    t.dom = gl.domElement;
-    // update options if provided
-    if (options) {
-        t.options = {
-            ...t.options,
-            ...options,
-        };
-        if (options.externalControls) {
-            t.externalControls = true;
-        }
+function terrainCacheKey(coord: EastNorth): string {
+    return `${coord.east},${coord.north}`;
+}
+
+const terrains = new Map<string, TerrainRenderer>();
+
+export function getTerrainRenderer(coord: EastNorth, options?: TerrainOptions): TerrainRenderer {
+    const key = terrainCacheKey(coord);
+    let t = terrains.get(key);
+    if (!t) {
+        t = new TerrainRenderer(coord, options);
+        terrains.set(key, t);
     }
     return t;
 }
+
+export const useTerrain = (coord: EastNorth, options?: TerrainOptions) => {
+    const { gl } = useThree();
+    const t = getTerrainRenderer(coord, options);
+    t.dom = gl.domElement;
+    return t;
+};
