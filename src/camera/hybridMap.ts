@@ -3,7 +3,7 @@
  *
  * Integration sketch (no runtime deps here):
  * 1. Mount `<Map>` from react-map-gl with `viewState` / `onMove`.
- * 2. On move: `wgsViewStateToTerrain(wgs)` → `applyTerrainViewState(camera, controls, terrain)`.
+ * 2. On move: `wgsViewStateToTerrain(wgs)` → `applyTerrainViewState(controls, terrain)`.
  * 3. On Three `controls` change: `terrainViewStateToWgs(state)` → update map `viewState`.
  * 4. Add deck.gl layers via `MapboxOverlay` or `<DeckGL>` for GPX, tile bounds, labels.
  *

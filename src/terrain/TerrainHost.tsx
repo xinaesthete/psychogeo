@@ -8,16 +8,15 @@
  * - Prefer consolidating controls in mapControls.ts; avoid duplicating init paths.
  */
 import { Canvas, useFrame, useGraph, useThree } from '@react-three/fiber';
-import { OrbitControls } from '@react-three/drei';
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
-import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
+import { MapCameraControls } from '../camera/MapCameraControls';
 import {
   configureTerrainZoomLimits,
-  enhanceMapStyleControls,
-  mapStyleOrbitProps,
+  createMapStyleControls,
   setTerrainCameraTarget,
 } from '../camera/mapControls';
+import { registerCameraViewCommands } from '../camera/cameraViewCommands';
 import { EastNorth } from '../geo/Coordinates';
 import { TerrainOptions, TerrainRenderer } from '../geo/TileLoaderUK';
 import { useTerrain } from '../TerrainContext';
@@ -57,44 +56,39 @@ function useTerrainRenderer(coord: EastNorth, options: TerrainOptions) {
   return { renderer, locationKey };
 }
 
-function MapStyleOrbitControls({
+function MapCameraControlsR3F({
   coord,
   camZ,
 }: {
   coord: EastNorth;
   camZ: number;
 }) {
-  const ref = useRef<OrbitControlsImpl>(null);
+  const controlsRef = useRef<MapCameraControls | null>(null);
   const { camera, gl } = useThree();
-  const enhancedRef = useRef(false);
 
   useEffect(() => {
-    const controls = ref.current;
-    if (!controls || !(camera instanceof THREE.PerspectiveCamera) || enhancedRef.current) {
-      return;
-    }
-    enhancedRef.current = true;
-    const detach = enhanceMapStyleControls(controls, camera, gl.domElement, camZ);
-    return () => {
-      enhancedRef.current = false;
-      detach();
-    };
-  }, [camera, gl, camZ]);
-
-  useEffect(() => {
-    const controls = ref.current;
-    if (!controls || !(camera instanceof THREE.PerspectiveCamera)) return;
+    if (!(camera instanceof THREE.PerspectiveCamera)) return;
+    const controls = createMapStyleControls(camera, gl.domElement, {
+      referenceDistance: camZ,
+    });
     configureTerrainZoomLimits(controls, camZ);
     setTerrainCameraTarget(controls, camera, coord, camZ);
-  }, [camera, coord.east, coord.north, camZ]);
+    controlsRef.current = controls;
+    registerCameraViewCommands({
+      resetNorthUpOblique: () => controls.resetNorthUpOblique(),
+    });
+    return () => {
+      controlsRef.current = null;
+      registerCameraViewCommands(null);
+      controls.dispose();
+    };
+  }, [camera, gl, camZ, coord.east, coord.north]);
 
-  return (
-    <OrbitControls
-      ref={ref}
-      target={[coord.east, coord.north, 0]}
-      {...mapStyleOrbitProps}
-    />
-  );
+  useFrame(() => {
+    controlsRef.current?.update();
+  });
+
+  return null;
 }
 
 function TerrainR3FScene({
@@ -127,7 +121,7 @@ function TerrainR3FScene({
   });
   return (
     <>
-      <MapStyleOrbitControls coord={coord} camZ={camZ} />
+      <MapCameraControlsR3F coord={coord} camZ={camZ} />
       <primitive object={renderer.scene} />
     </>
   );
@@ -159,7 +153,14 @@ export function TerrainHost({
 }) {
   if (renderMode === 'r3f') {
     return (
-      <Canvas camera={{ up: [0, 0, 1] }}>
+      <Canvas
+        camera={{
+          up: [0, 0, 1],
+          near: 1,
+          far: 2_000_000,
+          fov: 50,
+        }}
+      >
         <TerrainR3FScene coord={coord} options={options} />
       </Canvas>
     );

@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import * as JP2 from '../openjpegjs/jp2kloader';
 import {
-    configureTerrainCamera,
     configureTerrainZoomLimits,
     setTerrainCameraTarget,
 } from '../camera/mapControls';
+import { OBLIQUE_PITCH, applySphericalToCamera } from '../camera/viewState';
 import { ThreactTrackballBase } from '../threact/threexample';
 import { EastNorth } from './Coordinates';
 import * as dsm_cat from './dsm_catalog.json' //pending rethink of API...
@@ -347,8 +347,8 @@ export class TerrainRenderer extends ThreactTrackballBase {
             configureTerrainZoomLimits(this.mapCtrl, camZ);
             setTerrainCameraTarget(this.mapCtrl, this.camera, this.coord, camZ);
         } else {
-            configureTerrainCamera(this.camera);
-            this.camera.position.set(this.coord.east, this.coord.north, camZ);
+            const target = new THREE.Vector3(this.coord.east, this.coord.north, 0);
+            applySphericalToCamera(this.camera, target, 0, OBLIQUE_PITCH, camZ);
         }
     }
 

@@ -1,11 +1,14 @@
 import * as THREE from "three";
-import type { OrbitControls } from "three-stdlib";
 import {
-    attachDoubleClickZoom,
     createMapStyleControls,
     type MapControlsOptions,
 } from "../camera/mapControls";
-import { onTerrainViewStateChange, type TerrainViewState } from "../camera/viewState";
+import type { MapCameraControls } from "../camera/MapCameraControls";
+import { registerCameraViewCommands } from "../camera/cameraViewCommands";
+import {
+    onTerrainViewStateChange,
+    type TerrainViewState,
+} from "../camera/viewState";
 import { jp2Texture } from "../openjpegjs/jp2kloader";
 import { IThree } from "./threact";
 
@@ -16,13 +19,12 @@ export abstract class ThreactTrackballBase implements IThree {
     scene = new THREE.Scene();
     camera = new THREE.PerspectiveCamera();
     ortho = new THREE.OrthographicCamera(0, 1, 1, 0, 0, 1);
-    mapCtrl?: OrbitControls;
-    /** When true, camera controls are owned elsewhere (e.g. R3F MapControls). */
+    mapCtrl?: MapCameraControls;
+    /** When true, camera controls are owned elsewhere (e.g. R3F). */
     externalControls = false;
     protected mapControlsOptions?: MapControlsOptions;
     overlay = new THREE.Scene(); //for debug graphics
     dom?: HTMLElement;
-    private detachDblClick?: () => void;
     private detachViewState?: () => void;
 
     initThree(dom: HTMLElement) {
@@ -30,8 +32,16 @@ export abstract class ThreactTrackballBase implements IThree {
         this.camera.lookAt(0, 0, 0);
         this.dom = dom;
         if (!this.externalControls) {
-            this.mapCtrl = createMapStyleControls(this.camera, dom, this.mapControlsOptions);
-            this.detachDblClick = attachDoubleClickZoom(this.mapCtrl, this.camera, dom);
+            this.mapCtrl = createMapStyleControls(
+                this.camera,
+                dom,
+                this.mapControlsOptions,
+            );
+            registerCameraViewCommands({
+                resetNorthUpOblique: () => {
+                    this.mapCtrl?.resetNorthUpOblique();
+                },
+            });
         }
         this.init();
     }
@@ -41,8 +51,7 @@ export abstract class ThreactTrackballBase implements IThree {
         this.mapCtrl.update();
     }
     disposeThree() {
-        this.detachDblClick?.();
-        this.detachDblClick = undefined;
+        registerCameraViewCommands(null);
         this.detachViewState?.();
         this.detachViewState = undefined;
         this.mapCtrl?.dispose();
@@ -51,7 +60,7 @@ export abstract class ThreactTrackballBase implements IThree {
     protected watchViewState(listener: (state: TerrainViewState) => void) {
         if (!this.mapCtrl) return;
         this.detachViewState?.();
-        this.detachViewState = onTerrainViewStateChange(this.mapCtrl, this.camera, listener);
+        this.detachViewState = onTerrainViewStateChange(this.mapCtrl, listener);
     }
     resize(rect: DOMRect): void {
         const w = rect.width, h = rect.height;
@@ -160,26 +169,3 @@ function computeTriangleGridIndicesX(gridSizeX: number, gridSizeY: number) {
     }
     return new THREE.BufferAttribute(new Uint32Array(d), 1);
 }
-
-
-
-// export class VidFeedbackTest extends ThreactTrackballBase {
-//     rt: WebGLRenderTarget[];
-//     constructor() {
-//         super();
-//         this.rt = [];
-        
-//     }
-//     private makeRT() {
-//         return new THREE.WebGLRenderTarget(256, 256);
-//     }
-//     init() {
-
-//     }
-//     update() {
-//         super.update();
-//         const rtBak = renderer.getRenderTarget();
-
-//         renderer.setRenderTarget(rtBak);
-//     }
-// }

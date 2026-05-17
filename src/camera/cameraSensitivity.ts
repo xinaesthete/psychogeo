@@ -1,7 +1,7 @@
 import type { PerspectiveCamera } from "three";
-import type { OrbitControls } from "three-stdlib";
+import type { MapCameraControls } from "./MapCameraControls";
 
-const referenceDistanceByControls = new WeakMap<OrbitControls, number>();
+const referenceDistanceByControls = new WeakMap<MapCameraControls, number>();
 
 export type SensitivityTuning = {
     panGain: number;
@@ -27,13 +27,13 @@ export function setSensitivityTuning(partial: Partial<SensitivityTuning>): void 
 }
 
 export function setControlsReferenceDistance(
-    controls: OrbitControls,
+    controls: MapCameraControls,
     referenceDistance: number,
 ): void {
     referenceDistanceByControls.set(controls, referenceDistance);
 }
 
-export function getControlsReferenceDistance(controls: OrbitControls): number {
+export function getControlsReferenceDistance(controls: MapCameraControls): number {
     const ref = referenceDistanceByControls.get(controls);
     return ref !== undefined && ref > 0 ? ref : 3000;
 }
@@ -41,18 +41,17 @@ export function getControlsReferenceDistance(controls: OrbitControls): number {
 /** Camera→target distance (viewing range in Z-up OSGB). */
 export function viewScaleDistance(
     camera: PerspectiveCamera,
-    controls: OrbitControls,
+    target: { x: number; y: number; z: number },
 ): number {
-    const t = controls.target;
-    const dx = camera.position.x - t.x;
-    const dy = camera.position.y - t.y;
-    const dz = camera.position.z - t.z;
+    const dx = camera.position.x - target.x;
+    const dy = camera.position.y - target.y;
+    const dz = camera.position.z - target.z;
     return Math.max(Math.hypot(dx, dy, dz), 1);
 }
 
 export function zoomSensitivityMultiplier(
     groundDistance: number,
-    controls: OrbitControls,
+    controls: MapCameraControls,
 ): number {
     const ref = getControlsReferenceDistance(controls);
     const r = Math.max(groundDistance, 1) / ref;
@@ -63,7 +62,7 @@ export function zoomSensitivityMultiplier(
 export function dampWheelScaleForAltitude(
     scale: number,
     groundDistance: number,
-    controls: OrbitControls,
+    controls: MapCameraControls,
 ): number {
     const ref = getControlsReferenceDistance(controls);
     if (groundDistance >= ref) return scale;

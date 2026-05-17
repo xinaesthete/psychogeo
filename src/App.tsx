@@ -9,6 +9,7 @@ import { DEFAULT_SMOOTH_ZOOM, setSmoothZoomTuning } from './camera/smoothZoom';
 import { convertWgsToOSGB, EastNorth } from './geo/Coordinates';
 import { newGLContext, TerrainOptions, Track } from './geo/TileLoaderUK';
 import { TerrainHost, TerrainRenderMode } from './terrain/TerrainHost';
+import { CameraViewControls } from './camera/CameraViewControls';
 import { TrackCatalogPanel } from './tracks/TrackCatalogPanel';
 import { tracksFromCatalogSelection } from './tracks/trackCatalog';
 
@@ -103,6 +104,7 @@ function App() {
         selectedIds={selectedTrackIds}
         onSelectionChange={onTrackSelectionChange}
       />
+      <CameraViewControls />
     </div>
   );
 }
