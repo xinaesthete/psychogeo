@@ -43,6 +43,18 @@ const _axis = new Vector3();
 
 type DragMode = "pan" | "rotate" | "dolly" | null;
 
+type ActivePointer = { x: number; y: number };
+
+/** Ignore pinch when finger span is below this (px). */
+const MIN_PINCH_SPAN_PX = 24;
+
+function normalizeAngleDelta(delta: number): number {
+    let d = delta;
+    while (d > Math.PI) d -= 2 * Math.PI;
+    while (d < -Math.PI) d += 2 * Math.PI;
+    return d;
+}
+
 type MapCameraControlsEventMap = {
     change: object;
     start: object;
@@ -52,6 +64,7 @@ type MapCameraControlsEventMap = {
 /**
  * Map-style terrain camera: ground pan, cursor-anchored rotate and zoom.
  * Single spherical view state (bearing, pitch, distance) about a ground target.
+ * Two-finger touch: horizontal pan, vertical pitch, pinch zoom, twist bearing.
  */
 export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap> {
     readonly target = new Vector3();
@@ -96,6 +109,13 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
     private lastPointerMoveTime = 0;
     private lastUpdateTime = 0;
 
+    private readonly activePointers = new Map<number, ActivePointer>();
+    private touchGesture = false;
+    private gestureSpan = 1;
+    private gestureAngle = 0;
+    private gestureMidX = 0;
+    private gestureMidY = 0;
+
     constructor(
         camera: PerspectiveCamera,
         domElement: HTMLElement,
@@ -114,6 +134,7 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
         }
 
         this.applyCameraFromState();
+        this.domElement.style.touchAction = "none";
         this.bindListeners();
     }
 
@@ -268,37 +289,26 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
     };
 
     private onPointerDown = (event: PointerEvent) => {
+        if (event.pointerType === "touch") {
+            event.preventDefault();
+        }
+
+        this.setActivePointer(event.pointerId, event.clientX, event.clientY);
+
+        if (this.activePointers.size >= 2) {
+            this.beginTouchGesture();
+            return;
+        }
+
         if (event.button === 0) {
             this.dragMode = "pan";
         } else if (event.button === 1) {
             this.dragMode = "dolly";
         } else if (event.button === 2) {
             this.dragMode = "rotate";
-            const anchor = this.anchorOnGround(event.clientX, event.clientY);
-            if (anchor) {
-                this.rotatePivot.copy(anchor);
-            } else {
-                this.rotatePivot.copy(this.target);
-            }
-            this.target.copy(this.rotatePivot);
-            this.orbitRadius = Math.max(
-                this.camera.position.distanceTo(this.rotatePivot),
-                this.minDistance,
-            );
-            this.orbitStartOffset.subVectors(
-                this.camera.position,
-                this.rotatePivot,
-            );
-            _viewDir.set(0, 0, -1).transformDirection(this.camera.matrix);
-            this.orbitStartViewDir.copy(_viewDir);
-            const s = readSphericalFromCamera(this.camera, this.rotatePivot);
-            this.orbitStartBearing = s.bearing;
-            this.bearing = s.bearing;
-            this.pitch = s.pitch;
-            this.distance = this.orbitRadius;
-            this.orbitAz = 0;
-            this.orbitEl = 0;
+            this.initOrbitAboutScreenPoint(event.clientX, event.clientY);
         } else {
+            this.activePointers.delete(event.pointerId);
             return;
         }
 
@@ -316,6 +326,29 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
     };
 
     private onPointerMove = (event: PointerEvent) => {
+        if (event.pointerType === "touch") {
+            event.preventDefault();
+        }
+
+        if (this.activePointers.has(event.pointerId)) {
+            this.setActivePointer(
+                event.pointerId,
+                event.clientX,
+                event.clientY,
+            );
+        }
+
+        if (this.touchGesture) {
+            this.handleTouchGestureMove();
+            return;
+        }
+
+        if (this.activePointers.size >= 2) {
+            this.beginTouchGesture();
+            this.handleTouchGestureMove();
+            return;
+        }
+
         if (!this.dragMode) return;
         const dx = event.clientX - this.lastPointerX;
         const dy = event.clientY - this.lastPointerY;
@@ -342,6 +375,22 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
     };
 
     private onPointerUp = (event: PointerEvent) => {
+        if (event.pointerType === "touch") {
+            event.preventDefault();
+        }
+
+        this.activePointers.delete(event.pointerId);
+
+        if (this.touchGesture) {
+            if (this.activePointers.size < 2) {
+                this.endTouchGesture();
+            }
+            if (this.domElement.hasPointerCapture(event.pointerId)) {
+                this.domElement.releasePointerCapture(event.pointerId);
+            }
+            return;
+        }
+
         if (!this.dragMode) return;
         const mode = this.dragMode;
         if (mode === "rotate") {
@@ -513,6 +562,34 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
         this.commitOrbitAboutPivot();
     }
 
+    /** Ground-anchored orbit pivot for right-drag and two-finger pitch/twist. */
+    private initOrbitAboutScreenPoint(clientX: number, clientY: number): void {
+        const anchor = this.anchorOnGround(clientX, clientY);
+        if (anchor) {
+            this.rotatePivot.copy(anchor);
+        } else {
+            this.rotatePivot.copy(this.target);
+        }
+        this.target.copy(this.rotatePivot);
+        this.orbitRadius = Math.max(
+            this.camera.position.distanceTo(this.rotatePivot),
+            this.minDistance,
+        );
+        this.orbitStartOffset.subVectors(
+            this.camera.position,
+            this.rotatePivot,
+        );
+        _viewDir.set(0, 0, -1).transformDirection(this.camera.matrix);
+        this.orbitStartViewDir.copy(_viewDir);
+        const s = readSphericalFromCamera(this.camera, this.rotatePivot);
+        this.orbitStartBearing = s.bearing;
+        this.bearing = s.bearing;
+        this.pitch = s.pitch;
+        this.distance = this.orbitRadius;
+        this.orbitAz = 0;
+        this.orbitEl = 0;
+    }
+
     /**
      * Orbit about the pivot: bearing around world Z, pitch around the view-right
      * axis (perpendicular to view and world up) so tilt feels anchored to the ray
@@ -578,6 +655,129 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
         const s = readSphericalFromCamera(this.camera, this.rotatePivot);
         this.bearing = s.bearing;
         this.pitch = s.pitch;
+    }
+
+    private setActivePointer(
+        pointerId: number,
+        clientX: number,
+        clientY: number,
+    ): void {
+        this.activePointers.set(pointerId, { x: clientX, y: clientY });
+    }
+
+    private touchMetrics(): {
+        midX: number;
+        midY: number;
+        span: number;
+        angle: number;
+    } | null {
+        if (this.activePointers.size < 2) return null;
+        const pts = [...this.activePointers.values()];
+        const midX = (pts[0].x + pts[1].x) * 0.5;
+        const midY = (pts[0].y + pts[1].y) * 0.5;
+        const dx = pts[1].x - pts[0].x;
+        const dy = pts[1].y - pts[0].y;
+        const span = Math.hypot(dx, dy);
+        return {
+            midX,
+            midY,
+            span: Math.max(span, 1e-6),
+            angle: Math.atan2(dy, dx),
+        };
+    }
+
+    private releaseAllPointerCapture(): void {
+        for (const id of this.activePointers.keys()) {
+            if (this.domElement.hasPointerCapture(id)) {
+                this.domElement.releasePointerCapture(id);
+            }
+        }
+    }
+
+    private beginTouchGesture(): void {
+        const m = this.touchMetrics();
+        if (!m || this.touchGesture) return;
+
+        const hadSinglePointerDrag = this.dragMode !== null;
+
+        if (this.dragMode === "rotate") {
+            this.commitOrbitAboutPivot();
+        } else if (this.dragMode === "pan") {
+            this.stopPanInertia();
+        }
+
+        this.dragMode = null;
+        this.stopPanInertia();
+        this.releaseAllPointerCapture();
+
+        this.touchGesture = true;
+        this.gestureSpan = m.span;
+        this.gestureAngle = m.angle;
+        this.gestureMidX = m.midX;
+        this.gestureMidY = m.midY;
+        this.initOrbitAboutScreenPoint(m.midX, m.midY);
+        if (!hadSinglePointerDrag) {
+            this.dispatchEvent({ type: "start" });
+        }
+    }
+
+    private endTouchGesture(): void {
+        if (!this.touchGesture) return;
+        this.touchGesture = false;
+        this.commitOrbitAboutPivot();
+        this.dispatchEvent({ type: "end" });
+    }
+
+    private handleTouchGestureMove(): void {
+        const m = this.touchMetrics();
+        if (!m) return;
+
+        const dMidX = m.midX - this.gestureMidX;
+        const dMidY = m.midY - this.gestureMidY;
+        let changed = false;
+        let orbitChanged = false;
+
+        if (dMidX !== 0) {
+            this.panPixels(dMidX, 0, m.midX, m.midY);
+            changed = true;
+        }
+
+        if (dMidY !== 0) {
+            this.orbitDragDelta(0, dMidY);
+            orbitChanged = true;
+        }
+
+        const dAngle = normalizeAngleDelta(m.angle - this.gestureAngle);
+        if (Math.abs(dAngle) > 1e-9) {
+            const h = Math.max(this.domElement.clientHeight, 1);
+            const dxEquiv = (-dAngle * h) / (2 * Math.PI * this.rotateSpeed);
+            this.orbitDragDelta(dxEquiv, 0);
+            orbitChanged = true;
+        }
+        this.gestureAngle = m.angle;
+
+        if (m.span >= MIN_PINCH_SPAN_PX) {
+            const scale = this.gestureSpan / m.span;
+            if (Math.abs(scale - 1) > 1e-6) {
+                this.zoomAboutGroundPoint(m.midX, m.midY, scale);
+                this.initOrbitAboutScreenPoint(m.midX, m.midY);
+                orbitChanged = false;
+                changed = true;
+            }
+            this.gestureSpan = m.span;
+        }
+
+        if (orbitChanged) {
+            this.commitOrbitAboutPivot();
+            changed = true;
+        }
+
+        this.gestureMidX = m.midX;
+        this.gestureMidY = m.midY;
+
+        if (changed) {
+            this.dispatchChange();
+        }
     }
 
     private panPixels(
