@@ -29,12 +29,17 @@ const domAttributes: DomAttributes = {
   style: { height: '100%', width: '100%' },
 };
 
+function trackSelectionKey(tracks: TerrainOptions['tracks']): string {
+  return tracks?.map((t) => t.url).join('|') ?? '';
+}
+
 function useTerrainRenderer(coord: EastNorth, options: TerrainOptions) {
   const renderer = useMemo(
     () => new TerrainRenderer(coord, options),
     [coord.east, coord.north],
   );
   const locationKey = `${coord.east},${coord.north}`;
+  const tracksKey = trackSelectionKey(options.tracks);
 
   useEffect(() => {
     renderer.updateOptions(options);
@@ -46,6 +51,7 @@ function useTerrainRenderer(coord: EastNorth, options: TerrainOptions) {
     options.sun,
     options.camZ,
     options.externalControls,
+    tracksKey,
   ]);
 
   return { renderer, locationKey };
@@ -104,6 +110,7 @@ function TerrainR3FScene({
   useLayoutEffect(() => {
     renderer.ensureTerrainInit();
   }, [renderer]);
+  const tracksKey = trackSelectionKey(options.tracks);
   useEffect(() => {
     renderer.updateOptions({ ...options, externalControls: true, camZ });
   }, [
@@ -113,6 +120,7 @@ function TerrainR3FScene({
     options.osTerr50Layer,
     options.sun,
     camZ,
+    tracksKey,
   ]);
   useFrame(() => {
     renderer.update();

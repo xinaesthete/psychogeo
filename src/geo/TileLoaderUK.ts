@@ -215,6 +215,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
     private dsmTilesLoaded = false;
     private dtmTilesLoaded = false;
     private osTerr50Loaded = false;
+    private readonly loadedTracks = new Map<string, THREE.Group>();
 
     isTerrainInited(): boolean {
         return this.terrainInited;
@@ -237,6 +238,9 @@ export class TerrainRenderer extends ThreactTrackballBase {
         };
         if (this.terrainInited) {
             this.applyTerrainOptions();
+        }
+        if ('tracks' in patch) {
+            this.syncTracks(this.options.tracks ?? []);
         }
     }
 
@@ -261,8 +265,8 @@ export class TerrainRenderer extends ThreactTrackballBase {
         this.coord = {...coord};
         this.tileProp = getTileProperties(coord);
         this.addAxes();
-        if (this.options.tracks) {
-            this.options.tracks.forEach(t=>this.addTrack(t));
+        if (this.options.tracks?.length) {
+            this.syncTracks(this.options.tracks);
         }
     }
     addMarker() {
@@ -277,9 +281,35 @@ export class TerrainRenderer extends ThreactTrackballBase {
 
         this.scene.add(m);
     }
-    async addTrack(track: Track) {//url: string, heightOffset = 2, color = 0xffffff) {
+    async addTrack(track: Track): Promise<THREE.Group> {
         const {url, heightOffset = 2, colour = 0xffffff} = track;
-        this.scene.add(await loadGpxGeometry(url, heightOffset, colour));
+        const group = await loadGpxGeometry(url, heightOffset, colour);
+        this.scene.add(group);
+        this.loadedTracks.set(url, group);
+        return group;
+    }
+
+    removeTrack(url: string): void {
+        const group = this.loadedTracks.get(url);
+        if (!group) return;
+        this.scene.remove(group);
+        this.loadedTracks.delete(url);
+    }
+
+    /** Add/remove scene overlays to match the React track selection. */
+    syncTracks(tracks: Track[]): void {
+        const wanted = new Map(tracks.map((t) => [t.url, t]));
+        for (const url of [...this.loadedTracks.keys()]) {
+            if (!wanted.has(url)) this.removeTrack(url);
+        }
+        for (const track of tracks) {
+            if (!this.loadedTracks.has(track.url)) {
+                void this.addTrack(track).catch((e) => {
+                    console.error(`track load failed: ${track.url}`, e);
+                    this.loadedTracks.delete(track.url);
+                });
+            }
+        }
     }
     addAxes() {
         const ax = new THREE.AxesHelper(100);

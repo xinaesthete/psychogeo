@@ -1,0 +1,130 @@
+.TrackCatalogPanel {
+  position: fixed;
+  top: 1rem;
+  left: 1rem;
+  z-index: 20;
+  width: min(17rem, calc(100vw - 2rem));
+  max-height: min(28rem, calc(100vh - 2rem));
+  display: flex;
+  flex-direction: column;
+  padding: 0.65rem 0.5rem;
+  color: #e8eaed;
+  background: rgba(18, 20, 24, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  backdrop-filter: blur(8px);
+  text-align: left;
+  pointer-events: auto;
+}
+
+.TrackCatalogPanel-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0 0.35rem 0.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.TrackCatalogPanel-title {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.TrackCatalogPanel-meta {
+  font-size: 0.7rem;
+  opacity: 0.65;
+}
+
+.TrackCatalogPanel-error {
+  margin: 0.35rem;
+  font-size: 0.75rem;
+  color: #f5a8a8;
+}
+
+.TrackCatalogPanel-list {
+  list-style: none;
+  margin: 0.35rem 0 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.TrackCatalogPanel-item {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  margin: 0 0 0.35rem;
+  padding: 0.35rem;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+
+.TrackCatalogPanel-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.TrackCatalogPanel-item--selected {
+  border-color: rgba(120, 180, 255, 0.45);
+  background: rgba(80, 120, 200, 0.15);
+}
+
+.TrackCatalogPanel-thumb {
+  flex-shrink: 0;
+}
+
+.GpxThumbnail-bg {
+  fill: rgba(0, 0, 0, 0.35);
+}
+
+.GpxThumbnail-spinner {
+  fill: rgba(255, 255, 255, 0.35);
+  animation: GpxThumbnail-pulse 1s ease-in-out infinite;
+}
+
+.GpxThumbnail-error {
+  fill: rgba(255, 255, 255, 0.45);
+  font-size: 10px;
+}
+
+@keyframes GpxThumbnail-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+
+.TrackCatalogPanel-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.TrackCatalogPanel-name {
+  font-size: 0.78rem;
+  line-height: 1.25;
+}
+
+.TrackCatalogPanel-region {
+  font-size: 0.68rem;
+  opacity: 0.55;
+}
+
+.TrackCatalogPanel-hint {
+  margin: 0.5rem 0.35rem 0;
+  font-size: 0.62rem;
+  line-height: 1.35;
+  opacity: 0.45;
+}
