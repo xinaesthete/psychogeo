@@ -210,12 +210,16 @@ export class TerrainRenderer extends ThreactTrackballBase {
     tiles: LazyTile[] = [];
     options: TerrainOptions;
     lightRig?: THREE.Group;
+    readonly dsmLayer = new THREE.Group();
+    readonly dtmLayer = new THREE.Group();
+    readonly osTerr50Layer = new THREE.Group();
     private terrainInited = false;
     private markerAdded = false;
     private dsmTilesLoaded = false;
     private dtmTilesLoaded = false;
     private osTerr50Loaded = false;
     private readonly loadedTracks = new Map<string, THREE.Group>();
+    private desiredTrackUrls = new Set<string>();
 
     isTerrainInited(): boolean {
         return this.terrainInited;
@@ -239,9 +243,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
         if (this.terrainInited) {
             this.applyTerrainOptions();
         }
-        if ('tracks' in patch) {
-            this.syncTracks(this.options.tracks ?? []);
-        }
+        this.syncTracks(this.options.tracks ?? []);
     }
 
     /** Call when using external controls (R3F) instead of Threact initThree. */
@@ -264,6 +266,10 @@ export class TerrainRenderer extends ThreactTrackballBase {
         console.table(this.options);
         this.coord = {...coord};
         this.tileProp = getTileProperties(coord);
+        this.scene.add(this.dsmLayer);
+        this.scene.add(this.dtmLayer);
+        this.scene.add(this.osTerr50Layer);
+        this.syncLayerVisibility();
         this.addAxes();
         if (this.options.tracks?.length) {
             this.syncTracks(this.options.tracks);
@@ -281,9 +287,12 @@ export class TerrainRenderer extends ThreactTrackballBase {
 
         this.scene.add(m);
     }
-    async addTrack(track: Track): Promise<THREE.Group> {
+    async addTrack(track: Track): Promise<THREE.Group | null> {
         const {url, heightOffset = 2, colour = 0xffffff} = track;
         const group = await loadGpxGeometry(url, heightOffset, colour);
+        if (!this.desiredTrackUrls.has(url)) {
+            return null;
+        }
         this.scene.add(group);
         this.loadedTracks.set(url, group);
         return group;
@@ -298,9 +307,9 @@ export class TerrainRenderer extends ThreactTrackballBase {
 
     /** Add/remove scene overlays to match the React track selection. */
     syncTracks(tracks: Track[]): void {
-        const wanted = new Map(tracks.map((t) => [t.url, t]));
+        this.desiredTrackUrls = new Set(tracks.map((t) => t.url));
         for (const url of [...this.loadedTracks.keys()]) {
-            if (!wanted.has(url)) this.removeTrack(url);
+            if (!this.desiredTrackUrls.has(url)) this.removeTrack(url);
         }
         for (const track of tracks) {
             if (!this.loadedTracks.has(track.url)) {
@@ -310,6 +319,12 @@ export class TerrainRenderer extends ThreactTrackballBase {
                 });
             }
         }
+    }
+
+    private syncLayerVisibility(): void {
+        this.dsmLayer.visible = !!this.options.defraDSMLayer;
+        this.dtmLayer.visible = !!this.options.defra10mDTMLayer;
+        this.osTerr50Layer.visible = !!this.options.osTerr50Layer;
     }
     addAxes() {
         const ax = new THREE.AxesHelper(100);
@@ -339,6 +354,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
 
     applyTerrainOptions() {
         this.syncLightRig();
+        this.syncLayerVisibility();
         if (!this.markerAdded) {
             this.addMarker();
             this.markerAdded = true;
@@ -419,14 +435,15 @@ export class TerrainRenderer extends ThreactTrackballBase {
             for (let j=-10; j<100; j++) {
                 //some of these coords won't have any data; we just swallow a few exceptions.
                 const coord = {east: o.east + 10000 * i, north: o.north + 10000 * j};
-                new LazyTileOS(coord, this.scene);
+                new LazyTileOS(coord, this.osTerr50Layer);
             }
         }
     }
     async makeTiles(lowRes = false) {
+        const parent = lowRes ? this.dtmLayer : this.dsmLayer;
         Object.entries(lowRes ? cat10m : cat).forEach((k) => {
             const info = k[1] as DsmCatItem;
-            this.tiles.push(new LazyTile(info, this.scene));
+            this.tiles.push(new LazyTile(info, parent));
         });
     }
     update() {
