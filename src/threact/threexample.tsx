@@ -38,8 +38,8 @@ export abstract class ThreactTrackballBase implements IThree {
                 this.mapControlsOptions,
             );
             registerCameraViewCommands({
-                resetNorthUpOblique: () => {
-                    this.mapCtrl?.resetNorthUpOblique();
+                resetNorthUp: () => {
+                    this.mapCtrl?.resetNorthUp();
                 },
             });
         }

@@ -1,5 +1,5 @@
 export type CameraViewCommands = {
-    resetNorthUpOblique: () => void;
+    resetNorthUp: () => void;
 };
 
 let active: CameraViewCommands | null = null;
@@ -8,6 +8,6 @@ export function registerCameraViewCommands(commands: CameraViewCommands | null):
     active = commands;
 }
 
-export function resetCameraNorthUpOblique(): void {
-    active?.resetNorthUpOblique();
+export function resetCameraNorthUp(): void {
+    active?.resetNorthUp();
 }

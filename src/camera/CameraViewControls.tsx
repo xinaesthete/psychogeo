@@ -1,4 +1,4 @@
-import { resetCameraNorthUpOblique } from "./cameraViewCommands";
+import { resetCameraNorthUp } from "./cameraViewCommands";
 import "./CameraViewControls.css";
 
 export function CameraViewControls() {
@@ -7,9 +7,9 @@ export function CameraViewControls() {
             <button
                 type="button"
                 className="CameraViewControls-btn"
-                title="North up, oblique view"
-                aria-label="Reset to north-up oblique view"
-                onClick={() => resetCameraNorthUpOblique()}
+                title="North up, look straight down"
+                aria-label="Reset to north-up top-down view"
+                onClick={() => resetCameraNorthUp()}
             >
                 <span className="CameraViewControls-north" aria-hidden>
                     N

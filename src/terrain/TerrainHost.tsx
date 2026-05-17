@@ -75,7 +75,7 @@ function MapCameraControlsR3F({
     setTerrainCameraTarget(controls, camera, coord, camZ);
     controlsRef.current = controls;
     registerCameraViewCommands({
-      resetNorthUpOblique: () => controls.resetNorthUpOblique(),
+      resetNorthUp: () => controls.resetNorthUp(),
     });
     return () => {
       controlsRef.current = null;

@@ -15,6 +15,7 @@ import {
     wheelDeltaToScale,
 } from "./smoothZoom";
 import {
+    NADIR_PITCH,
     OBLIQUE_PITCH,
     type TerrainViewState,
     applySphericalToCamera,
@@ -61,7 +62,7 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
     maxDistance = 60_000;
     minPitch = 0.05;
     /** Radians above horizon; near π/2 allows near-nadir views. */
-    maxPitch = Math.PI / 2 - 0.02;
+    maxPitch = NADIR_PITCH;
 
     private bearing = 0;
     private pitch = OBLIQUE_PITCH;
@@ -158,6 +159,10 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
         this.clampDistance();
         this.applyCameraFromState();
         this.dispatchChange();
+    }
+
+    resetNorthUp(): void {
+        this.resetNorthUpOblique(NADIR_PITCH);
     }
 
     resetNorthUpOblique(pitch = OBLIQUE_PITCH): void {

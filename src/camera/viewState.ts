@@ -17,6 +17,9 @@ export type TerrainViewState = {
 /** Typical 3D map oblique view (radians above horizon). */
 export const OBLIQUE_PITCH = Math.PI / 4;
 
+/** Near-nadir pitch (radians above horizon); matches MapCameraControls maxPitch. */
+export const NADIR_PITCH = Math.PI / 2 - 0.02;
+
 const _yUp = new THREE.Vector3(0, 1, 0);
 const _offset = new THREE.Vector3();
 const _spherical = new THREE.Spherical();
@@ -121,6 +124,10 @@ export function applyTerrainViewState(
     state: TerrainViewState,
 ): void {
     controls.setViewState(state);
+}
+
+export function resetNorthUp(controls: MapCameraControls): void {
+    controls.resetNorthUp();
 }
 
 export function resetNorthUpOblique(
