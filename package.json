@@ -33,7 +33,7 @@
     "dev:fast": "node scripts/dev.mjs",
     "predev:web": "pnpm run build:shp-wasm",
     "dev:web": "pnpm run dev:vite",
-    "dev:vite": "vite",
+    "dev:vite": "vite --host",
     "dev:proxy": "node src/start-server.js",
     "dev:electron": "node src/start-react --trace-warnings",
     "prebuild": "pnpm run build:shp-wasm",
