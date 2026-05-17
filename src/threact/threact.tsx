@@ -48,7 +48,7 @@ function init() {
     console.log('<< threact module init() >>');
     renderer = new THREE.WebGLRenderer({antialias: true, logarithmicDepthBuffer: false, alpha: true});
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     compositeScene = new THREE.Scene();
     const w = window.innerWidth, h = window.innerHeight;
     compositeCamera = new THREE.OrthographicCamera(0, w, h, 0);
