@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { MOUSE, TOUCH } from "three";
 import { OrbitControls } from "three-stdlib";
 import type { EastNorth } from "../geo/Coordinates";
+import { attachSmoothWheelZoom } from "./smoothZoom";
 
 export type MapControlsOptions = {
     /** Initial camera distance; also used to derive min/max zoom when set. */
@@ -29,7 +30,23 @@ export function createMapStyleControls(
     if (options.initialDistance !== undefined) {
         configureTerrainZoomLimits(controls, options.initialDistance);
     }
+    const detachSmoothZoom = attachSmoothWheelZoom(controls, camera, domElement);
+    const nativeDispose = controls.dispose.bind(controls);
+    controls.dispose = () => {
+        detachSmoothZoom();
+        nativeDispose();
+    };
     return controls;
+}
+
+/** Attach deck.gl-style wheel zoom to existing controls (e.g. drei OrbitControls). */
+export function enhanceMapStyleControls(
+    controls: OrbitControls,
+    camera: THREE.PerspectiveCamera,
+    domElement: HTMLElement,
+): () => void {
+    applyMapStylePreset(controls);
+    return attachSmoothWheelZoom(controls, camera, domElement);
 }
 
 export function applyMapStylePreset(controls: OrbitControls): void {
@@ -44,8 +61,8 @@ export function applyMapStylePreset(controls: OrbitControls): void {
     };
     controls.screenSpacePanning = false;
     controls.zoomToCursor = true;
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.08;
+    // Damping makes pan/zoom feel mushy; wheel zoom uses deck.gl-style smoothing instead.
+    controls.enableDamping = false;
     controls.minPolarAngle = DEFAULT_MIN_POLAR;
     controls.maxPolarAngle = DEFAULT_MAX_POLAR;
 }
@@ -103,8 +120,8 @@ export function attachDoubleClickZoom(
 export const mapStyleOrbitProps = {
     screenSpacePanning: false,
     zoomToCursor: true,
-    enableDamping: true,
-    dampingFactor: 0.08,
+    enableDamping: false,
+    enableZoom: false,
     minPolarAngle: DEFAULT_MIN_POLAR,
     maxPolarAngle: DEFAULT_MAX_POLAR,
     mouseButtons: {
