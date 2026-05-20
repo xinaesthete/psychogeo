@@ -61,8 +61,9 @@ export function getTileProperties(coord: EastNorth, lowRes = false) {
     return (lowRes ? cat10m[k] : cat[k]) as DsmCatItem;
 }
 
-export function getImageFilename(source_filename: string, lowRes = false) {
-    if (lowRes) return "/ttile/" + source_filename; //ltile vs ttile...
+/** @param useJ2k When true on 10m DTM, fetch HTJ2K via `/ltile/` (required for worker recode). */
+export function getImageFilename(source_filename: string, lowRes = false, useJ2k = false) {
+    if (lowRes) return (useJ2k ? "/ltile/" : "/ttile/") + source_filename;
     return "/tile/" + source_filename; // /tile/ interpreted as url for fetch, tile: uses electron api
 }
 

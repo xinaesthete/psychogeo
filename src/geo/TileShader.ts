@@ -107,8 +107,8 @@ const heightSamplingGlsl = glsl`
     }
     float sampleHeightTex(sampler2D tex, vec2 uv) {
         uv.y = 1. - uv.y;
-        vec4 v = texture2D(tex, uv);
-        return v.r + (v.g / 256.);
+        // RedFormat + HalfFloatType: height is IEEE half in .r only (not 8-bit high/low split).
+        return texture2D(tex, uv).r;
     }
     float compressionBlendFactor(vec2 uv) {
         if (compressionEnabled < 0.5) return 0.;

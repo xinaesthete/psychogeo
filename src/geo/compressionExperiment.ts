@@ -5,6 +5,7 @@ import {
   DEFAULT_LOSSY_COMPRESSION_RATIO,
   invalidateLossyCache,
   jp2Texture,
+  type HeightRange,
   type RecodeStats,
 } from '../openjpegjs/jp2kloader';
 import type { TileUniformBag } from './tileShaderRuntime';
@@ -54,7 +55,10 @@ export type CompressionRecodeReport = {
 
 type CompressionTileRecord = {
   url: string;
-  lowRes: boolean;
+  /** Passed to jp2Texture as simplerDecodeHack (10m DTM vs 1m DSM). */
+  simplerDecodeHack: boolean;
+  /** 10m DTM: metre domain from /ttile/ used to denormalise /ltile/ uint16 recode. */
+  heightRangeMetres?: HeightRange;
   uniformBags: TileUniformBag[];
   lossyGeneration: number;
 };
@@ -202,12 +206,12 @@ export function formatCompressionLoadStatus(status: CompressionLoadStatus): stri
   if (status.recodePhase === 'idle') {
     const n = countLossyTargets();
     if (n === 0) {
-      return 'Shader on — waiting for DSM tiles; use analysis panel → Start recode';
+      return 'Shader on — waiting for height tiles; use analysis panel → Start recode';
     }
     return `Shader on — ${n} tile(s); use analysis panel → Start recode`;
   }
   if (status.total === 0) {
-    return 'No DSM tiles to recode';
+    return 'No height tiles to recode';
   }
   if (status.pending > 0) {
     const failed = status.failed > 0 ? `, ${status.failed} failed` : '';
@@ -256,12 +260,13 @@ export function ensureCompressionShaderUniforms(shared: typeof tileShaderUniform
 
 export function registerCompressionTile(
   url: string,
-  lowRes: boolean,
+  simplerDecodeHack: boolean,
   uniformBags: TileUniformBag[],
+  heightRangeMetres?: HeightRange,
 ): void {
-  const record: CompressionTileRecord = { url, lowRes, uniformBags, lossyGeneration: 0 };
+  const record: CompressionTileRecord = { url, simplerDecodeHack, heightRangeMetres, uniformBags, lossyGeneration: 0 };
   trackedTiles.add(record);
-  if (isCompressionExperimentEnabled() && !lowRes && loadStatus.recodePhase === 'running') {
+  if (isCompressionExperimentEnabled() && loadStatus.recodePhase === 'running') {
     for (const bag of uniformBags) {
       addLossyUniform(bag, bag.heightFeild.value as THREE.Texture);
     }
@@ -290,11 +295,7 @@ function addLossyUniform(bag: TileUniformBag, fullTexture: THREE.Texture): void 
 }
 
 function countLossyTargets(): number {
-  let n = 0;
-  for (const record of trackedTiles) {
-    if (!record.lowRes) n += 1;
-  }
-  return n;
+  return trackedTiles.size;
 }
 
 function noteLossyFinished(ok: boolean): void {
@@ -323,11 +324,10 @@ async function loadLossyForRecord(
   record: CompressionTileRecord,
   generation: number,
 ): Promise<void> {
-  const { url, lowRes, uniformBags } = record;
-  if (lowRes) return;
+  const { url, simplerDecodeHack, heightRangeMetres, uniformBags } = record;
 
   try {
-    const lossy = await jp2Texture(url, lowRes, lossyCompressionRatio);
+    const lossy = await jp2Texture(url, simplerDecodeHack, lossyCompressionRatio, heightRangeMetres);
     if (record.lossyGeneration !== generation) return;
 
     if (lossy.recodeStats) {
@@ -349,7 +349,6 @@ async function loadLossyForRecord(
 
 function prepareLossyUniforms(): void {
   for (const record of trackedTiles) {
-    if (record.lowRes) continue;
     for (const bag of record.uniformBags) {
       addLossyUniform(bag, bag.heightFeild.value as THREE.Texture);
     }
@@ -374,7 +373,7 @@ function teardownLossyTextures(): void {
   invalidateLossyCache();
 }
 
-/** Begin worker recode for all tracked DSM tiles (call after setting quality). */
+/** Begin worker recode for all tracked height tiles (call after setting quality). */
 export function startLossyRecode(): void {
   if (!loadStatus.shaderEnabled) return;
 
@@ -385,7 +384,7 @@ export function startLossyRecode(): void {
   recodeReport = { ...emptyReport(), quality: lossyCompressionRatio };
   emitReport();
 
-  const targets = [...trackedTiles].filter((r) => !r.lowRes);
+  const targets = [...trackedTiles];
   setLoadStatus({
     recodePhase: 'running',
     total: targets.length,

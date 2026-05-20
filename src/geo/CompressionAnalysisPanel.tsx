@@ -33,10 +33,10 @@ function presetIsActive(current: number, preset: number): boolean {
 
 const QUALITY_PRESETS: { label: string; quality: number }[] = [
   { label: 'Lossless', quality: 0 },
-  { label: 'Light', quality: DEFAULT_LOSSY_COMPRESSION_RATIO },
-  { label: 'Medium', quality: 0.01 },
-  { label: 'High', quality: 0.1 },
-  { label: 'Heavy', quality: 0.3 },
+  { label: 'Light', quality: 0.01 },
+  { label: 'Medium', quality: 0.1 },
+  { label: 'High', quality: 0.3 },
+  { label: 'Heavy', quality: DEFAULT_LOSSY_COMPRESSION_RATIO },
   { label: 'Max', quality: MAX_LOSSY_COMPRESSION_RATIO },
 ];
 
@@ -102,7 +102,8 @@ export function CompressionAnalysisPanel() {
       </header>
 
       <p className="CompressionAnalysisPanel-lead">
-        Runtime HTJ2K recode for DSM tiles. <em>q</em>=0 is near-lossless; higher <em>q</em> → smaller
+        Runtime HTJ2K recode for DEFRA height tiles (DSM and 10m DTM). <em>q</em>=0 is near-lossless; higher{' '}
+        <em>q</em> → smaller
         files and more height error — compare against full decode for morphology experiments.
       </p>
 

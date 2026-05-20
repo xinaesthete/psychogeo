@@ -80,19 +80,34 @@ export async function getTileMesh(
 ) {
   const sources = info.sources;
   const source = !sources ? info.source_filename : sources[2000] || sources[1000] || sources[500]!;
-  const url = getImageFilename(source, lowRes);
-  console.log("getTileMesh filename", url);
-
   const compressionOn =
     meshOptions.compressionExperiment ?? isCompressionExperimentEnabled();
+  const displayUrl = getImageFilename(source, lowRes, false);
+  const recodeUrl = lowRes && compressionOn ? getImageFilename(source, lowRes, true) : null;
+  console.log("getTileMesh filename", displayUrl, recodeUrl ?? '');
 
-  const { texture, frameInfo } = await JP2.jp2Texture(url, lowRes);
+  const { texture, frameInfo } = await JP2.jp2Texture(displayUrl, lowRes);
   const w = frameInfo.width, h = frameInfo.height;
   const lodObj = new GeoLOD();
   const s = lowRes ? 40960 : 1000;
+  const heightMin = lowRes ? 0 : (info.min_ele ?? 0);
+  const heightMax = lowRes ? 1 : (info.max_ele ?? 1);
   const eleScale = lowRes ? 1 : info.max_ele! - info.min_ele!;
   lodObj.scale.set(s, s, eleScale);
-  lodObj.position.z = info.min_ele ?? 0;
+  lodObj.position.z = lowRes ? 0 : (info.min_ele ?? 0);
+
+  let metreRangeForRecode: JP2.HeightRange | undefined;
+  const textureImage = texture.image;
+  const texturePixelData =
+    textureImage &&
+    typeof textureImage === 'object' &&
+    'data' in textureImage &&
+    textureImage.data instanceof Uint16Array
+      ? textureImage.data
+      : undefined;
+  if (lowRes && recodeUrl && texturePixelData) {
+    metreRangeForRecode = JP2.estimateHeightRangeFromHalfMetresTexture(texturePixelData);
+  }
 
   const uniformBags: TileUniformBag[] = [];
 
@@ -105,7 +120,7 @@ export async function getTileMesh(
           uvTransform.setUvTransform(0, 0, 0.5, 0.5, 0, x, y);
           const uniforms: TileUniformBag = {
             heightFeild: { value: texture },
-            heightMin: { value: info.min_ele ?? 0 }, heightMax: { value: info.max_ele ?? 1 },
+            heightMin: { value: heightMin }, heightMax: { value: heightMax },
             ...getLodUniforms(lod+1),
             uvTransform: { value: uvTransform },
             iTime: globalUniforms.iTime,
@@ -129,7 +144,7 @@ export async function getTileMesh(
     const uvTransform = new THREE.Matrix3();
     const uniforms: TileUniformBag = {
       heightFeild: { value: texture },
-      heightMin: { value: info.min_ele ?? 0 }, heightMax: { value: info.max_ele ?? 1 },
+      heightMin: { value: heightMin }, heightMax: { value: heightMax },
       ...getLodUniforms(lod),
       uvTransform: { value: uvTransform },
       iTime: globalUniforms.iTime,
@@ -157,8 +172,8 @@ export async function getTileMesh(
     lodObj.addLevel(mesh, Math.pow(2, lod - lodBias) * s);
   }
 
-  if (!lowRes) {
-    registerCompressionTile(url, lowRes, uniformBags);
+  if (compressionOn && recodeUrl) {
+    registerCompressionTile(recodeUrl, lowRes, uniformBags, metreRangeForRecode);
   }
 
   info.mesh = lodObj;
