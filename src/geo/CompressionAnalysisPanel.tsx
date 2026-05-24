@@ -192,153 +192,156 @@ export function CompressionAnalysisPanel({
         <span className="CompressionAnalysisPanel-meta">{statusLine}</span>
       </header>
 
-      <p className="CompressionAnalysisPanel-lead">
-        Runtime HTJ2K recode for DEFRA height tiles (DSM and 10m DTM). <em>q</em>=0 is near-lossless; higher{' '}
-        <em>q</em> → smaller
-        files and more height error — compare against full decode for morphology experiments.
-      </p>
+      {enabled && (
+        <>
+          <p className="CompressionAnalysisPanel-lead">
+            Runtime HTJ2K recode for DEFRA height tiles (DSM and 10m DTM). <em>q</em>=0 is near-lossless; higher{' '}
+            <em>q</em> → smaller files and more height error — compare against full decode for morphology experiments.
+          </p>
 
-      <fieldset className="CompressionAnalysisPanel-fieldset" disabled={!enabled}>
-        <legend>HTJ2K quality</legend>
-        <p className="CompressionAnalysisPanel-hint">
-          Encoder <code>setQuality(false, q)</code> — q=0 ≈ lossless, higher q → more compression (OpenJPH
-          practical max ~{formatQuality(MAX_LOSSY_COMPRESSION_RATIO)}).
-        </p>
+          <fieldset className="CompressionAnalysisPanel-fieldset">
+            <legend>HTJ2K quality</legend>
+            <p className="CompressionAnalysisPanel-hint">
+              Encoder <code>setQuality(false, q)</code> — q=0 ≈ lossless, higher q → more compression (OpenJPH
+              practical max ~{formatQuality(MAX_LOSSY_COMPRESSION_RATIO)}).
+            </p>
 
-        <div className="CompressionAnalysisPanel-presets" role="group" aria-label="Quality presets">
-          {QUALITY_PRESETS.map((p) => (
-            <button
-              key={p.label}
-              type="button"
-              className={
-                presetIsActive(quality, p.quality)
-                  ? 'CompressionAnalysisPanel-preset CompressionAnalysisPanel-preset--active'
-                  : 'CompressionAnalysisPanel-preset'
-              }
-              onClick={() => applyQuality(p.quality)}
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
+            <div className="CompressionAnalysisPanel-presets" role="group" aria-label="Quality presets">
+              {QUALITY_PRESETS.map((p) => (
+                <button
+                  key={p.label}
+                  type="button"
+                  className={
+                    presetIsActive(quality, p.quality)
+                      ? 'CompressionAnalysisPanel-preset CompressionAnalysisPanel-preset--active'
+                      : 'CompressionAnalysisPanel-preset'
+                  }
+                  onClick={() => applyQuality(p.quality)}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
 
-        <label className="CompressionAnalysisPanel-label">
-          0 (lossless) ←——→ {formatQuality(MAX_LOSSY_COMPRESSION_RATIO)} (max compression)
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.001}
-            value={qualitySlider}
-            onChange={(e) => onQualitySlider(Number(e.target.value))}
-            onPointerUp={commitCurrentQuality}
-            onKeyUp={(e) => {
-              if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'Home' || e.key === 'End') {
-                commitCurrentQuality();
-              }
-            }}
-            onBlur={commitCurrentQuality}
-          />
-        </label>
+            <label className="CompressionAnalysisPanel-label">
+              0 (lossless) ←——→ {formatQuality(MAX_LOSSY_COMPRESSION_RATIO)} (max compression)
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.001}
+                value={qualitySlider}
+                onChange={(e) => onQualitySlider(Number(e.target.value))}
+                onPointerUp={commitCurrentQuality}
+                onKeyUp={(e) => {
+                  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'Home' || e.key === 'End') {
+                    commitCurrentQuality();
+                  }
+                }}
+                onBlur={commitCurrentQuality}
+              />
+            </label>
 
-        <label className="CompressionAnalysisPanel-label">
-          Quality <em>q</em>
-          <input
-            type="text"
-            className="CompressionAnalysisPanel-qualityInput"
-            value={qualityText}
-            onChange={(e) => setQualityText(e.target.value)}
-            onBlur={commitQualityText}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') commitQualityText();
-            }}
-          />
-        </label>
-      </fieldset>
+            <label className="CompressionAnalysisPanel-label">
+              Quality <em>q</em>
+              <input
+                type="text"
+                className="CompressionAnalysisPanel-qualityInput"
+                value={qualityText}
+                onChange={(e) => setQualityText(e.target.value)}
+                onBlur={commitQualityText}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') commitQualityText();
+                }}
+              />
+            </label>
+          </fieldset>
 
-      <fieldset className="CompressionAnalysisPanel-fieldset" disabled={!enabled}>
-        <legend>Blend</legend>
-        <label className="CompressionAnalysisPanel-label">
-          Mode
-          <select
-            className="CompressionAnalysisPanel-select"
-            value={blendMode}
-            onChange={(e) => updateBlendMode(parseCompressionBlendMode(e.target.value))}
-          >
-            {compressionBlendModes.map((mode) => (
-              <option key={mode} value={mode}>{mode}</option>
-            ))}
-          </select>
-        </label>
-        <label className="CompressionAnalysisPanel-label">
-          Blend toward lossy
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={heightBlend}
-            onChange={(e) => updateHeightBlend(Number(e.target.value))}
-          />
-        </label>
-        <label className="CompressionAnalysisPanel-label">
-          Wave amplitude
-          <input
-            type="range"
-            min={0}
-            max={2}
-            step={0.05}
-            value={waveAmp}
-            onChange={(e) => updateWaveAmp(Number(e.target.value))}
-          />
-        </label>
-        <label className="CompressionAnalysisPanel-label">
-          Wave frequency
-          <input
-            type="range"
-            min={0.5}
-            max={80}
-            step={0.5}
-            value={waveFreq}
-            onChange={(e) => updateWaveFreq(Number(e.target.value))}
-          />
-        </label>
-        <label className="CompressionAnalysisPanel-label">
-          Wave speed
-          <input
-            type="range"
-            min={0}
-            max={5}
-            step={0.05}
-            value={waveSpeed}
-            onChange={(e) => updateWaveSpeed(Number(e.target.value))}
-          />
-        </label>
-        <label className="CompressionAnalysisPanel-label">
-          Delta emissive
-          <input
-            type="range"
-            min={0}
-            max={500}
-            step={1}
-            value={deltaScale}
-            onChange={(e) => updateDeltaScale(Number(e.target.value))}
-          />
-        </label>
-        <label className="CompressionAnalysisPanel-label">
-          Height exaggeration
-          <input
-            type="range"
-            min={1}
-            max={50}
-            step={0.5}
-            value={heightGain}
-            onChange={(e) => updateHeightGain(Number(e.target.value))}
-          />
-        </label>
-      </fieldset>
+          <fieldset className="CompressionAnalysisPanel-fieldset">
+            <legend>Blend</legend>
+            <label className="CompressionAnalysisPanel-label">
+              Mode
+              <select
+                className="CompressionAnalysisPanel-select"
+                value={blendMode}
+                onChange={(e) => updateBlendMode(parseCompressionBlendMode(e.target.value))}
+              >
+                {compressionBlendModes.map((mode) => (
+                  <option key={mode} value={mode}>{mode}</option>
+                ))}
+              </select>
+            </label>
+            <label className="CompressionAnalysisPanel-label">
+              Blend toward lossy
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={heightBlend}
+                onChange={(e) => updateHeightBlend(Number(e.target.value))}
+              />
+            </label>
+            <label className="CompressionAnalysisPanel-label">
+              Wave amplitude
+              <input
+                type="range"
+                min={0}
+                max={2}
+                step={0.05}
+                value={waveAmp}
+                onChange={(e) => updateWaveAmp(Number(e.target.value))}
+              />
+            </label>
+            <label className="CompressionAnalysisPanel-label">
+              Wave frequency
+              <input
+                type="range"
+                min={0.5}
+                max={80}
+                step={0.5}
+                value={waveFreq}
+                onChange={(e) => updateWaveFreq(Number(e.target.value))}
+              />
+            </label>
+            <label className="CompressionAnalysisPanel-label">
+              Wave speed
+              <input
+                type="range"
+                min={0}
+                max={5}
+                step={0.05}
+                value={waveSpeed}
+                onChange={(e) => updateWaveSpeed(Number(e.target.value))}
+              />
+            </label>
+            <label className="CompressionAnalysisPanel-label">
+              Delta emissive
+              <input
+                type="range"
+                min={0}
+                max={500}
+                step={1}
+                value={deltaScale}
+                onChange={(e) => updateDeltaScale(Number(e.target.value))}
+              />
+            </label>
+            <label className="CompressionAnalysisPanel-label">
+              Height exaggeration
+              <input
+                type="range"
+                min={1}
+                max={50}
+                step={0.5}
+                value={heightGain}
+                onChange={(e) => updateHeightGain(Number(e.target.value))}
+              />
+            </label>
+          </fieldset>
+        </>
+      )}
 
-      {report.tileCount > 0 && (
+      {enabled && report.tileCount > 0 && (
         <section className="CompressionAnalysisPanel-stats">
           <h3 className="CompressionAnalysisPanel-statsTitle">Aggregate ({report.tileCount} tiles)</h3>
           <dl className="CompressionAnalysisPanel-dl">

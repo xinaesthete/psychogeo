@@ -21,6 +21,7 @@ export function TrackCatalogPanel({
     const [catalog, setCatalog] = useState<TrackCatalogItem[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [collapsed, setCollapsed] = useState(false);
 
     useEffect(() => {
         let cancelled = false;
@@ -56,48 +57,62 @@ export function TrackCatalogPanel({
     return (
         <aside className="TrackCatalogPanel" aria-label="Track overlays">
             <header className="TrackCatalogPanel-header">
-                <h2 className="TrackCatalogPanel-title">Tracks</h2>
+                <button
+                    type="button"
+                    className="TrackCatalogPanel-headerButton"
+                    aria-expanded={!collapsed}
+                    onClick={() => setCollapsed((value) => !value)}
+                >
+                    <h2 className="TrackCatalogPanel-title">Tracks</h2>
+                    <span className="TrackCatalogPanel-caret" aria-hidden="true">
+                        {collapsed ? '▸' : '▾'}
+                    </span>
+                </button>
                 <span className="TrackCatalogPanel-meta">
                     {loading ? 'Loading…' : `${selectedIds.size} selected`}
                 </span>
             </header>
-            {error && <p className="TrackCatalogPanel-error">{error}</p>}
-            <ul className="TrackCatalogPanel-list">
-                {catalog.map((item) => {
-                    const selected = selectedIds.has(item.id);
-                    return (
-                        <li key={item.id}>
-                            <button
-                                type="button"
-                                className={
-                                    selected
-                                        ? 'TrackCatalogPanel-item TrackCatalogPanel-item--selected'
-                                        : 'TrackCatalogPanel-item'
-                                }
-                                onClick={() => toggle(item.id)}
-                                aria-pressed={selected}
-                            >
-                                <GpxThumbnail
-                                    gpxUrl={item.gpxUrl}
-                                    colour={item.colour}
-                                    className="TrackCatalogPanel-thumb"
-                                />
-                                <span className="TrackCatalogPanel-text">
-                                    <span className="TrackCatalogPanel-name">{item.title}</span>
-                                    {item.region && (
-                                        <span className="TrackCatalogPanel-region">
-                                            {item.region}
+            {!collapsed && (
+                <>
+                    {error && <p className="TrackCatalogPanel-error">{error}</p>}
+                    <ul className="TrackCatalogPanel-list">
+                        {catalog.map((item) => {
+                            const selected = selectedIds.has(item.id);
+                            return (
+                                <li key={item.id}>
+                                    <button
+                                        type="button"
+                                        className={
+                                            selected
+                                                ? 'TrackCatalogPanel-item TrackCatalogPanel-item--selected'
+                                                : 'TrackCatalogPanel-item'
+                                        }
+                                        onClick={() => toggle(item.id)}
+                                        aria-pressed={selected}
+                                    >
+                                        <GpxThumbnail
+                                            gpxUrl={item.gpxUrl}
+                                            colour={item.colour}
+                                            className="TrackCatalogPanel-thumb"
+                                        />
+                                        <span className="TrackCatalogPanel-text">
+                                            <span className="TrackCatalogPanel-name">{item.title}</span>
+                                            {item.region && (
+                                                <span className="TrackCatalogPanel-region">
+                                                    {item.region}
+                                                </span>
+                                            )}
                                         </span>
-                                    )}
-                                </span>
-                            </button>
-                        </li>
-                    );
-                })}
-            </ul>
-            <p className="TrackCatalogPanel-hint">
-                Catalog from API stub; thumbnails built from GPX geometry.
-            </p>
+                                    </button>
+                                </li>
+                            );
+                        })}
+                    </ul>
+                    <p className="TrackCatalogPanel-hint">
+                        Catalog from API stub; thumbnails built from GPX geometry.
+                    </p>
+                </>
+            )}
         </aside>
     );
 }
