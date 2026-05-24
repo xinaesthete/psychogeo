@@ -79,6 +79,7 @@ export async function getTileMesh(
   }
 
   const uniformBags: TileUniformBag[] = [];
+  const tileMeshes: THREE.Mesh[] = [];
 
   for (let lod = 0; lod < LOD_LEVELS; lod++) {
     const uvTransform = new THREE.Matrix3();
@@ -97,6 +98,7 @@ export async function getTileMesh(
 
     const mat = getTileMaterial(uniforms);
     const mesh = new THREE.Mesh(geo, mat);
+    tileMeshes.push(mesh);
     applyCustomDepth(mesh, uniforms);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
@@ -104,7 +106,14 @@ export async function getTileMesh(
     lodObj.addLevel(mesh, Math.pow(2, lod - lodBias) * s);
   }
 
-  registerCompressionTile(recodeUrl, lowRes, uniformBags, metreRangeForRecode);
+  const compressionHandle = registerCompressionTile(recodeUrl, lowRes, uniformBags, metreRangeForRecode);
+  for (const mesh of tileMeshes) {
+    const previousOnBeforeRender = mesh.onBeforeRender;
+    mesh.onBeforeRender = (renderer, scene, camera, geometry, material, group) => {
+      previousOnBeforeRender(renderer, scene, camera, geometry, material, group);
+      compressionHandle.requestVisible();
+    };
+  }
 
   info.mesh = lodObj;
   return info;

@@ -68,9 +68,16 @@ type CompressionTileRecord = {
   heightRangeMetres?: HeightRange;
   uniformBags: TileUniformBag[];
   lossyGeneration: number;
+  appliedQuality?: number;
+  failedQuality?: number;
+  loadingQuality?: number;
 };
 
 const trackedTiles = new Set<CompressionTileRecord>();
+
+export type CompressionTileHandle = {
+  requestVisible(): void;
+};
 
 let lossyCompressionRatio = DEFAULT_LOSSY_COMPRESSION_RATIO;
 
@@ -215,19 +222,19 @@ export function formatCompressionLoadStatus(status: CompressionLoadStatus): stri
     if (n === 0) {
       return 'Shader on — waiting for height tiles';
     }
-    return `Shader on — ${n} tile(s) ready for recode`;
+    return `Shader on — ${n} tile(s) tracked`;
   }
   if (status.total === 0) {
-    return 'Waiting for height tiles';
+    return 'Waiting for visible height tiles';
   }
   if (status.pending > 0) {
     const failed = status.failed > 0 ? `, ${status.failed} failed` : '';
-    return `Recode ${status.completed}/${status.total} (${status.pending} in flight${failed})`;
+    return `Visible recode ${status.completed}/${status.total} (${status.pending} in flight${failed})`;
   }
   if (status.failed > 0) {
-    return `Done with errors — ${status.completed}/${status.total} ok, ${status.failed} failed`;
+    return `Visible recode errors — ${status.completed}/${status.total} ok, ${status.failed} failed`;
   }
-  return `Lossy rasters ready (${status.completed}/${status.total})`;
+  return `Visible lossy rasters ready (${status.completed}/${status.total})`;
 }
 
 export function useCompressionLoadStatus(): CompressionLoadStatus {
@@ -270,23 +277,15 @@ export function registerCompressionTile(
   simplerDecodeHack: boolean,
   uniformBags: TileUniformBag[],
   heightRangeMetres?: HeightRange,
-): void {
+): CompressionTileHandle {
   const record: CompressionTileRecord = { url, simplerDecodeHack, heightRangeMetres, uniformBags, lossyGeneration: 0 };
   trackedTiles.add(record);
-  if (isCompressionExperimentEnabled() && loadStatus.recodePhase !== 'idle') {
-    for (const bag of uniformBags) {
-      const full = textureUniformValue(bag, 'heightFeild');
-      if (full) addLossyUniform(bag, full);
-    }
-    setLoadStatus({
-      recodePhase: 'running',
-      total: loadStatus.total + 1,
-      pending: loadStatus.pending + 1,
-    });
-    void loadLossyForRecord(record, ++record.lossyGeneration);
-  } else if (loadStatus.shaderEnabled) {
+  if (loadStatus.shaderEnabled) {
     emitStatus();
   }
+  return {
+    requestVisible: () => requestLossyForVisibleRecord(record),
+  };
 }
 
 function disposeLossyTexture(tex: THREE.Texture | undefined, full: THREE.Texture): void {
@@ -337,12 +336,16 @@ function noteLossyFinished(ok: boolean): void {
 async function loadLossyForRecord(
   record: CompressionTileRecord,
   generation: number,
+  quality: number,
 ): Promise<void> {
   const { url, simplerDecodeHack, heightRangeMetres, uniformBags } = record;
 
   try {
-    const lossy = await jp2Texture(url, simplerDecodeHack, lossyCompressionRatio, heightRangeMetres);
+    const lossy = await jp2Texture(url, simplerDecodeHack, quality, heightRangeMetres);
     if (record.lossyGeneration !== generation) return;
+    record.loadingQuality = undefined;
+    record.appliedQuality = quality;
+    record.failedQuality = undefined;
 
     if (lossy.recodeStats) {
       recordTileRecodeStats(url, lossy.recodeStats);
@@ -357,9 +360,40 @@ async function loadLossyForRecord(
     }
     noteLossyFinished(true);
   } catch (e) {
+    if (record.lossyGeneration !== generation) return;
+    record.loadingQuality = undefined;
+    record.failedQuality = quality;
     console.error('lossy height load failed', url, e);
     noteLossyFinished(false);
   }
+}
+
+function requestLossyForVisibleRecord(record: CompressionTileRecord): void {
+  if (!loadStatus.shaderEnabled || !isCompressionExperimentEnabled()) return;
+
+  const quality = getLossyCompressionRatio();
+  if (
+    record.appliedQuality === quality ||
+    record.loadingQuality === quality ||
+    record.failedQuality === quality
+  ) {
+    return;
+  }
+
+  for (const bag of record.uniformBags) {
+    const full = textureUniformValue(bag, 'heightFeild');
+    if (full) addLossyUniform(bag, full);
+  }
+
+  record.loadingQuality = quality;
+  record.failedQuality = undefined;
+  const generation = ++record.lossyGeneration;
+  setLoadStatus({
+    recodePhase: 'running',
+    total: loadStatus.total + 1,
+    pending: loadStatus.pending + 1,
+  });
+  void loadLossyForRecord(record, generation, quality);
 }
 
 function prepareLossyUniforms(): void {
@@ -374,6 +408,7 @@ function prepareLossyUniforms(): void {
 function cancelLossyLoads(): void {
   for (const record of trackedTiles) {
     record.lossyGeneration += 1;
+    record.loadingQuality = undefined;
   }
 }
 
@@ -385,11 +420,13 @@ function teardownLossyTextures(): void {
       if (full) disposeLossyTexture(textureUniformValue(bag, 'heightFeildLossy'), full);
       delete bag.heightFeildLossy;
     }
+    record.appliedQuality = undefined;
+    record.failedQuality = undefined;
   }
   invalidateLossyCache();
 }
 
-/** Begin worker recode for all tracked height tiles (call after setting quality). */
+/** Begin a visible-tile recode epoch. Rendered tiles enqueue themselves via onBeforeRender. */
 export function startLossyRecode(): void {
   if (!loadStatus.shaderEnabled) return;
 
@@ -404,23 +441,13 @@ export function startLossyRecode(): void {
   recodeReport = { ...emptyReport(), quality: lossyCompressionRatio };
   emitReport();
 
-  const targets = [...trackedTiles];
   setLoadStatus({
     recodePhase: 'running',
-    total: targets.length,
-    pending: targets.length,
+    total: 0,
+    pending: 0,
     completed: 0,
     failed: 0,
   });
-
-  for (const record of targets) {
-    const generation = ++record.lossyGeneration;
-    for (const bag of record.uniformBags) {
-      const full = textureUniformValue(bag, 'heightFeild');
-      if (full) addLossyUniform(bag, full);
-    }
-    void loadLossyForRecord(record, generation);
-  }
 }
 
 /** Sync experiment shader from TerrainOptions / Leva (does not start recode). */
