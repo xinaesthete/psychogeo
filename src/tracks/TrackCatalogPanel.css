@@ -9,10 +9,10 @@
   flex-direction: column;
   padding: 0.65rem 0.5rem;
   color: #e8eaed;
-  background: rgba(18, 20, 24, 0.88);
+  background: rgba(18, 20, 24, 0.5);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 8px;
-  backdrop-filter: blur(8px);
+  backdrop-filter: blur(3px);
   text-align: left;
   pointer-events: auto;
 }
