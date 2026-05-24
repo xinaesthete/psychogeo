@@ -22,6 +22,9 @@ export async function threeGeometryFromShpZip(coord: EastNorth) {
     console.log(`request for ${os}`);
     const url = "/os/" + os;
     const worker = await workers.getWorker();
+    if (!worker) {
+        throw new Error(`failed to get worker for ${os}`);
+    }
     ///////XXX: this was just some half-done temp debug thing I think
     // workerRegister.set(coord, worker);
     

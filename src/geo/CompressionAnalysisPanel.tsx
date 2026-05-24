@@ -8,12 +8,14 @@ import {
   sliderFromQuality,
 } from '../openjpegjs/jp2kloader';
 import {
+  compressionBlendModeIndex,
+  compressionBlendModes,
+  type CompressionBlendMode,
   formatCompressionLoadStatus,
-  getCompressionLoadStatus,
   getLossyCompressionRatio,
-  restartLossyRecodeAfterQualityChange,
   setLossyCompressionRatio,
   startLossyRecode,
+  syncCompressionExperiment,
   useCompressionLoadStatus,
   useCompressionRecodeReport,
 } from './compressionExperiment';
@@ -23,6 +25,7 @@ import {
   formatPercent,
   formatQuality,
 } from './compressionFormat';
+import { tileShaderUniforms } from './tileShaderRuntime';
 import './CompressionAnalysisPanel.css';
 
 function presetIsActive(current: number, preset: number): boolean {
@@ -40,32 +43,114 @@ const QUALITY_PRESETS: { label: string; quality: number }[] = [
   { label: 'Max', quality: MAX_LOSSY_COMPRESSION_RATIO },
 ];
 
-export function CompressionAnalysisPanel() {
+function blendModeFromUniform(): CompressionBlendMode {
+  const idx = tileShaderUniforms.compressionBlendMode?.value ?? 0;
+  return compressionBlendModes.find((m) => compressionBlendModeIndex[m] === idx) ?? 'mix';
+}
+
+function parseCompressionBlendMode(value: string): CompressionBlendMode {
+  return compressionBlendModes.find((m) => m === value) ?? 'mix';
+}
+
+function uniformNumber(name: string, fallback: number): number {
+  const value = tileShaderUniforms[name]?.value;
+  return typeof value === 'number' ? value : fallback;
+}
+
+function setUniformNumber(name: string, value: number): void {
+  const uniform = tileShaderUniforms[name];
+  if (uniform) uniform.value = value;
+}
+
+export function CompressionAnalysisPanel({
+  enabled,
+  onEnabledChange,
+}: {
+  enabled: boolean;
+  onEnabledChange: (enabled: boolean) => void;
+}) {
   const loadStatus = useCompressionLoadStatus();
   const report = useCompressionRecodeReport();
 
   const [quality, setQuality] = useState(() => getLossyCompressionRatio());
   const [qualitySlider, setQualitySlider] = useState(() => sliderFromQuality(getLossyCompressionRatio()));
   const [qualityText, setQualityText] = useState(() => formatQuality(getLossyCompressionRatio()));
+  const [heightBlend, setHeightBlend] = useState(() => uniformNumber('heightBlend', 0));
+  const [blendMode, setBlendMode] = useState<CompressionBlendMode>(() => blendModeFromUniform());
+  const [waveAmp, setWaveAmp] = useState(() => uniformNumber('compressionWaveAmp', 1));
+  const [waveFreq, setWaveFreq] = useState(() => uniformNumber('compressionWaveFreq', 12));
+  const [waveSpeed, setWaveSpeed] = useState(() => uniformNumber('compressionWaveSpeed', 0.5));
+  const [deltaScale, setDeltaScale] = useState(() => uniformNumber('compressionDeltaScale', 80));
+  const [heightGain, setHeightGain] = useState(() => uniformNumber('compressionHeightGain', 1));
 
-  const applyQuality = useCallback((q: number) => {
+  const setEnabled = useCallback((next: boolean) => {
+    onEnabledChange(next);
+    syncCompressionExperiment(next);
+    if (next) startLossyRecode();
+  }, [onEnabledChange]);
+
+  const updateQualityState = useCallback((q: number) => {
     const clamped = clampLossyQuality(q);
-    const prev = getLossyCompressionRatio();
     setQuality(clamped);
     setQualitySlider(sliderFromQuality(clamped));
     setQualityText(formatQuality(clamped));
     setLossyCompressionRatio(clamped);
-    const st = getCompressionLoadStatus();
-    if (st.shaderEnabled && st.recodePhase !== 'idle' && clamped !== prev) {
-      restartLossyRecodeAfterQualityChange();
-    }
+    return clamped;
+  }, []);
+
+  const applyQuality = useCallback((q: number) => {
+    updateQualityState(q);
+    if (enabled) startLossyRecode();
+  }, [enabled, updateQualityState]);
+
+  const previewQuality = useCallback((q: number) => {
+    updateQualityState(q);
+  }, [updateQualityState]);
+
+  const commitCurrentQuality = useCallback(() => {
+    if (enabled) startLossyRecode();
+  }, [enabled]);
+
+  const updateHeightBlend = useCallback((value: number) => {
+    setHeightBlend(value);
+    setUniformNumber('heightBlend', value);
+  }, []);
+
+  const updateBlendMode = useCallback((mode: CompressionBlendMode) => {
+    setBlendMode(mode);
+    setUniformNumber('compressionBlendMode', compressionBlendModeIndex[mode]);
+  }, []);
+
+  const updateWaveAmp = useCallback((value: number) => {
+    setWaveAmp(value);
+    setUniformNumber('compressionWaveAmp', value);
+  }, []);
+
+  const updateWaveFreq = useCallback((value: number) => {
+    setWaveFreq(value);
+    setUniformNumber('compressionWaveFreq', value);
+  }, []);
+
+  const updateWaveSpeed = useCallback((value: number) => {
+    setWaveSpeed(value);
+    setUniformNumber('compressionWaveSpeed', value);
+  }, []);
+
+  const updateDeltaScale = useCallback((value: number) => {
+    setDeltaScale(value);
+    setUniformNumber('compressionDeltaScale', value);
+  }, []);
+
+  const updateHeightGain = useCallback((value: number) => {
+    setHeightGain(value);
+    setUniformNumber('compressionHeightGain', value);
   }, []);
 
   const onQualitySlider = useCallback(
     (slider: number) => {
-      applyQuality(qualityFromSlider(slider));
+      previewQuality(qualityFromSlider(slider));
     },
-    [applyQuality],
+    [previewQuality],
   );
 
   const commitQualityText = useCallback(() => {
@@ -77,14 +162,10 @@ export function CompressionAnalysisPanel() {
     }
   }, [applyQuality, quality, qualityText]);
 
-  const runRecode = useCallback(() => {
-    setLossyCompressionRatio(quality);
-    startLossyRecode();
-  }, [quality]);
-
   useEffect(() => {
-    if (loadStatus.recodePhase === 'done') {
+    if (loadStatus.recodePhase === 'running' || loadStatus.recodePhase === 'done') {
       setQuality(getLossyCompressionRatio());
+      setHeightBlend(uniformNumber('heightBlend', 0));
     }
   }, [loadStatus.recodePhase, loadStatus.completed]);
 
@@ -97,7 +178,17 @@ export function CompressionAnalysisPanel() {
   return (
     <aside className="CompressionAnalysisPanel" aria-label="HTJ2K compression analysis">
       <header className="CompressionAnalysisPanel-header">
-        <h2 className="CompressionAnalysisPanel-title">Compression analysis</h2>
+        <div className="CompressionAnalysisPanel-headerTop">
+          <h2 className="CompressionAnalysisPanel-title">Compression analysis</h2>
+          <label className="CompressionAnalysisPanel-switch">
+            <input
+              type="checkbox"
+              checked={enabled}
+              onChange={(e) => setEnabled(e.target.checked)}
+            />
+            Enabled
+          </label>
+        </div>
         <span className="CompressionAnalysisPanel-meta">{statusLine}</span>
       </header>
 
@@ -107,7 +198,7 @@ export function CompressionAnalysisPanel() {
         files and more height error — compare against full decode for morphology experiments.
       </p>
 
-      <fieldset className="CompressionAnalysisPanel-fieldset">
+      <fieldset className="CompressionAnalysisPanel-fieldset" disabled={!enabled}>
         <legend>HTJ2K quality</legend>
         <p className="CompressionAnalysisPanel-hint">
           Encoder <code>setQuality(false, q)</code> — q=0 ≈ lossless, higher q → more compression (OpenJPH
@@ -140,6 +231,13 @@ export function CompressionAnalysisPanel() {
             step={0.001}
             value={qualitySlider}
             onChange={(e) => onQualitySlider(Number(e.target.value))}
+            onPointerUp={commitCurrentQuality}
+            onKeyUp={(e) => {
+              if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'Home' || e.key === 'End') {
+                commitCurrentQuality();
+              }
+            }}
+            onBlur={commitCurrentQuality}
           />
         </label>
 
@@ -156,15 +254,88 @@ export function CompressionAnalysisPanel() {
             }}
           />
         </label>
+      </fieldset>
 
-        <button
-          type="button"
-          className="CompressionAnalysisPanel-primary"
-          disabled={loadStatus.recodePhase === 'running'}
-          onClick={runRecode}
-        >
-          {loadStatus.recodePhase === 'running' ? 'Recoding…' : 'Start recode'}
-        </button>
+      <fieldset className="CompressionAnalysisPanel-fieldset" disabled={!enabled}>
+        <legend>Blend</legend>
+        <label className="CompressionAnalysisPanel-label">
+          Mode
+          <select
+            className="CompressionAnalysisPanel-select"
+            value={blendMode}
+            onChange={(e) => updateBlendMode(parseCompressionBlendMode(e.target.value))}
+          >
+            {compressionBlendModes.map((mode) => (
+              <option key={mode} value={mode}>{mode}</option>
+            ))}
+          </select>
+        </label>
+        <label className="CompressionAnalysisPanel-label">
+          Blend toward lossy
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={heightBlend}
+            onChange={(e) => updateHeightBlend(Number(e.target.value))}
+          />
+        </label>
+        <label className="CompressionAnalysisPanel-label">
+          Wave amplitude
+          <input
+            type="range"
+            min={0}
+            max={2}
+            step={0.05}
+            value={waveAmp}
+            onChange={(e) => updateWaveAmp(Number(e.target.value))}
+          />
+        </label>
+        <label className="CompressionAnalysisPanel-label">
+          Wave frequency
+          <input
+            type="range"
+            min={0.5}
+            max={80}
+            step={0.5}
+            value={waveFreq}
+            onChange={(e) => updateWaveFreq(Number(e.target.value))}
+          />
+        </label>
+        <label className="CompressionAnalysisPanel-label">
+          Wave speed
+          <input
+            type="range"
+            min={0}
+            max={5}
+            step={0.05}
+            value={waveSpeed}
+            onChange={(e) => updateWaveSpeed(Number(e.target.value))}
+          />
+        </label>
+        <label className="CompressionAnalysisPanel-label">
+          Delta emissive
+          <input
+            type="range"
+            min={0}
+            max={500}
+            step={1}
+            value={deltaScale}
+            onChange={(e) => updateDeltaScale(Number(e.target.value))}
+          />
+        </label>
+        <label className="CompressionAnalysisPanel-label">
+          Height exaggeration
+          <input
+            type="range"
+            min={1}
+            max={50}
+            step={0.5}
+            value={heightGain}
+            onChange={(e) => updateHeightGain(Number(e.target.value))}
+          />
+        </label>
       </fieldset>
 
       {report.tileCount > 0 && (

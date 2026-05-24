@@ -1,9 +1,5 @@
 import { useControls } from 'leva';
 import * as THREE from 'three';
-import {
-  compressionBlendModeIndex,
-  type CompressionBlendMode,
-} from './compressionExperiment';
 import { tileShaderUniforms } from './tileShaderRuntime';
 
 function vec3ToColor(v: THREE.Vector3): string {
@@ -15,21 +11,10 @@ function setVec3FromColor(v: THREE.Vector3, hex: string): void {
   v.set(c.r, c.g, c.b);
 }
 
-const blendModeOptions = Object.keys(compressionBlendModeIndex) as CompressionBlendMode[];
-
-function blendModeFromUniform(): CompressionBlendMode {
-  const idx = tileShaderUniforms.compressionBlendMode?.value ?? 0;
-  return blendModeOptions.find((m) => compressionBlendModeIndex[m] === idx) ?? 'mix';
-}
-
 /**
  * Leva panel for shared terrain shader uniforms (live, no recompile).
  */
-export function TileShaderControls({
-  compressionShaderOn = false,
-}: {
-  compressionShaderOn?: boolean;
-}) {
+export function TileShaderControls() {
   const u = tileShaderUniforms;
   const contourEmissive = u.contourEmissive.value;
   const majorContourEmissive = u.majorContourEmissive.value;
@@ -112,87 +97,6 @@ export function TileShaderControls({
       },
     },
   });
-
-  useControls(
-    'Compression blend',
-    compressionShaderOn
-      ? {
-          heightBlend: {
-            value: u.heightBlend?.value ?? 0,
-            min: 0,
-            max: 1,
-            step: 0.01,
-            label: 'blend toward lossy',
-            onChange: (v: number) => {
-              if (u.heightBlend) u.heightBlend.value = v;
-            },
-          },
-          blendMode: {
-            value: blendModeFromUniform(),
-            options: blendModeOptions,
-            onChange: (mode: CompressionBlendMode) => {
-              if (u.compressionBlendMode) {
-                u.compressionBlendMode.value = compressionBlendModeIndex[mode];
-              }
-            },
-          },
-          waveAmp: {
-            value: u.compressionWaveAmp?.value ?? 1,
-            min: 0,
-            max: 2,
-            step: 0.05,
-            onChange: (v: number) => {
-              if (u.compressionWaveAmp) u.compressionWaveAmp.value = v;
-            },
-          },
-          waveFreq: {
-            value: u.compressionWaveFreq?.value ?? 12,
-            min: 0.5,
-            max: 80,
-            step: 0.5,
-            onChange: (v: number) => {
-              if (u.compressionWaveFreq) u.compressionWaveFreq.value = v;
-            },
-          },
-          waveSpeed: {
-            value: u.compressionWaveSpeed?.value ?? 0.5,
-            min: 0,
-            max: 5,
-            step: 0.05,
-            onChange: (v: number) => {
-              if (u.compressionWaveSpeed) u.compressionWaveSpeed.value = v;
-            },
-          },
-          deltaScale: {
-            value: u.compressionDeltaScale?.value ?? 80,
-            min: 0,
-            max: 500,
-            step: 1,
-            label: 'delta emissive',
-            onChange: (v: number) => {
-              if (u.compressionDeltaScale) u.compressionDeltaScale.value = v;
-            },
-          },
-          heightGain: {
-            value: u.compressionHeightGain?.value ?? 1,
-            min: 1,
-            max: 50,
-            step: 0.5,
-            label: 'height exaggeration',
-            onChange: (v: number) => {
-              if (u.compressionHeightGain) u.compressionHeightGain.value = v;
-            },
-          },
-        }
-      : {
-          hint: {
-            value: 'Enable experiment in Leva → Compression',
-            editable: false,
-          },
-        },
-    { collapsed: true },
-    [compressionShaderOn],
-  );
 
   return null;
 }

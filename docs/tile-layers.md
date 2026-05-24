@@ -2,7 +2,7 @@
 
 Proposed in-browser architecture for tile data flow. Replaces today's ad-hoc per-tile state — where compression, height texture, LOD, and visibility loading are tangled across [src/geo/TileLoaderUK.ts](../src/geo/TileLoaderUK.ts), [src/geo/LodUtils.ts](../src/geo/LodUtils.ts), and [src/geo/compressionExperiment.ts](../src/geo/compressionExperiment.ts) — with a small, named lifecycle for **raster channels** attached to long-lived **tile nodes**.
 
-Not implemented yet. This doc is a contract for the next refactor PRs.
+The type-only API skeleton lives in [src/geo/tileLayerTypes.ts](../src/geo/tileLayerTypes.ts). The manager and channel implementations are still future migration work.
 
 ## Related docs
 

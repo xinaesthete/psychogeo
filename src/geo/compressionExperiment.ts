@@ -13,6 +13,13 @@ import { applyModuleUpdate, tileShaderUniforms } from './tileShaderRuntime';
 
 export type CompressionBlendMode = 'mix' | 'wave' | 'split' | 'deltaEmissive';
 
+export const compressionBlendModes: readonly CompressionBlendMode[] = [
+  'mix',
+  'wave',
+  'split',
+  'deltaEmissive',
+];
+
 export const compressionBlendModeIndex: Record<CompressionBlendMode, number> = {
   mix: 0,
   wave: 1,
@@ -201,17 +208,17 @@ export function subscribeCompressionLoadStatus(listener: () => void): () => void
 
 export function formatCompressionLoadStatus(status: CompressionLoadStatus): string {
   if (!status.shaderEnabled) {
-    return 'Off — enable experiment (shader)';
+    return 'Off';
   }
   if (status.recodePhase === 'idle') {
     const n = countLossyTargets();
     if (n === 0) {
-      return 'Shader on — waiting for height tiles; use analysis panel → Start recode';
+      return 'Shader on — waiting for height tiles';
     }
-    return `Shader on — ${n} tile(s); use analysis panel → Start recode`;
+    return `Shader on — ${n} tile(s) ready for recode`;
   }
   if (status.total === 0) {
-    return 'No height tiles to recode';
+    return 'Waiting for height tiles';
   }
   if (status.pending > 0) {
     const failed = status.failed > 0 ? `, ${status.failed} failed` : '';
@@ -266,11 +273,13 @@ export function registerCompressionTile(
 ): void {
   const record: CompressionTileRecord = { url, simplerDecodeHack, heightRangeMetres, uniformBags, lossyGeneration: 0 };
   trackedTiles.add(record);
-  if (isCompressionExperimentEnabled() && loadStatus.recodePhase === 'running') {
+  if (isCompressionExperimentEnabled() && loadStatus.recodePhase !== 'idle') {
     for (const bag of uniformBags) {
-      addLossyUniform(bag, bag.heightFeild.value as THREE.Texture);
+      const full = textureUniformValue(bag, 'heightFeild');
+      if (full) addLossyUniform(bag, full);
     }
     setLoadStatus({
+      recodePhase: 'running',
       total: loadStatus.total + 1,
       pending: loadStatus.pending + 1,
     });
@@ -292,6 +301,11 @@ function addLossyUniform(bag: TileUniformBag, fullTexture: THREE.Texture): void 
   } else {
     bag.heightFeildLossy.value = fullTexture;
   }
+}
+
+function textureUniformValue(bag: TileUniformBag, key: string): THREE.Texture | undefined {
+  const value = bag[key]?.value;
+  return value instanceof THREE.Texture ? value : undefined;
 }
 
 function countLossyTargets(): number {
@@ -335,9 +349,10 @@ async function loadLossyForRecord(
     }
 
     for (const bag of uniformBags) {
-      const full = bag.heightFeild.value as THREE.Texture;
-      disposeLossyTexture(bag.heightFeildLossy?.value as THREE.Texture | undefined, full);
-      bag.heightFeildLossy!.value = lossy.texture;
+      const full = textureUniformValue(bag, 'heightFeild');
+      if (!full) continue;
+      disposeLossyTexture(textureUniformValue(bag, 'heightFeildLossy'), full);
+      addLossyUniform(bag, lossy.texture);
       lossy.texture.needsUpdate = true;
     }
     noteLossyFinished(true);
@@ -350,7 +365,8 @@ async function loadLossyForRecord(
 function prepareLossyUniforms(): void {
   for (const record of trackedTiles) {
     for (const bag of record.uniformBags) {
-      addLossyUniform(bag, bag.heightFeild.value as THREE.Texture);
+      const full = textureUniformValue(bag, 'heightFeild');
+      if (full) addLossyUniform(bag, full);
     }
   }
 }
@@ -365,8 +381,8 @@ function teardownLossyTextures(): void {
   cancelLossyLoads();
   for (const record of trackedTiles) {
     for (const bag of record.uniformBags) {
-      const full = bag.heightFeild.value as THREE.Texture;
-      disposeLossyTexture(bag.heightFeildLossy?.value as THREE.Texture | undefined, full);
+      const full = textureUniformValue(bag, 'heightFeild');
+      if (full) disposeLossyTexture(textureUniformValue(bag, 'heightFeildLossy'), full);
       delete bag.heightFeildLossy;
     }
   }
@@ -380,6 +396,10 @@ export function startLossyRecode(): void {
   cancelLossyLoads();
   teardownLossyTextures();
   invalidateLossyCache();
+
+  if (tileShaderUniforms.heightBlend) {
+    tileShaderUniforms.heightBlend.value = 1;
+  }
 
   recodeReport = { ...emptyReport(), quality: lossyCompressionRatio };
   emitReport();
@@ -396,20 +416,11 @@ export function startLossyRecode(): void {
   for (const record of targets) {
     const generation = ++record.lossyGeneration;
     for (const bag of record.uniformBags) {
-      addLossyUniform(bag, bag.heightFeild.value as THREE.Texture);
+      const full = textureUniformValue(bag, 'heightFeild');
+      if (full) addLossyUniform(bag, full);
     }
     void loadLossyForRecord(record, generation);
   }
-}
-
-/** Re-run recode after quality change (experiment must already be on). */
-export function restartLossyRecodeAfterQualityChange(): void {
-  if (!loadStatus.shaderEnabled) return;
-  setLoadStatus({ recodePhase: 'idle', pending: 0, completed: 0, failed: 0, total: 0 });
-  recodeReport = emptyReport();
-  emitReport();
-  teardownLossyTextures();
-  emitStatus();
 }
 
 /** Sync experiment shader from TerrainOptions / Leva (does not start recode). */

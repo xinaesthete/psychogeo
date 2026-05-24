@@ -112,7 +112,7 @@ The Leva _Compression_ folder disappears. The Leva _Compression blend_ folder di
 
 Numbered, scoped steps for follow-up PRs. Each step is small enough to ship and revert independently; together they implement the target above without a flag day.
 
-1. **Introduce the channel API skeleton.** Land `RasterChannel`, `TileNode`, `TileLayerManager` interfaces as proposed in [tile-layers.md](tile-layers.md) § _API sketch_. No behaviour change; nothing consumes the manager yet.
+1. **Introduce the channel API skeleton.** Land `RasterChannel`, `TileNode`, `TileLayerManager` interfaces as proposed in [tile-layers.md](tile-layers.md) § _API sketch_. Done as a type-only skeleton in [src/geo/tileLayerTypes.ts](../src/geo/tileLayerTypes.ts); nothing consumes the manager yet.
 2. **Move primary height onto a channel.** Refactor [src/geo/LodUtils.ts](../src/geo/LodUtils.ts) so `getTileMesh` produces a bare `TileNode` (geometry + LOD only) and the existing `heightFeild` uniform binding moves into a `height.primary` channel's `applyToTile`. Visibility wiring still flows through `LazyTile.onBeforeRender` for this step.
 3. **Move lossy recode onto a channel.** Convert [src/geo/compressionExperiment.ts](../src/geo/compressionExperiment.ts) into a `height.lossy` channel factory + a slim report aggregator that subscribes to channel events. Delete `registerCompressionTile` from `getTileMesh`. Attach happens once at experiment-enable time, not per-tile.
 4. **Wire the q slider directly to the channel.** Replace `setLossyCompressionRatio` + `restartLossyRecodeAfterQualityChange` with `manager.updateChannelParams('height.lossy', { q })`. Remove the _Start recode_ button. Quality-change is one-step.

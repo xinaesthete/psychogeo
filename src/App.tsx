@@ -9,7 +9,6 @@ import { DEFAULT_PAN_INERTIA, setPanInertiaTuning } from './camera/panInertia';
 import { DEFAULT_SMOOTH_ZOOM, setSmoothZoomTuning } from './camera/smoothZoom';
 import { convertWgsToOSGB, EastNorth } from './geo/Coordinates';
 import { CompressionAnalysisPanel } from './geo/CompressionAnalysisPanel';
-import { useCompressionLevaControls } from './geo/CompressionControls';
 import { newGLContext, TerrainOptions, Track } from './geo/TileLoaderUK';
 import { TerrainHost, TerrainRenderMode } from './terrain/TerrainHost';
 import { CameraViewControls } from './camera/CameraViewControls';
@@ -41,7 +40,6 @@ const DEV_LOCATIONS = {
 
 function App() {
   const [compressionExperimentEnabled, setCompressionExperimentEnabled] = useState(false);
-  useCompressionLevaControls(setCompressionExperimentEnabled);
 
   const {defra10mDTMLayer, defraDSMLayer, osTerr50Layer, inspectionLight, r3f} = useControls({
     defra10mDTMLayer: false,
@@ -125,13 +123,16 @@ function App() {
         options={terrainOptions}
         renderMode={renderMode}
       />
-      {compressionExperimentEnabled && <CompressionAnalysisPanel />}
+      <CompressionAnalysisPanel
+        enabled={compressionExperimentEnabled}
+        onEnabledChange={setCompressionExperimentEnabled}
+      />
       <TrackCatalogPanel
         selectedIds={selectedTrackIds}
         onSelectionChange={onTrackSelectionChange}
       />
       <CameraViewControls />
-      <TileShaderControls compressionShaderOn={compressionExperimentEnabled} />
+      <TileShaderControls />
     </div>
   );
 }

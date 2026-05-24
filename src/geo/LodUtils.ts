@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { WebGLRenderer } from 'three';
 import * as JP2 from '../openjpegjs/jp2kloader';
 import { globalUniforms } from '../threact/threact';
 import { computeTriangleGridIndices } from '../threact/threexample';
@@ -39,35 +38,6 @@ function getLodUniforms(lod: number) {
   return {EPS, gridSizeX, gridSizeY, LOD};
 }
 
-function renderMip(renderer: WebGLRenderer, texture: THREE.Texture, size: number) {
-  return texture; //TODO: implement & use this properly.
-  const camera = new THREE.OrthographicCamera(0, 1, 0, 1, 0, 2);
-  camera.position.set(0.5, 0.5, -2);
-  camera.lookAt(0.5, 0.5, 0);
-  const geo = new THREE.PlaneGeometry(1, 1, 1, 1);
-  //TODO: filter nicely.
-  const mat = new THREE.MeshBasicMaterial({map: texture});
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.position.set(0, 1, 0);
-  mesh.scale.set(-1, -1, 1);
-  const scene = new THREE.Scene();
-  scene.add(mesh);
-  const oldTarget = renderer.getRenderTarget();
-  const target = new THREE.WebGLRenderTarget(size, size);
-  target.texture.format = texture.format;
-  target.texture.type = texture.type;
-  target.texture.magFilter = texture.magFilter;
-  target.texture.minFilter = texture.minFilter;
-  target.texture.wrapS = texture.wrapS;
-  target.texture.wrapT = texture.wrapT;
-  target.texture.colorSpace = texture.colorSpace;
-  target.texture.generateMipmaps = false;
-  renderer.setRenderTarget(target);
-  renderer.render(scene, camera);
-  renderer.setRenderTarget(oldTarget);
-  return target.texture;
-}
-
 export interface GetTileMeshOptions {
   compressionExperiment?: boolean;
 }
@@ -80,14 +50,13 @@ export async function getTileMesh(
 ) {
   const sources = info.sources;
   const source = !sources ? info.source_filename : sources[2000] || sources[1000] || sources[500]!;
+  const displayUrl = getImageFilename(source, lowRes, false);
+  const recodeUrl = getImageFilename(source, lowRes, true);
   const compressionOn =
     meshOptions.compressionExperiment ?? isCompressionExperimentEnabled();
-  const displayUrl = getImageFilename(source, lowRes, false);
-  const recodeUrl = lowRes && compressionOn ? getImageFilename(source, lowRes, true) : null;
-  console.log("getTileMesh filename", displayUrl, recodeUrl ?? '');
+  console.log("getTileMesh filename", displayUrl, recodeUrl);
 
-  const { texture, frameInfo } = await JP2.jp2Texture(displayUrl, lowRes);
-  const w = frameInfo.width, h = frameInfo.height;
+  const { texture } = await JP2.jp2Texture(displayUrl, lowRes);
   const lodObj = new GeoLOD();
   const s = lowRes ? 40960 : 1000;
   const heightMin = lowRes ? 0 : (info.min_ele ?? 0);
@@ -112,35 +81,6 @@ export async function getTileMesh(
   const uniformBags: TileUniformBag[] = [];
 
   for (let lod = 0; lod < LOD_LEVELS; lod++) {
-    if (false && lod <= 3) {
-      let g = new THREE.Group();
-      for (let y=0; y<2; y++) {
-        for (let x=0; x<2; x++) {
-          const uvTransform = new THREE.Matrix3();
-          uvTransform.setUvTransform(0, 0, 0.5, 0.5, 0, x, y);
-          const uniforms: TileUniformBag = {
-            heightFeild: { value: texture },
-            heightMin: { value: heightMin }, heightMax: { value: heightMax },
-            ...getLodUniforms(lod+1),
-            uvTransform: { value: uvTransform },
-            iTime: globalUniforms.iTime,
-          };
-          if (compressionOn) {
-            uniforms.heightFeildLossy = { value: texture };
-          }
-          uniformBags.push(uniforms);
-          const geo = tileGeom[lod+1];
-          const mat = getTileMaterial(uniforms);
-          const mesh = new THREE.Mesh(geo, mat);
-          applyCustomDepth(mesh, uniforms);
-          mesh.castShadow = true;
-          mesh.receiveShadow = true;
-          g.add(mesh);
-        }
-      }
-      lodObj.addLevel(g, Math.pow(2, lod - lodBias) * s);
-      continue;
-    }
     const uvTransform = new THREE.Matrix3();
     const uniforms: TileUniformBag = {
       heightFeild: { value: texture },
@@ -157,14 +97,6 @@ export async function getTileMesh(
 
     const mat = getTileMaterial(uniforms);
     const mesh = new THREE.Mesh(geo, mat);
-    if (lowRes && lod > 4) {
-      const oldBeforeRender = mesh.onBeforeRender;
-      mesh.onBeforeRender = (renderer) => {
-        const mipSize = w / Math.pow(2, lod - 4);
-        uniforms.heightFeild.value = renderMip(renderer, texture, mipSize);
-        mesh.onBeforeRender = oldBeforeRender;
-      }
-    }
     applyCustomDepth(mesh, uniforms);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
@@ -172,9 +104,7 @@ export async function getTileMesh(
     lodObj.addLevel(mesh, Math.pow(2, lod - lodBias) * s);
   }
 
-  if (compressionOn && recodeUrl) {
-    registerCompressionTile(recodeUrl, lowRes, uniformBags, metreRangeForRecode);
-  }
+  registerCompressionTile(recodeUrl, lowRes, uniformBags, metreRangeForRecode);
 
   info.mesh = lodObj;
   return info;
