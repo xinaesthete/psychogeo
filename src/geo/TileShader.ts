@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { globalUniforms } from '../threact/threact';
 import { glsl } from '../threact/threexample';
-import { ensureCompressionShaderUniforms } from './compressionExperiment';
+import { advanceCompressionTransitions, ensureCompressionShaderUniforms } from './compressionExperiment';
 import {
     installTileShaderModule,
     type TileShaderFrameContext,
@@ -42,6 +42,7 @@ function updateFrame({ uniforms, dt }: TileShaderFrameContext): void {
     if (phase && speed) {
         phase.value += speed.value * dt;
     }
+    advanceCompressionTransitions(dt);
 }
 
 function createTileLoadingMaterial(): THREE.ShaderMaterial {
@@ -75,6 +76,20 @@ function patchShaderBeforeCompile(uniforms: TileUniformBag) {
                 uniforms.heightFeildLossy = { value: uniforms.heightFeild.value };
             }
             shader.uniforms.heightFeildLossy = uniforms.heightFeildLossy;
+        }
+        if (!shader.uniforms.heightFeildLossyNext && uniforms.heightFeildLossy) {
+            if (!uniforms.heightFeildLossyNext) {
+                uniforms.heightFeildLossyNext = { value: uniforms.heightFeildLossy.value };
+            }
+            shader.uniforms.heightFeildLossyNext = uniforms.heightFeildLossyNext;
+        }
+        if (!shader.uniforms.compressionLossyMorph) {
+            uniforms.compressionLossyMorph ??= { value: 0 };
+            shader.uniforms.compressionLossyMorph = uniforms.compressionLossyMorph;
+        }
+        if (!shader.uniforms.compressionLoading) {
+            uniforms.compressionLoading ??= { value: 0 };
+            shader.uniforms.compressionLoading = uniforms.compressionLoading;
         }
         shader.vertexShader = patchVertexShader(shader.vertexShader);
         shader.fragmentShader = patchFragmentShader(shader.fragmentShader);
@@ -110,6 +125,12 @@ const heightSamplingGlsl = glsl`
         // RedFormat + HalfFloatType: height is IEEE half in .r only (not 8-bit high/low split).
         return texture2D(tex, uv).r;
     }
+    float sampleLossyHeight(vec2 uv) {
+        float current = sampleHeightTex(heightFeildLossy, uv);
+        if (compressionLossyMorph <= 0.) return current;
+        float next = sampleHeightTex(heightFeildLossyNext, uv);
+        return mix(current, next, clamp(compressionLossyMorph, 0., 1.));
+    }
     float compressionBlendFactor(vec2 uv) {
         if (compressionEnabled < 0.5) return 0.;
         float t = heightBlend;
@@ -126,7 +147,7 @@ const heightSamplingGlsl = glsl`
     float getNormalisedHeight(vec2 uv) {
         float hFull = sampleHeightTex(heightFeild, uv);
         if (compressionEnabled < 0.5) return hFull;
-        float hLossy = sampleHeightTex(heightFeildLossy, uv);
+        float hLossy = sampleLossyHeight(uv);
         float blend = compressionBlendFactor(uv);
         float delta = hLossy - hFull;
         return hFull + delta * blend * max(compressionHeightGain, 1.);
@@ -144,6 +165,7 @@ const vertexPreamble = glsl`
     uniform float heightMin, heightMax;
     uniform sampler2D heightFeild;
     uniform sampler2D heightFeildLossy;
+    uniform sampler2D heightFeildLossyNext;
     uniform float compressionEnabled;
     uniform float heightBlend;
     uniform float compressionWaveAmp;
@@ -151,6 +173,8 @@ const vertexPreamble = glsl`
     uniform float compressionWaveSpeed;
     uniform float compressionBlendMode;
     uniform float compressionHeightGain;
+    uniform float compressionLossyMorph;
+    uniform float compressionLoading;
     ${heightSamplingGlsl}
     vec4 computePos(vec2 uv) {
         return vec4(uv - 0.5, getNormalisedHeight(uv), 1.0);
@@ -205,8 +229,12 @@ const emissivemap_fragmentChunk = glsl`
     vec3 lodCol = vec3(LOD, lodSat, lodVal); // hue from per-tile LOD; sat/val from Leva
     totalEmissiveRadiance.rgb += hsv2rgb(lodCol);
     if (compressionEnabled > 0.5 && compressionBlendMode > 2.5) {
-        float d = abs(sampleHeightTex(heightFeild, vUv) - sampleHeightTex(heightFeildLossy, vUv));
+        float d = abs(sampleHeightTex(heightFeild, vUv) - sampleLossyHeight(vUv));
         totalEmissiveRadiance.rgb += vec3(d * compressionDeltaScale);
+    }
+    if (compressionLoading > 0.5) {
+        float pulse = 0.45 + 0.55 * sin(iTime * 7.0 + dot(vUv, vec2(13.0, 7.0)));
+        totalEmissiveRadiance.rgb += vec3(0.05, 0.12, 0.08) * pulse * compressionLoading;
     }
 `;
 
@@ -228,6 +256,7 @@ function patchFragmentShader(fragmentShader: string) {
     precision highp float;
     uniform sampler2D heightFeild;
     uniform sampler2D heightFeildLossy;
+    uniform sampler2D heightFeildLossyNext;
     //uniform vec2 EPS; //! don't use in fragment — fragments can be finer than the grid
     uniform float heightMin, heightMax;
     uniform float iTime;
@@ -249,6 +278,8 @@ function patchFragmentShader(fragmentShader: string) {
     uniform float compressionBlendMode;
     uniform float compressionHeightGain;
     uniform float compressionDeltaScale;
+    uniform float compressionLossyMorph;
+    uniform float compressionLoading;
     float bias(float t, float b) { return pow(t, log(b) / log(0.5)); }
     float gain(float t, float g) {
     if (t < 0.5)

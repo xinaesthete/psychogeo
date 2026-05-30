@@ -247,11 +247,18 @@ export async function jp2TexturePair(
 }
 
 /** Evict runtime-recoded textures (not full-quality @q=1 entries). */
-export function invalidateLossyCache(url?: string): void {
+export function invalidateLossyCache(url?: string, compressionRatio?: number): void {
+  const exactKey =
+    url !== undefined && compressionRatio !== undefined
+      ? cacheKey(url, compressionRatio)
+      : undefined;
   const toDelete: string[] = [];
   for (const key of textureCache.keys()) {
     if (!isLossyCacheKey(key)) continue;
-    if (url === undefined || key.startsWith(`${url}@q=`)) {
+    if (
+      exactKey === key ||
+      (exactKey === undefined && (url === undefined || key.startsWith(`${url}@q=`)))
+    ) {
       const entry = textureCache.get(key);
       entry?.texture.dispose();
       toDelete.push(key);

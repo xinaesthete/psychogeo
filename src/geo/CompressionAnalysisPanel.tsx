@@ -89,27 +89,32 @@ export function CompressionAnalysisPanel({
     if (next) startLossyRecode();
   }, [onEnabledChange]);
 
-  const updateQualityState = useCallback((q: number) => {
+  /** Update React display state only — does NOT commit to the module-level ratio. */
+  const setReactQualityState = useCallback((q: number) => {
     const clamped = clampLossyQuality(q);
     setQuality(clamped);
     setQualitySlider(sliderFromQuality(clamped));
     setQualityText(formatQuality(clamped));
-    setLossyCompressionRatio(clamped);
     return clamped;
   }, []);
 
+  /** Commit a quality value: updates module-level ratio and starts a recode epoch. */
   const applyQuality = useCallback((q: number) => {
-    updateQualityState(q);
+    const clamped = setReactQualityState(q);
+    setLossyCompressionRatio(clamped);
     if (enabled) startLossyRecode();
-  }, [enabled, updateQualityState]);
+  }, [enabled, setReactQualityState]);
 
+  /** Update display only during slider drag — no recode triggered. */
   const previewQuality = useCallback((q: number) => {
-    updateQualityState(q);
-  }, [updateQualityState]);
+    setReactQualityState(q);
+  }, [setReactQualityState]);
 
+  /** Commit the current slider position (called on pointer-up / key-up). */
   const commitCurrentQuality = useCallback(() => {
+    setLossyCompressionRatio(quality);
     if (enabled) startLossyRecode();
-  }, [enabled]);
+  }, [enabled, quality]);
 
   const updateHeightBlend = useCallback((value: number) => {
     setHeightBlend(value);
@@ -238,7 +243,6 @@ export function CompressionAnalysisPanel({
                     commitCurrentQuality();
                   }
                 }}
-                onBlur={commitCurrentQuality}
               />
             </label>
 
