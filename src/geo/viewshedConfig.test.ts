@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   DEFAULT_VIEWSHED_SHADOW_MAP_SIZE,
-  DEFAULT_VIEWSHED_SHADOW_NEAR,
+  DEFAULT_VIEWSHED_SHADOW_NEAR_SCALE,
   DEFAULT_VIEWSHED_SHADOW_RADIUS,
+  DEFAULT_VIEWSHED_SOURCE_HEIGHT,
   resolveViewshedShadowConfig,
   viewshedAwareLodDistance,
 } from './viewshedConfig';
@@ -12,8 +13,21 @@ test('resolveViewshedShadowConfig returns viewshed defaults', () => {
   assert.deepEqual(resolveViewshedShadowConfig(), {
     radius: DEFAULT_VIEWSHED_SHADOW_RADIUS,
     mapSize: DEFAULT_VIEWSHED_SHADOW_MAP_SIZE,
-    near: DEFAULT_VIEWSHED_SHADOW_NEAR,
+    near: DEFAULT_VIEWSHED_SOURCE_HEIGHT * DEFAULT_VIEWSHED_SHADOW_NEAR_SCALE,
+    nearScale: DEFAULT_VIEWSHED_SHADOW_NEAR_SCALE,
   });
+});
+
+test('resolveViewshedShadowConfig derives near from source height and scale', () => {
+  assert.deepEqual(
+    resolveViewshedShadowConfig({ sourceHeight: 3, nearScale: 0.75 }),
+    {
+      radius: DEFAULT_VIEWSHED_SHADOW_RADIUS,
+      mapSize: DEFAULT_VIEWSHED_SHADOW_MAP_SIZE,
+      near: 2.25,
+      nearScale: 0.75,
+    },
+  );
 });
 
 test('resolveViewshedShadowConfig clamps unsafe shadow values', () => {
@@ -23,6 +37,7 @@ test('resolveViewshedShadowConfig clamps unsafe shadow values', () => {
       radius: 10,
       mapSize: 256,
       near: 5,
+      nearScale: DEFAULT_VIEWSHED_SHADOW_NEAR_SCALE,
     },
   );
 });

@@ -221,6 +221,10 @@ export interface TerrainOptions {
     viewshedShadowRadius?: number;
     /** Per-cube-face manual viewshed shadow-map size. */
     viewshedShadowMapSize?: number;
+    /** Multiplier applied to source height to derive point-light shadow near plane. */
+    viewshedShadowNearScale?: number;
+    /** Debug escape hatch for light leaks; not the preferred analysis path. */
+    viewshedDoubleSidedShadows?: boolean;
     camZ: number;
     /** R3F / external OrbitControls own the camera; skip internal map controls. */
     externalControls?: boolean;
@@ -240,6 +244,7 @@ const defaultTerrainOptions: TerrainOptions = {
     viewshedSourceHeight: DEFAULT_VIEWSHED_SOURCE_HEIGHT,
     viewshedShadowRadius: DEFAULT_VIEWSHED_SHADOW_RADIUS,
     viewshedShadowMapSize: DEFAULT_VIEWSHED_SHADOW_MAP_SIZE,
+    viewshedDoubleSidedShadows: false,
 };
 
 type PivotMarkerParts = {
@@ -306,8 +311,10 @@ export type TerrainDebugSnapshot = {
         shadowMapSize: { width: number; height: number };
         shadowCameraNear: number;
         shadowCameraFar: number;
+        shadowNearScale: number;
         shadowAutoUpdate: boolean;
         shadowNeedsUpdate: boolean;
+        doubleSidedShadows: boolean;
         visible: boolean;
     };
     lod: ReturnType<typeof collectGeoLodDebugSnapshot>;
@@ -489,6 +496,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
     private viewshedLightParts?: ViewshedLightParts;
     private viewshedSurfacePoint?: THREE.Vector3;
     private lastViewshedLodStateKey = "";
+    private lastSyncedDoubleSidedShadows: boolean | undefined;
 
     isTerrainInited(): boolean {
         return this.terrainInited;
@@ -746,7 +754,28 @@ export class TerrainRenderer extends ThreactTrackballBase {
         return resolveViewshedShadowConfig({
             radius: this.options.viewshedShadowRadius,
             mapSize: this.options.viewshedShadowMapSize,
+            sourceHeight: this.viewshedSourceHeight(),
+            nearScale: this.options.viewshedShadowNearScale,
         });
+    }
+
+    private syncViewshedShadowSide(): void {
+        const enabled = !!this.options.viewshedDoubleSidedShadows;
+        if (this.lastSyncedDoubleSidedShadows === enabled) return;
+        this.lastSyncedDoubleSidedShadows = enabled;
+        const shadowSide = this.options.viewshedDoubleSidedShadows
+            ? THREE.DoubleSide
+            : null;
+        for (const root of [this.dsmLayer, this.dtmLayer]) {
+            root.traverse((object) => {
+                if (!(object instanceof THREE.Mesh)) return;
+                const material = object.material;
+                const materials = Array.isArray(material) ? material : [material];
+                for (const entry of materials) {
+                    entry.shadowSide = shadowSide;
+                }
+            });
+        }
     }
 
     private applyViewshedShadowConfig(parts: ViewshedLightParts): void {
@@ -798,6 +827,8 @@ export class TerrainRenderer extends ThreactTrackballBase {
         ]);
         if (key === this.lastViewshedLodStateKey) return;
         this.lastViewshedLodStateKey = key;
+        this.lastSyncedDoubleSidedShadows = undefined;
+        this.syncViewshedShadowSide();
         this.requestViewshedShadowUpdate();
     }
 
@@ -816,6 +847,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
             return;
         }
         const parts = this.ensureViewshedLight();
+        this.syncViewshedShadowSide();
         this.applyViewshedShadowConfig(parts);
         parts.group.position
             .copy(this.viewshedSurfacePoint)
@@ -894,19 +926,22 @@ export class TerrainRenderer extends ThreactTrackballBase {
         }
         if (this.viewshedLightParts && this.viewshedSurfacePoint) {
             const { light } = this.viewshedLightParts;
+            const config = this.viewshedShadowConfig();
             snapshot.viewshedSource = {
                 surface: this.vectorSnapshot(this.viewshedSurfacePoint),
                 position: this.vectorSnapshot(this.viewshedLightParts.group.position),
                 heightOffset: this.viewshedSourceHeight(),
-                shadowRadius: this.viewshedShadowConfig().radius,
+                shadowRadius: config.radius,
                 shadowMapSize: {
                     width: light.shadow.mapSize.width,
                     height: light.shadow.mapSize.height,
                 },
                 shadowCameraNear: light.shadow.camera.near,
                 shadowCameraFar: light.shadow.camera.far,
+                shadowNearScale: config.nearScale,
                 shadowAutoUpdate: light.shadow.autoUpdate,
                 shadowNeedsUpdate: light.shadow.needsUpdate,
+                doubleSidedShadows: !!this.options.viewshedDoubleSidedShadows,
                 visible: this.viewshedLightParts.group.visible,
             };
         }
@@ -938,6 +973,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
         //LOD is now done with THREE.LOD, although we may benefit from a different distance function.
         //if so, we won't have a separate updateLOD() pass here.
         this.syncLightRig();
+        this.syncViewshedShadowSide();
         this.markViewshedShadowIfLodStateChanged();
         this.updatePivotMarkerScale();
         this.updateViewshedMarkerScale();

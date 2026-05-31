@@ -53,6 +53,8 @@ function useTerrainRenderer(coord: EastNorth, options: TerrainOptions) {
     options.viewshedSourceHeight,
     options.viewshedShadowRadius,
     options.viewshedShadowMapSize,
+    options.viewshedShadowNearScale,
+    options.viewshedDoubleSidedShadows,
     options.camZ,
     options.externalControls,
     tracksKey,
@@ -130,6 +132,8 @@ function TerrainR3FScene({
     options.viewshedSourceHeight,
     options.viewshedShadowRadius,
     options.viewshedShadowMapSize,
+    options.viewshedShadowNearScale,
+    options.viewshedDoubleSidedShadows,
     camZ,
     tracksKey,
   ]);

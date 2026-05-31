@@ -10,6 +10,12 @@ import { DEFAULT_SMOOTH_ZOOM, setSmoothZoomTuning } from './camera/smoothZoom';
 import { convertWgsToOSGB, EastNorth } from './geo/Coordinates';
 import { CompressionAnalysisPanel } from './geo/CompressionAnalysisPanel';
 import { newGLContext, TerrainOptions, Track } from './geo/TileLoaderUK';
+import {
+  DEFAULT_VIEWSHED_SHADOW_MAP_SIZE,
+  DEFAULT_VIEWSHED_SHADOW_NEAR_SCALE,
+  DEFAULT_VIEWSHED_SHADOW_RADIUS,
+  DEFAULT_VIEWSHED_SOURCE_HEIGHT,
+} from './geo/viewshedConfig';
 import { TerrainHost, TerrainRenderMode } from './terrain/TerrainHost';
 import { CameraViewControls } from './camera/CameraViewControls';
 import { TrackCatalogPanel } from './tracks/TrackCatalogPanel';
@@ -89,27 +95,40 @@ function App() {
     viewshedSourceHeight,
     viewshedShadowRadius,
     viewshedShadowMapSize,
+    viewshedShadowNearScale,
+    viewshedDoubleSidedShadows,
   } = useControls('Viewshed', {
     viewshedSourceHeight: {
-      value: 2,
+      value: DEFAULT_VIEWSHED_SOURCE_HEIGHT,
       min: 0,
       max: 50,
       step: 0.1,
       label: 'source height (m)',
     },
     viewshedShadowRadius: {
-      value: 20_000,
+      value: DEFAULT_VIEWSHED_SHADOW_RADIUS,
       min: 500,
       max: 100_000,
       step: 500,
       label: 'shadow radius (m)',
     },
     viewshedShadowMapSize: {
-      value: 2048,
+      value: DEFAULT_VIEWSHED_SHADOW_MAP_SIZE,
       min: 512,
       max: 4096,
       step: 512,
       label: 'shadow map size',
+    },
+    viewshedShadowNearScale: {
+      value: DEFAULT_VIEWSHED_SHADOW_NEAR_SCALE,
+      min: 0.05,
+      max: 2,
+      step: 0.05,
+      label: 'near / height',
+    },
+    viewshedDoubleSidedShadows: {
+      value: true,
+      label: 'double-sided shadows',
     },
   });
   useEffect(() => {
@@ -138,10 +157,12 @@ function App() {
       viewshedSourceHeight,
       viewshedShadowRadius,
       viewshedShadowMapSize,
+      viewshedShadowNearScale,
+      viewshedDoubleSidedShadows,
       camZ: 3000,
       tracks: overlayTracks,
     }),
-    [defra10mDTMLayer, defraDSMLayer, osTerr50Layer, compressionExperimentEnabled, inspectionLight, viewshedSourceHeight, viewshedShadowRadius, viewshedShadowMapSize, overlayTracks],
+    [defra10mDTMLayer, defraDSMLayer, osTerr50Layer, compressionExperimentEnabled, inspectionLight, viewshedSourceHeight, viewshedShadowRadius, viewshedShadowMapSize, viewshedShadowNearScale, viewshedDoubleSidedShadows, overlayTracks],
   );
 
   const renderMode: TerrainRenderMode = r3f ? 'r3f' : 'threact';
