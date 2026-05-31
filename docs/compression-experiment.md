@@ -1,8 +1,6 @@
 # Compression experiment
 
-The HTJ2K compression experiment is the first concrete consumer of the raster-channel model proposed in [tile-layers.md](tile-layers.md). This doc describes what it is today, what is broken or incoherent about it, what it should look like once it is a channel, and the sequenced migration that gets it there.
-
-No code changes here; this is the contract for the migration PRs.
+The HTJ2K compression experiment is the first concrete consumer of the raster-channel model proposed in [tile-layers.md](tile-layers.md). This doc describes what it is today, what has been fixed recently, what is still broken, what it should look like once it is a channel, and the sequenced migration that gets it there.
 
 ## Related docs
 
@@ -18,65 +16,95 @@ Where the pieces live today:
 
 - The encoder call — `setQuality(false, q)` followed by encode / decode — in [public/texture_worker.js](../public/texture_worker.js) inside the worker's `recode` command.
 - The blend shader — `mix`, `wave`, `split`, `deltaEmissive` modes — in [src/geo/TileShader.ts](../src/geo/TileShader.ts).
-- The aggregate report and the worker-pool dispatch — `loadLossyForRecord`, `recordTileRecodeStats`, `startLossyRecode` — in [src/geo/compressionExperiment.ts](../src/geo/compressionExperiment.ts).
-- The HTML panel (q slider, presets, aggregate stats, per-tile table) — [src/geo/CompressionAnalysisPanel.tsx](../src/geo/CompressionAnalysisPanel.tsx).
-- The Leva enable toggle + status monitor — [src/geo/CompressionControls.tsx](../src/geo/CompressionControls.tsx).
-- The Leva blend-mode + wave / delta knobs — [src/geo/TileShaderControls.tsx](../src/geo/TileShaderControls.tsx) (the "Compression blend" folder).
-- Per-tile registration — `registerCompressionTile` invoked from [src/geo/LodUtils.ts](../src/geo/LodUtils.ts) inside `getTileMesh`.
+- Tile tracking, visibility-gated recode dispatch, aggregate report — `registerCompressionTile`, `requestVisible`, `startLossyRecode`, `loadLossyForRecord`, `recordTileRecodeStats` — in [src/geo/compressionExperiment.ts](../src/geo/compressionExperiment.ts).
+- The HTML panel (enable toggle, q slider, presets, blend controls, aggregate stats, per-tile table) — [src/geo/CompressionAnalysisPanel.tsx](../src/geo/CompressionAnalysisPanel.tsx), mounted from [src/App.tsx](../src/App.tsx).
+- Per-tile registration and visibility hook — `registerCompressionTile` + `onBeforeRender → requestVisible()` in [src/geo/LodUtils.ts](../src/geo/LodUtils.ts) inside `getTileMesh`.
 
-## 2. Current state — what is broken or incoherent
+## 2. Current lifecycle (as implemented)
 
-Concrete, with file references:
+Enabling the experiment and changing quality are both one-step; there is no _Start recode_ button.
 
-### 2.1 DSM is never recoded
+```mermaid
+stateDiagram-v2
+  [*] --> Off
+  Off --> On: panel "Enabled" checked → syncCompressionExperiment(true) + startLossyRecode()
+  On --> Recoding: visible tile renders → requestVisible()
+  Recoding --> Ready: lossy texture applied (optional morph)
+  Ready --> Recoding: q changed (preset / slider commit / text commit) → startLossyRecode()
+  Ready --> Off: experiment disabled → teardownLossyTextures()
+  Recoding --> Off: experiment disabled (in-flight loads cancelled via lossyGeneration)
+```
 
-`getTileMesh` only registers a tile for recode when `lowRes && compressionOn` — see the `recodeUrl` assignment in [src/geo/LodUtils.ts](../src/geo/LodUtils.ts) (`const recodeUrl = lowRes && compressionOn ? getImageFilename(source, lowRes, true) : null;`, around line 86, and the matching `registerCompressionTile` call near line 175). `lowRes` is true only for the 10 m DTM tiles. The 1 m DSM is silently excluded despite the panel copy in [src/geo/CompressionAnalysisPanel.tsx](../src/geo/CompressionAnalysisPanel.tsx) saying "Runtime HTJ2K recode for DEFRA height tiles (DSM and 10m DTM)" (around line 105).
+**Enable.** Checking _Enabled_ in the panel calls `syncCompressionExperiment(true)` then `startLossyRecode()`. The shader dual-height path activates immediately; visible tiles begin recoding on their next `onBeforeRender`.
 
-### 2.2 Recode set is whatever happened to be loaded
+**Quality change.** Presets and the quality text field commit immediately (`applyQuality`). The q slider previews while dragging and commits on pointer-up / arrow-key release (`commitCurrentQuality`). Each commit updates the module-level ratio and calls `startLossyRecode()`, which resets all tile phases to `idle` and starts a new recode epoch.
 
-`registerCompressionTile` fires inside `getTileMesh` (line 175 in [src/geo/LodUtils.ts](../src/geo/LodUtils.ts)). When the user clicks _Start recode_, the experiment recodes whatever tiles were loaded before that point. Tiles loaded after Start are silently added to a running pipeline by the `loadStatus.recodePhase === 'running'` branch of `registerCompressionTile` ([src/geo/compressionExperiment.ts](../src/geo/compressionExperiment.ts) around line 269) — but the user has no way to know which tiles made it in.
+**Visibility gating.** Recode work is driven by `mesh.onBeforeRender → compressionHandle.requestVisible()`. A tile is "alive" while it has rendered recently (`TILE_ALIVE_GRACE_MS`, 1.5 s). Only alive tiles are counted in load status and enqueued for recode. Off-screen tiles are not recoded until they become visible again.
 
-### 2.3 Off-screen tiles still recode
+**Registration.** Every height tile loaded through `getTileMesh` registers for recode — both 1 m DSM (`/tile/…`) and 10 m DTM (`/ltile/…`). There is no longer a `lowRes &&` gate on registration.
 
-The experiment iterates `trackedTiles` (a module-level `Set` at line 66 of [src/geo/compressionExperiment.ts](../src/geo/compressionExperiment.ts)). Every loaded tile is recoded, regardless of whether it is in the camera frustum. The q-slider therefore costs O(catalog), not O(viewport).
+**UI surface.** Compression controls live in a single HTML panel: enable toggle, q slider + presets, blend mode + blend amount + wave/delta knobs, aggregate stats, per-tile table. The former Leva _Compression_ folder ([CompressionControls.tsx](../src/geo/CompressionControls.tsx)) and _Compression blend_ folder in [TileShaderControls.tsx](../src/geo/TileShaderControls.tsx) are gone; terrain-shader Leva knobs (contours, LOD hue, height emissive) remain in _Terrain shader_.
 
-### 2.4 Quality-change UX is two-step and looks broken
+## 3. Height formats and recode paths
 
-`restartLossyRecodeAfterQualityChange` (around line 405 of [src/geo/compressionExperiment.ts](../src/geo/compressionExperiment.ts)) wipes state to `recodePhase: 'idle'` and asks the user to press _Start recode_ again. The panel's `applyQuality` callback (around line 51 of [src/geo/CompressionAnalysisPanel.tsx](../src/geo/CompressionAnalysisPanel.tsx)) calls it conditionally, so dragging the slider after a recode leaves the visible terrain looking like it has not responded — the height blend stays at the previous q until you find the button. This reads as a bug even though it is the documented flow.
+The worker distinguishes two recode paths in `recode()` ([texture_worker.js](../public/texture_worker.js)):
 
-### 2.5 One feature, three UI surfaces
+| Layer | Fetch URL | Offline source | Runtime display | Recode path |
+|-------|-----------|----------------|-----------------|-------------|
+| **10 m DTM** | `/ltile/{idx}_{idx}-4096-32bit.j2c` | Float32 GeoTIFF windows → HTJ2K | `/ttile/` GeoTIFF extract → half-float **metres** (fast path when experiment off) | **DTM branch** when `heightRangeMetres` is supplied: denormalise uint16 codebook → metres, encode, decode, convert back to half-float metres, upsample if half-res, **quadrant-mirror repair** |
+| **1 m DSM** | `/tile/{asc_stem}_normalised_rate0.j2c` | Float32 asc windows → normalised uint16 HTJ2K | Worker `decodeTex`: uint16 codebook → half-float **normalised 0…1**; shader `mapHeight()` uses catalog `min_ele` / `max_ele` | **Generic branch**: encode/decode uint16 codebook, `toHalf(v / 65536)` — **no upsample, no mirror repair** |
 
-The experiment is wired across three controls files:
+Important nuance: DSM tiles served at runtime are **per-tile normalised uint16**, not float32. Float32 is the offline survey source; [scripts/transcodeNormalise.js](../scripts/transcodeNormalise.js) produces the `_normalised_rate0.j2c` files under `/tile/`. The generic recode path is therefore structurally correct for DSM _encoding_, but it does not include the lossy-decode artefact repair that the DTM branch has.
 
-- Enable toggle + status monitor in [src/geo/CompressionControls.tsx](../src/geo/CompressionControls.tsx).
-- q slider, presets, aggregate stats, per-tile table in [src/geo/CompressionAnalysisPanel.tsx](../src/geo/CompressionAnalysisPanel.tsx).
-- Blend mode + wave / delta knobs in [src/geo/TileShaderControls.tsx](../src/geo/TileShaderControls.tsx) under the "Compression blend" folder.
+For DTM recode, `getTileMesh` estimates `heightRangeMetres` by sampling the `/ttile/` display texture ([LodUtils.ts](../src/geo/LodUtils.ts)). For DSM, no metre range is passed — the shader already owns denormalisation via `heightMin` / `heightMax` uniforms from the catalog.
 
-A user discovering the feature has to find all three.
+## 4. What is still broken or incomplete
 
-### 2.6 Module-singleton state
+### 4.1 DSM lossy decode artefacts (known bug)
 
-`trackedTiles`, `lossyCompressionRatio`, `loadStatus`, `recodeReport` (lines 66–96 of [src/geo/compressionExperiment.ts](../src/geo/compressionExperiment.ts)) are module-level. Two consequences:
+DSM recode runs and produces a lossy texture, but the result is often visibly wrong: a **2×2 quadrant pattern** within each tile — duplicated columns and rows where the northern half carries the meaningful variation and the southern half is a muted copy. This matches the half-resolution / quadrant-mirror failure mode that lossy HTJ2K decode exhibits on height rasters.
 
-- HMR re-evaluation of the module would clobber live state, so the experiment quietly assumes the module is never reloaded.
-- Two `TerrainRenderer` instances on the same page would share a single recode pipeline, which is wrong.
+The DTM branch detects and repairs this (`quadrantMirrorScore`, `repairLossyDtmTex`, upsampling in [texture_worker.js](../public/texture_worker.js)). The DSM generic branch does not. Fixing DSM likely means either:
 
-### 2.7 No unload on disable
+- Extending mirror repair + upsampling to the generic path (output stays normalised 0…1 half-float), or
+- Routing DSM through a variant of the DTM path that converts via catalog `min_ele` / `max_ele` and writes half-float metres (would require aligning shader uniform conventions with DTM).
 
-`syncCompressionExperiment(false)` in [src/geo/compressionExperiment.ts](../src/geo/compressionExperiment.ts) (around line 436) calls `teardownLossyTextures()` but leaves `trackedTiles` intact. Re-enabling the experiment then reconstitutes the dual-height uniforms from a stale registration set. This works because re-enable is rare, not because it is correct.
+Separately, if any tiles are still served as raw float32 JP2 (not the normalised uint16 `/tile/` files), the generic path would misinterpret sample values entirely — worth confirming against the actual files on disk.
 
-### 2.8 Adjacent dead code
+### 4.2 DTM recode correctness (needs validation)
 
-Not the experiment's fault, but in scope of the same refactor (and called out so the migration PR does not need to re-discover them):
+The DTM branch has substantial special-casing (metre range estimation, denormalise/re-normalise, upsample, mirror repair). It may still be wrong or fragile — see [NOTES.md](../NOTES.md) ("pipeline is incorrect for float32 data"). Whether 10 m DTM recode **looks** correct in the blend shader and whether aggregate RMSE numbers are trustworthy needs explicit confirmation.
 
-- `renderMip()` body returns the input texture before doing any of its body work — [src/geo/LodUtils.ts](../src/geo/LodUtils.ts) lines 42–43.
-- Sub-tile split path permanently disabled — `if (false && lod <= 3)` at line 115 of [src/geo/LodUtils.ts](../src/geo/LodUtils.ts).
-- `planeBaseTest()` "not working" — [src/geo/TileLoaderUK.ts](../src/geo/TileLoaderUK.ts) lines 426–442.
-- `LazyTileOS.rasterize()` empty stub — [src/geo/TileLoaderUK.ts](../src/geo/TileLoaderUK.ts) (the rasterize stub on `LazyTileOS`).
+### 4.3 Module-singleton state
 
-## 3. Target lifecycle
+`trackedTiles`, `lossyCompressionRatio`, `loadStatus`, `recodeReport` in [compressionExperiment.ts](../src/geo/compressionExperiment.ts) remain module-level. HMR re-evaluation would clobber live state; two `TerrainRenderer` instances on one page would share one pipeline.
 
-Under the channel model in [tile-layers.md](tile-layers.md), the experiment becomes a `RasterChannel<{ q: number }>` attached at experiment-enable time. The state surface collapses:
+### 4.4 Stale registration on disable
+
+`syncCompressionExperiment(false)` calls `teardownLossyTextures()` but leaves `trackedTiles` intact. Re-enabling reconstitutes dual-height uniforms from the stale set. Works in practice because disable/re-enable is rare.
+
+### 4.5 Aggregate report scope
+
+The per-tile table only lists tiles that have **completed** a recode in the current epoch. There is no "tracked / visible / off-screen / not yet recoded" status column; totals do not distinguish catalog size from measured workload.
+
+### 4.6 Progress can appear stuck
+
+If no tiles are alive (nothing in view) or all visible tiles are in `ready`/`failed`/`loading` phase from a prior epoch, status strings can read as idle/waiting even though the user expects movement. The phase gate in `requestLossyForVisibleRecord` only loads tiles in `idle` phase until the next `startLossyRecode()`.
+
+## 5. Target lifecycle (channel model)
+
+Under the channel model in [tile-layers.md](tile-layers.md), the experiment becomes a `RasterChannel<{ q: number }>` attached at experiment-enable time. Much of today's UX is already aligned with the target:
+
+- q slider is the trigger (done).
+- Visible-tile-only recode (done, via `onBeforeRender` + alive grace — manager-driven visibility in step 6 of the migration plan would replace this hook).
+- Single panel surface (done).
+
+Still to migrate:
+
+- Replace `registerCompressionTile` per-tile calls with a channel factory attached once at enable time.
+- Replace `lossyGeneration` counters with manager-supplied `AbortSignal`.
+- Collapse module singletons onto the manager + channel instances.
+- Honest report with visible / off-screen / failed status per catalog tile.
 
 ```mermaid
 stateDiagram-v2
@@ -89,36 +117,18 @@ stateDiagram-v2
   Recoding --> Off: experiment disabled (cancel in-flight)
 ```
 
-Key differences vs today:
+## 6. Migration plan
 
-- **"Start recode" button goes away.** Enabling the experiment attaches a `height.lossy` channel; q-changes call `manager.updateChannelParams('height.lossy', { q })`; visible tiles reconcile automatically. The slider is the trigger.
-- **DSM and DTM are both supported.** The channel can be attached to whichever layer's tiles are in scope; there is no `lowRes &&` gate in the channel itself. If the user wants to scope it to one layer, that is a UI control, not a hardcoded condition.
-- **Cancellation is uniform.** The channel's `load(ctx)` accepts the manager-supplied `AbortSignal`; per-record `lossyGeneration` counters go away.
-- **Off-screen tiles cost nothing on q-change.** They reconcile when they next become visible.
-- **The aggregate report covers _what the user has seen_.** The per-tile table includes an "off-screen, not yet recoded" status for catalog tiles that the channel has not yet been asked to load. Honest measurement instead of pretending the catalog is the workload.
+Numbered steps for follow-up PRs. Steps marked **done** reflect the current branch; others are still open.
 
-## 4. UI consolidation
+1. **Introduce the channel API skeleton.** **Done** — type-only skeleton in [src/geo/tileLayerTypes.ts](../src/geo/tileLayerTypes.ts).
+2. **Move primary height onto a channel.** Refactor [src/geo/LodUtils.ts](../src/geo/LodUtils.ts) so `getTileMesh` produces a bare `TileNode` and `height.primary` channel owns the `heightFeild` uniform binding.
+3. **Move lossy recode onto a channel.** Convert [src/geo/compressionExperiment.ts](../src/geo/compressionExperiment.ts) into a `height.lossy` channel factory + report aggregator. Delete per-tile `registerCompressionTile` from `getTileMesh`.
+4. **Wire the q slider directly to the channel.** Replace `setLossyCompressionRatio` + `startLossyRecode` with `manager.updateChannelParams('height.lossy', { q })`. **Partially done** — slider already triggers recode without a button; still module-singleton, not channel params.
+5. **Consolidate UI.** **Done** — single [CompressionAnalysisPanel.tsx](../src/geo/CompressionAnalysisPanel.tsx); Leva compression folders removed.
+6. **Replace placeholder-based loading with manager-driven visibility.** Swap `onBeforeRender` hooks for `manager.observeVisibility(camera)`. **Partially done** — visibility gating exists via alive grace, but still per-mesh `onBeforeRender`, not manager-driven.
+7. **Fix DSM (and validate DTM) recode pipeline.** Extend worker recode to handle DSM lossy-decode artefacts; confirm float32 → normalised uint16 assumptions match deployed tiles. Likely precedes or accompanies step 3.
+8. **Delete dead adjacent code.** Sub-tile split, `planeBaseTest`, `LazyTileOS.rasterize()` stub — see [TileLoaderUK.ts](../src/geo/TileLoaderUK.ts) (status varies; re-audit before deleting).
+9. **Add a second channel to validate the API.** Pre-baked `height.aux.firstMinusLast` against a tiny sample dataset.
 
-Collapse the three surfaces into one panel:
-
-- **Enable toggle** (moved out of the Leva _Compression_ folder, into the panel header).
-- **q slider** with presets — drives the channel params directly. No "Start" button.
-- **Blend mode** (`mix` / `wave` / `split` / `deltaEmissive`) and blend amount — moved out of [src/geo/TileShaderControls.tsx](../src/geo/TileShaderControls.tsx). The other knobs there (contour speed / interval / strength, LOD hue, height emissive) are unrelated to the experiment and stay in the Terrain-shader folder.
-- **Aggregate stats** and **per-tile table** — as today, but with a "visible / off-screen / failed" status column and total counts that distinguish "tiles measured" from "catalog size".
-
-The Leva _Compression_ folder disappears. The Leva _Compression blend_ folder disappears. The HTML panel becomes the only surface, and the experiment is discoverable via a single entry point.
-
-## 5. Migration plan
-
-Numbered, scoped steps for follow-up PRs. Each step is small enough to ship and revert independently; together they implement the target above without a flag day.
-
-1. **Introduce the channel API skeleton.** Land `RasterChannel`, `TileNode`, `TileLayerManager` interfaces as proposed in [tile-layers.md](tile-layers.md) § _API sketch_. Done as a type-only skeleton in [src/geo/tileLayerTypes.ts](../src/geo/tileLayerTypes.ts); nothing consumes the manager yet.
-2. **Move primary height onto a channel.** Refactor [src/geo/LodUtils.ts](../src/geo/LodUtils.ts) so `getTileMesh` produces a bare `TileNode` (geometry + LOD only) and the existing `heightFeild` uniform binding moves into a `height.primary` channel's `applyToTile`. Visibility wiring still flows through `LazyTile.onBeforeRender` for this step.
-3. **Move lossy recode onto a channel.** Convert [src/geo/compressionExperiment.ts](../src/geo/compressionExperiment.ts) into a `height.lossy` channel factory + a slim report aggregator that subscribes to channel events. Delete `registerCompressionTile` from `getTileMesh`. Attach happens once at experiment-enable time, not per-tile.
-4. **Wire the q slider directly to the channel.** Replace `setLossyCompressionRatio` + `restartLossyRecodeAfterQualityChange` with `manager.updateChannelParams('height.lossy', { q })`. Remove the _Start recode_ button. Quality-change is one-step.
-5. **Consolidate UI.** Merge [src/geo/CompressionControls.tsx](../src/geo/CompressionControls.tsx), [src/geo/CompressionAnalysisPanel.tsx](../src/geo/CompressionAnalysisPanel.tsx), and the "Compression blend" folder of [src/geo/TileShaderControls.tsx](../src/geo/TileShaderControls.tsx) into one panel (`CompressionAnalysisPanel.tsx` is the natural surviving file). Remove the Leva _Compression_ and _Compression blend_ folders.
-6. **Replace placeholder-based loading with manager-driven visibility.** Swap `LazyTile.onBeforeRender` in [src/geo/TileLoaderUK.ts](../src/geo/TileLoaderUK.ts) for `manager.observeVisibility(camera)` driven from the render loop, with explicit `becameVisible` / `becameInvisible` transitions. Off-screen tiles stop recoding.
-7. **Delete dead adjacent code.** `renderMip()` body, `if (false && lod <= 3)` sub-tile split ([src/geo/LodUtils.ts](../src/geo/LodUtils.ts)), `planeBaseTest()` ([src/geo/TileLoaderUK.ts](../src/geo/TileLoaderUK.ts)), `LazyTileOS.rasterize()` stub ([src/geo/TileLoaderUK.ts](../src/geo/TileLoaderUK.ts)).
-8. **Add a second channel to validate the API.** A pre-baked `height.aux.firstMinusLast` channel against a tiny sample dataset. Confirms the API generalises beyond the lossy-recode case and exercises payload sizing / extent metadata.
-
-Each numbered step is small enough to be a single issue. Steps 1–4 are the critical path for fixing the experiment's UX; 5 makes it discoverable; 6 makes it cheap; 7–8 are tidy-up and confidence-building.
+Steps 2–4 and 7 are the critical path for a trustworthy experiment; 6 and 9 are polish and confidence-building.

@@ -21,7 +21,7 @@ Each channel is:
 - **Unloadable.** Channels evict under working-set pressure; the tile node and its geometry survive eviction.
 - **Versioned by parameters.** Each channel carries a small `params` object (e.g. `{ q: 0.05 }` for the lossy height channel). Changing the parameters invalidates only that channel; other channels on the same tile, and other tiles' instances of the same channel, are untouched if their params have not changed.
 
-Today's [LazyTile / getTileMesh / registerCompressionTile](../src/geo/TileLoaderUK.ts) pipeline already mixes these concerns; this doc names them so they can be separated and the broken bits of the compression experiment can be straightened out (see [compression-experiment.md](compression-experiment.md)).
+Today's [LazyTile / getTileMesh / registerCompressionTile](../src/geo/TileLoaderUK.ts) pipeline already mixes these concerns; this doc names them so they can be separated. The compression experiment has had recent UX fixes (single panel, q-slider-driven recode, visibility gating) but still runs on module-singleton state and has known DSM recode artefact bugs — see [compression-experiment.md](compression-experiment.md).
 
 ## 2. API sketch
 
@@ -193,7 +193,7 @@ sequenceDiagram
   Note over Off: untouched; will load on next becomeVisible
 ```
 
-The off-screen branch is the win over today's behaviour: the catalog of ~100 DEFRA tiles does not all recode when one slider moves; only what the user can see does the work.
+The off-screen branch is the win over the original experiment behaviour (which recoded the whole loaded catalog). **Partially implemented today:** visible tiles recode via `onBeforeRender → requestVisible()` with a short alive grace; off-screen tiles are skipped until they render again. The manager-driven visibility hook in § _Migration map_ would replace the per-mesh `onBeforeRender` pattern.
 
 ## 5. Basemap morph
 
