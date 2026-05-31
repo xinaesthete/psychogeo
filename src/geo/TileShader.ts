@@ -4,6 +4,8 @@ import { glsl } from '../threact/threexample';
 import { advanceCompressionTransitions, ensureCompressionShaderUniforms } from './compressionExperiment';
 import {
     installTileShaderModule,
+    tileShaderUniforms,
+    type TileShaderPatchOptions,
     type TileShaderFrameContext,
     type TileShaderModule,
     type TileUniformBag,
@@ -33,6 +35,9 @@ function ensureUniforms(shared: Record<string, THREE.IUniform>): void {
     ensureUniform(shared, 'lodSat', () => ({ value: 0.8 }));
     ensureUniform(shared, 'lodVal', () => ({ value: 0.0 }));
     ensureUniform(shared, 'contourStrength', () => ({ value: 0.3 }));
+    ensureUniform(shared, 'viewshedGeoidProjection', () => ({ value: 0 }));
+    ensureUniform(shared, 'viewshedEffectiveEarthRadius', () => ({ value: 6_371_000 }));
+    ensureUniform(shared, 'viewshedSourceWorld', () => ({ value: new THREE.Vector3() }));
     ensureCompressionShaderUniforms(shared);
 }
 
@@ -93,7 +98,10 @@ function createTerrainPickMaterial(uniforms: TileUniformBag): THREE.ShaderMateri
 
 // 'frankenShader': MeshStandardMaterial + onBeforeCompile patches (see attributeless in TileLoaderUK).
 /** thar be dragons */
-function patchShaderBeforeCompile(uniforms: TileUniformBag) {
+function patchShaderBeforeCompile(
+    uniforms: TileUniformBag,
+    options: TileShaderPatchOptions,
+) {
     // Unity surface-shader style: procedural PBR inputs, standard shader does lighting.
     // https://stackoverflow.com/questions/30287170/combining-shaders-in-three-js
     return (shader: CompiledShader) => {
@@ -119,7 +127,7 @@ function patchShaderBeforeCompile(uniforms: TileUniformBag) {
             uniforms.compressionLoading ??= { value: 0 };
             shader.uniforms.compressionLoading = uniforms.compressionLoading;
         }
-        shader.vertexShader = patchVertexShader(shader.vertexShader);
+        shader.vertexShader = patchVertexShader(shader.vertexShader, options);
         shader.fragmentShader = patchFragmentShader(shader.fragmentShader);
     };
 }
@@ -185,6 +193,25 @@ const heightSamplingGlsl = glsl`
     }
 `;
 
+const viewshedGeoidVertexPreamble = glsl`
+    uniform float viewshedGeoidProjection;
+    uniform float viewshedEffectiveEarthRadius;
+    uniform vec3 viewshedSourceWorld;
+    vec4 applyViewshedGeoidProjection(vec4 worldPosition) {
+        if (viewshedGeoidProjection < 0.5) return worldPosition;
+        float radius = max(viewshedEffectiveEarthRadius, 1.0);
+        vec2 horizontal = worldPosition.xy - viewshedSourceWorld.xy;
+        float d2 = dot(horizontal, horizontal);
+        float radius2 = radius * radius;
+        float sag = d2 / (2.0 * radius);
+        if (d2 > radius2 * 0.0001) {
+            sag = radius - sqrt(max(radius2 - d2, 0.0));
+        }
+        worldPosition.z -= sag;
+        return worldPosition;
+    }
+`;
+
 const vertexPreamble = glsl`
 #define USE_UV
     uniform float iTime;
@@ -203,6 +230,7 @@ const vertexPreamble = glsl`
     uniform float compressionHeightGain;
     uniform float compressionLossyMorph;
     uniform float compressionLoading;
+    ${viewshedGeoidVertexPreamble}
     ${heightSamplingGlsl}
     vec4 computePos(vec2 uv) {
         return vec4(uv - 0.5, getNormalisedHeight(uv), 1.0);
@@ -249,6 +277,83 @@ const project_vertexChunk = glsl`
     gl_Position = projectionMatrix * p;
 `;
 
+const projectViewshedShadow_vertexChunk = glsl`
+    transformed = p.xyz; // model space; not yet multiplied by modelMatrix
+    vec4 geoidWorldPosition = modelMatrix * vec4(transformed, 1.0);
+    geoidWorldPosition = applyViewshedGeoidProjection(geoidWorldPosition);
+    vec4 mvPosition = viewMatrix * geoidWorldPosition;
+    gl_Position = projectionMatrix * mvPosition;
+`;
+
+const worldposViewshedShadow_vertexChunk = glsl`
+#if defined( USE_ENVMAP ) || defined( DISTANCE ) || defined ( USE_SHADOWMAP ) || defined ( USE_TRANSMISSION ) || NUM_SPOT_LIGHT_COORDS > 0
+    vec4 worldPosition = modelMatrix * vec4(transformed, 1.0);
+    worldPosition = applyViewshedGeoidProjection(worldPosition);
+#endif
+`;
+
+const shadowmapViewshedReceiver_vertexChunk = glsl`
+#if ( defined( USE_SHADOWMAP ) && ( NUM_DIR_LIGHT_SHADOWS > 0 || NUM_POINT_LIGHT_SHADOWS > 0 ) ) || ( NUM_SPOT_LIGHT_COORDS > 0 )
+
+    vec3 shadowWorldNormal = inverseTransformDirection( transformedNormal, viewMatrix );
+    vec4 shadowWorldPosition;
+
+#endif
+
+#if defined( USE_SHADOWMAP )
+
+    #if NUM_DIR_LIGHT_SHADOWS > 0
+
+        #pragma unroll_loop_start
+        for ( int i = 0; i < NUM_DIR_LIGHT_SHADOWS; i ++ ) {
+
+            shadowWorldPosition = worldPosition + vec4( shadowWorldNormal * directionalLightShadows[ i ].shadowNormalBias, 0 );
+            vDirectionalShadowCoord[ i ] = directionalShadowMatrix[ i ] * shadowWorldPosition;
+
+        }
+        #pragma unroll_loop_end
+
+    #endif
+
+    #if NUM_POINT_LIGHT_SHADOWS > 0
+
+        #pragma unroll_loop_start
+        for ( int i = 0; i < NUM_POINT_LIGHT_SHADOWS; i ++ ) {
+
+            shadowWorldPosition = applyViewshedGeoidProjection(worldPosition) + vec4( shadowWorldNormal * pointLightShadows[ i ].shadowNormalBias, 0 );
+            vPointShadowCoord[ i ] = pointShadowMatrix[ i ] * shadowWorldPosition;
+
+        }
+        #pragma unroll_loop_end
+
+    #endif
+
+#endif
+
+#if NUM_SPOT_LIGHT_COORDS > 0
+
+    #pragma unroll_loop_start
+    for ( int i = 0; i < NUM_SPOT_LIGHT_COORDS; i ++ ) {
+
+        shadowWorldPosition = worldPosition;
+        #if ( defined( USE_SHADOWMAP ) && UNROLLED_LOOP_INDEX < NUM_SPOT_LIGHT_SHADOWS )
+            shadowWorldPosition.xyz += shadowWorldNormal * spotLightShadows[ i ].shadowNormalBias;
+        #endif
+        vSpotLightCoord[ i ] = spotLightMatrix[ i ] * shadowWorldPosition;
+
+    }
+    #pragma unroll_loop_end
+
+#endif
+`;
+
+const projectGeometryViewshedShadow_vertexChunk = glsl`
+    vec4 geoidWorldPosition = modelMatrix * vec4(transformed, 1.0);
+    geoidWorldPosition = applyViewshedGeoidProjection(geoidWorldPosition);
+    vec4 mvPosition = viewMatrix * geoidWorldPosition;
+    gl_Position = projectionMatrix * mvPosition;
+`;
+
 const emissivemap_fragmentChunk = glsl`
     float h = getHeight(vUv);
     totalEmissiveRadiance.rgb += vec3(h) * heightEmissiveScale;
@@ -267,14 +372,36 @@ const emissivemap_fragmentChunk = glsl`
 `;
 
 
-function patchVertexShader(vertexShader: string) {
+function patchVertexShader(
+    vertexShader: string,
+    options: TileShaderPatchOptions,
+) {
     vertexShader = vertexPreamble + vertexShader;
     // Synthesise position from gl_VertexID; also affects shadowmap_vertex, fog_vertex, etc.
     vertexShader = substituteInclude('uv_pars_vertex', uv_pars_vertexChunk, vertexShader);
     vertexShader = substituteInclude('uv_vertex', uv_vertexChunk, vertexShader);
     // vertexShader = substituteInclude('uv2_vertex', `vUv2 = uv;`, vertexShader); // shadowMap != lightMap
     vertexShader = substituteInclude('beginnormal_vertex', beginnormal_vertexChunk, vertexShader, SubstitutionType.PREPEND);
-    vertexShader = substituteInclude('project_vertex', project_vertexChunk, vertexShader);
+    vertexShader = substituteInclude(
+        'project_vertex',
+        options.pass === 'viewshedShadow'
+            ? projectViewshedShadow_vertexChunk
+            : project_vertexChunk,
+        vertexShader,
+    );
+    if (options.pass === 'viewshedShadow') {
+        vertexShader = substituteInclude(
+            'worldpos_vertex',
+            worldposViewshedShadow_vertexChunk,
+            vertexShader,
+        );
+    } else {
+        vertexShader = substituteInclude(
+            'shadowmap_vertex',
+            shadowmapViewshedReceiver_vertexChunk,
+            vertexShader,
+        );
+    }
     return vertexShader;
 }
 
@@ -402,38 +529,32 @@ function patchFragmentShader(fragmentShader: string) {
 
 /** Mesh geometry (not heightmap) — earth curvature for viewshed-style distance. */
 function applyCustomDepthForViewshed(mesh: THREE.Mesh) {
-    // http://mapaspects.org/content/effects-curvature-earth-refraction-light-air-and-fuzzy-viewsheds-arcgis-92/index.html
     const dist = mesh.customDistanceMaterial = new THREE.MeshDistanceMaterial();
-    dist.onBeforeCompile = earthCurveVert;
+    dist.onBeforeCompile = patchGeometryViewshedShadowBeforeCompile;
 }
 
-function earthCurveVert(shader: CompiledShader) {
+function attachViewshedGeoidUniforms(shader: CompiledShader): void {
+    const enabled = tileShaderUniforms.viewshedGeoidProjection;
+    const radius = tileShaderUniforms.viewshedEffectiveEarthRadius;
+    const source = tileShaderUniforms.viewshedSourceWorld;
+    if (enabled) shader.uniforms.viewshedGeoidProjection = enabled;
+    if (radius) shader.uniforms.viewshedEffectiveEarthRadius = radius;
+    if (source) shader.uniforms.viewshedSourceWorld = source;
+}
+
+function patchGeometryViewshedShadowBeforeCompile(shader: CompiledShader): void {
+    attachViewshedGeoidUniforms(shader);
+    shader.vertexShader = viewshedGeoidVertexPreamble + shader.vertexShader;
     shader.vertexShader = substituteInclude(
-        'begin_vertex',
-        glsl`
-        // 'camera' = viewpoint on/near surface for which we compute viewshed
-        {
-            vec4 camPos = modelViewMatrix * vec4(vec3(0.), 1.);
-            vec4 origin = vec4(vec3(0.), 1.);
-            // float earthRad = 6371000.0;
-            float earthRad = 10.0;
-            vec2 dGrid = transformed.xy - origin.xy;
-            float d = length(dGrid);
-            float theta = PI - (d / earthRad);
-            float phi = -atan(dGrid.y, dGrid.x) / earthRad;
-            vec3 _t = vec3(0., 0., -earthRad);
-            mat3 m = mat3(cos(theta), -sin(theta), 0.,
-                        sin(theta), cos(theta), 0.,
-                        0., 0., 1.);
-            _t = m * _t;
-            m = mat3(cos(phi), 0., sin(phi),
-                    0., 1., 0.,
-                    -sin(phi), 0., cos(phi));
-            _t = m * _t;
-            _t.z += earthRad + transformed.z;
-            // transformed = _t;
-        }
-        `, shader.vertexShader, SubstitutionType.APPEND);
+        'project_vertex',
+        projectGeometryViewshedShadow_vertexChunk,
+        shader.vertexShader,
+    );
+    shader.vertexShader = substituteInclude(
+        'worldpos_vertex',
+        worldposViewshedShadow_vertexChunk,
+        shader.vertexShader,
+    );
 }
 
 // Installed into tileShaderRuntime; whole module hot-reloads via installTileShaderModule.

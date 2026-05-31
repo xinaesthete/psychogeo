@@ -11,6 +11,8 @@ import { convertWgsToOSGB, EastNorth } from './geo/Coordinates';
 import { CompressionAnalysisPanel } from './geo/CompressionAnalysisPanel';
 import { newGLContext, TerrainOptions, Track } from './geo/TileLoaderUK';
 import {
+  DEFAULT_VIEWSHED_EFFECTIVE_EARTH_RADIUS,
+  DEFAULT_VIEWSHED_REFRACTION_FACTOR,
   DEFAULT_VIEWSHED_SHADOW_MAP_SIZE,
   DEFAULT_VIEWSHED_SHADOW_NEAR_SCALE,
   DEFAULT_VIEWSHED_SHADOW_RADIUS,
@@ -97,6 +99,9 @@ function App() {
     viewshedShadowMapSize,
     viewshedShadowNearScale,
     viewshedDoubleSidedShadows,
+    viewshedGeoidProjection,
+    viewshedEffectiveEarthRadius,
+    viewshedRefractionFactor,
   } = useControls('Viewshed', {
     viewshedSourceHeight: {
       value: DEFAULT_VIEWSHED_SOURCE_HEIGHT,
@@ -130,6 +135,24 @@ function App() {
       value: true,
       label: 'double-sided shadows',
     },
+    viewshedGeoidProjection: {
+      value: false,
+      label: 'geoid projection',
+    },
+    viewshedEffectiveEarthRadius: {
+      value: DEFAULT_VIEWSHED_EFFECTIVE_EARTH_RADIUS,
+      min: 1_000,
+      max: 10_000_000,
+      step: 1_000,
+      label: 'earth radius (m)',
+    },
+    viewshedRefractionFactor: {
+      value: DEFAULT_VIEWSHED_REFRACTION_FACTOR,
+      min: 0.1,
+      max: 2,
+      step: 0.05,
+      label: 'refraction factor',
+    },
   });
   useEffect(() => {
     setSmoothZoomTuning({speed: zoomSpeed, smoothMs: zoomSmoothMs});
@@ -159,10 +182,13 @@ function App() {
       viewshedShadowMapSize,
       viewshedShadowNearScale,
       viewshedDoubleSidedShadows,
+      viewshedGeoidProjection,
+      viewshedEffectiveEarthRadius,
+      viewshedRefractionFactor,
       camZ: 3000,
       tracks: overlayTracks,
     }),
-    [defra10mDTMLayer, defraDSMLayer, osTerr50Layer, compressionExperimentEnabled, inspectionLight, viewshedSourceHeight, viewshedShadowRadius, viewshedShadowMapSize, viewshedShadowNearScale, viewshedDoubleSidedShadows, overlayTracks],
+    [defra10mDTMLayer, defraDSMLayer, osTerr50Layer, compressionExperimentEnabled, inspectionLight, viewshedSourceHeight, viewshedShadowRadius, viewshedShadowMapSize, viewshedShadowNearScale, viewshedDoubleSidedShadows, viewshedGeoidProjection, viewshedEffectiveEarthRadius, viewshedRefractionFactor, overlayTracks],
   );
 
   const renderMode: TerrainRenderMode = r3f ? 'r3f' : 'threact';

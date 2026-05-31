@@ -21,13 +21,28 @@ export type TileShaderFrameContext = {
   nowMs: number;
 };
 
+export type TileShaderPass = 'surface' | 'viewshedShadow';
+
+export type TileShaderPatchOptions = {
+  pass: TileShaderPass;
+};
+
+export type ViewshedGeoidProjectionUniformValues = {
+  enabled: boolean;
+  effectiveRadius: number;
+  sourceWorld: THREE.Vector3;
+};
+
 /** Hot-reloadable tile shader module (see TileShader.ts). */
 export type TileShaderModule = {
   /** Register any missing uniform keys on the stable shared bag (do not reset existing values). */
   ensureUniforms: (shared: typeof tileShaderUniforms) => void;
   /** Per-frame logic (contour phase, etc.) — replaced on HMR without losing uniform values. */
   updateFrame: (ctx: TileShaderFrameContext) => void;
-  patchShaderBeforeCompile: (uniforms: TileUniformBag) => PatchBeforeCompile;
+  patchShaderBeforeCompile: (
+    uniforms: TileUniformBag,
+    options: TileShaderPatchOptions,
+  ) => PatchBeforeCompile;
   createTileLoadingMaterial: () => THREE.ShaderMaterial;
   createTerrainPickMaterial: (uniforms: TileUniformBag) => THREE.ShaderMaterial;
   applyCustomDepthForViewshed: (mesh: THREE.Mesh) => void;
@@ -57,6 +72,36 @@ function attachCacheKey(material: THREE.Material): void {
 
 function registerEntry(entry: RegisteredEntry): void {
   registry.add(entry);
+}
+
+function ensureRuntimeUniform(
+  key: string,
+  create: () => THREE.IUniform,
+): THREE.IUniform {
+  let uniform = tileShaderUniforms[key];
+  if (!uniform) {
+    uniform = create();
+    tileShaderUniforms[key] = uniform;
+  }
+  return uniform;
+}
+
+export function syncViewshedGeoidProjectionUniforms(
+  values: ViewshedGeoidProjectionUniformValues,
+): void {
+  ensureRuntimeUniform('viewshedGeoidProjection', () => ({ value: 0 })).value =
+    values.enabled ? 1 : 0;
+  ensureRuntimeUniform('viewshedEffectiveEarthRadius', () => ({
+    value: values.effectiveRadius,
+  })).value = values.effectiveRadius;
+  const sourceUniform = ensureRuntimeUniform('viewshedSourceWorld', () => ({
+    value: new THREE.Vector3(),
+  }));
+  if (sourceUniform.value instanceof THREE.Vector3) {
+    sourceUniform.value.copy(values.sourceWorld);
+  } else {
+    sourceUniform.value = values.sourceWorld.clone();
+  }
 }
 
 /**
@@ -99,7 +144,9 @@ export function getTileMaterial(perTileUniforms: TileUniformBag): THREE.MeshStan
   }
   const uniforms = mergeTileUniforms(perTileUniforms);
   const mat = new THREE.MeshStandardMaterial({ flatShading: false });
-  mat.onBeforeCompile = currentModule.patchShaderBeforeCompile(uniforms);
+  mat.onBeforeCompile = currentModule.patchShaderBeforeCompile(uniforms, {
+    pass: 'surface',
+  });
   attachCacheKey(mat);
   registerEntry({ mat, perTileUniforms });
   return mat;
@@ -130,9 +177,12 @@ export function applyCustomDepth(mesh: THREE.Mesh, perTileUniforms: TileUniformB
     return;
   }
 
-  const patch = currentModule.patchShaderBeforeCompile(uniforms);
-  depth.onBeforeCompile = patch;
-  dist.onBeforeCompile = patch;
+  depth.onBeforeCompile = currentModule.patchShaderBeforeCompile(uniforms, {
+    pass: 'surface',
+  });
+  dist.onBeforeCompile = currentModule.patchShaderBeforeCompile(uniforms, {
+    pass: 'viewshedShadow',
+  });
   attachCacheKey(depth);
   attachCacheKey(dist);
 
@@ -157,17 +207,25 @@ export function recompileRegisteredMaterials(): void {
   shaderGeneration += 1;
   for (const entry of registry) {
     const uniforms = mergeTileUniforms(entry.perTileUniforms);
-    const patch = currentModule.patchShaderBeforeCompile(uniforms);
+    const patch = currentModule.patchShaderBeforeCompile(uniforms, {
+      pass: 'surface',
+    });
     entry.mat.onBeforeCompile = patch;
     entry.mat.needsUpdate = true;
     attachCacheKey(entry.mat);
     if (entry.depth) {
-      entry.depth.onBeforeCompile = patch;
+      entry.depth.onBeforeCompile = currentModule.patchShaderBeforeCompile(
+        uniforms,
+        { pass: 'surface' },
+      );
       entry.depth.needsUpdate = true;
       attachCacheKey(entry.depth);
     }
     if (entry.dist) {
-      entry.dist.onBeforeCompile = patch;
+      entry.dist.onBeforeCompile = currentModule.patchShaderBeforeCompile(
+        uniforms,
+        { pass: 'viewshedShadow' },
+      );
       entry.dist.needsUpdate = true;
       attachCacheKey(entry.dist);
     }

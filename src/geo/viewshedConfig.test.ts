@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  DEFAULT_VIEWSHED_EFFECTIVE_EARTH_RADIUS,
+  DEFAULT_VIEWSHED_REFRACTION_FACTOR,
   DEFAULT_VIEWSHED_SHADOW_MAP_SIZE,
   DEFAULT_VIEWSHED_SHADOW_NEAR_SCALE,
   DEFAULT_VIEWSHED_SHADOW_RADIUS,
   DEFAULT_VIEWSHED_SOURCE_HEIGHT,
+  resolveViewshedGeoidProjectionConfig,
   resolveViewshedShadowConfig,
   viewshedAwareLodDistance,
 } from './viewshedConfig';
@@ -38,6 +41,49 @@ test('resolveViewshedShadowConfig clamps unsafe shadow values', () => {
       mapSize: 256,
       near: 5,
       nearScale: DEFAULT_VIEWSHED_SHADOW_NEAR_SCALE,
+    },
+  );
+});
+
+test('resolveViewshedGeoidProjectionConfig returns disabled earth defaults', () => {
+  assert.deepEqual(resolveViewshedGeoidProjectionConfig(), {
+    enabled: false,
+    earthRadius: DEFAULT_VIEWSHED_EFFECTIVE_EARTH_RADIUS,
+    refractionFactor: DEFAULT_VIEWSHED_REFRACTION_FACTOR,
+    effectiveRadius:
+      DEFAULT_VIEWSHED_EFFECTIVE_EARTH_RADIUS *
+      DEFAULT_VIEWSHED_REFRACTION_FACTOR,
+  });
+});
+
+test('resolveViewshedGeoidProjectionConfig clamps unsafe values', () => {
+  assert.deepEqual(
+    resolveViewshedGeoidProjectionConfig({
+      enabled: true,
+      effectiveEarthRadius: -1,
+      refractionFactor: 0,
+    }),
+    {
+      enabled: true,
+      earthRadius: 1000,
+      refractionFactor: 0.1,
+      effectiveRadius: 100,
+    },
+  );
+});
+
+test('resolveViewshedGeoidProjectionConfig preserves enabled radius inputs', () => {
+  assert.deepEqual(
+    resolveViewshedGeoidProjectionConfig({
+      enabled: true,
+      effectiveEarthRadius: 7_000_000,
+      refractionFactor: 1.3,
+    }),
+    {
+      enabled: true,
+      earthRadius: 7_000_000,
+      refractionFactor: 1.3,
+      effectiveRadius: 9_100_000,
     },
   );
 });

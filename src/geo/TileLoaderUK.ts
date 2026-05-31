@@ -23,6 +23,7 @@ import { threeGeometryFromShpZip } from './ShpProcessor';
 import {
     applyCustomDepthForViewshed,
     getTileLoadingMaterial,
+    syncViewshedGeoidProjectionUniforms,
     tickTileShader,
 } from './tileShaderRuntime';
 import { loadGpxGeometry } from './TrackVis';
@@ -34,10 +35,15 @@ import {
     setViewshedLodObserver,
 } from './LodUtils';
 import {
+    DEFAULT_VIEWSHED_EFFECTIVE_EARTH_RADIUS,
+    DEFAULT_VIEWSHED_REFRACTION_FACTOR,
     DEFAULT_VIEWSHED_SHADOW_MAP_SIZE,
+    DEFAULT_VIEWSHED_SHADOW_NEAR_SCALE,
     DEFAULT_VIEWSHED_SHADOW_RADIUS,
     DEFAULT_VIEWSHED_SOURCE_HEIGHT,
+    resolveViewshedGeoidProjectionConfig,
     resolveViewshedShadowConfig,
+    type ViewshedGeoidProjectionConfig,
     type ViewshedShadowConfig,
 } from './viewshedConfig';
 
@@ -225,6 +231,12 @@ export interface TerrainOptions {
     viewshedShadowNearScale?: number;
     /** Debug escape hatch for light leaks; not the preferred analysis path. */
     viewshedDoubleSidedShadows?: boolean;
+    /** Bend manual viewshed point-light shadows over an effective spherical earth. */
+    viewshedGeoidProjection?: boolean;
+    /** Base earth radius in metres before optional refraction scaling. */
+    viewshedEffectiveEarthRadius?: number;
+    /** Multiplier applied to the base earth radius for atmospheric refraction experiments. */
+    viewshedRefractionFactor?: number;
     camZ: number;
     /** R3F / external OrbitControls own the camera; skip internal map controls. */
     externalControls?: boolean;
@@ -244,7 +256,11 @@ const defaultTerrainOptions: TerrainOptions = {
     viewshedSourceHeight: DEFAULT_VIEWSHED_SOURCE_HEIGHT,
     viewshedShadowRadius: DEFAULT_VIEWSHED_SHADOW_RADIUS,
     viewshedShadowMapSize: DEFAULT_VIEWSHED_SHADOW_MAP_SIZE,
+    viewshedShadowNearScale: DEFAULT_VIEWSHED_SHADOW_NEAR_SCALE,
     viewshedDoubleSidedShadows: false,
+    viewshedGeoidProjection: false,
+    viewshedEffectiveEarthRadius: DEFAULT_VIEWSHED_EFFECTIVE_EARTH_RADIUS,
+    viewshedRefractionFactor: DEFAULT_VIEWSHED_REFRACTION_FACTOR,
 };
 
 type PivotMarkerParts = {
@@ -312,6 +328,12 @@ export type TerrainDebugSnapshot = {
         shadowCameraNear: number;
         shadowCameraFar: number;
         shadowNearScale: number;
+        geoidProjection: {
+            enabled: boolean;
+            earthRadius: number;
+            refractionFactor: number;
+            effectiveRadius: number;
+        };
         shadowAutoUpdate: boolean;
         shadowNeedsUpdate: boolean;
         doubleSidedShadows: boolean;
@@ -759,6 +781,26 @@ export class TerrainRenderer extends ThreactTrackballBase {
         });
     }
 
+    private viewshedGeoidProjectionConfig(): ViewshedGeoidProjectionConfig {
+        return resolveViewshedGeoidProjectionConfig({
+            enabled: this.options.viewshedGeoidProjection,
+            effectiveEarthRadius: this.options.viewshedEffectiveEarthRadius,
+            refractionFactor: this.options.viewshedRefractionFactor,
+        });
+    }
+
+    private syncViewshedGeoidProjection(): void {
+        const config = this.viewshedGeoidProjectionConfig();
+        const sourceWorld =
+            this.viewshedLightParts?.group.position ??
+            new THREE.Vector3(this.coord.east, this.coord.north, 0);
+        syncViewshedGeoidProjectionUniforms({
+            enabled: config.enabled,
+            effectiveRadius: config.effectiveRadius,
+            sourceWorld,
+        });
+    }
+
     private syncViewshedShadowSide(): void {
         const enabled = !!this.options.viewshedDoubleSidedShadows;
         if (this.lastSyncedDoubleSidedShadows === enabled) return;
@@ -843,6 +885,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
 
     private syncViewshedLightSource(): void {
         if (!this.viewshedSurfacePoint) {
+            this.syncViewshedGeoidProjection();
             this.syncViewshedLodObserver();
             return;
         }
@@ -853,6 +896,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
             .copy(this.viewshedSurfacePoint)
             .add(new THREE.Vector3(0, 0, this.viewshedSourceHeight()));
         parts.group.visible = true;
+        this.syncViewshedGeoidProjection();
         this.syncViewshedLodObserver();
         this.requestViewshedShadowUpdate();
         this.updateViewshedMarkerScale();
@@ -927,6 +971,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
         if (this.viewshedLightParts && this.viewshedSurfacePoint) {
             const { light } = this.viewshedLightParts;
             const config = this.viewshedShadowConfig();
+            const geoidProjection = this.viewshedGeoidProjectionConfig();
             snapshot.viewshedSource = {
                 surface: this.vectorSnapshot(this.viewshedSurfacePoint),
                 position: this.vectorSnapshot(this.viewshedLightParts.group.position),
@@ -939,6 +984,12 @@ export class TerrainRenderer extends ThreactTrackballBase {
                 shadowCameraNear: light.shadow.camera.near,
                 shadowCameraFar: light.shadow.camera.far,
                 shadowNearScale: config.nearScale,
+                geoidProjection: {
+                    enabled: geoidProjection.enabled,
+                    earthRadius: geoidProjection.earthRadius,
+                    refractionFactor: geoidProjection.refractionFactor,
+                    effectiveRadius: geoidProjection.effectiveRadius,
+                },
                 shadowAutoUpdate: light.shadow.autoUpdate,
                 shadowNeedsUpdate: light.shadow.needsUpdate,
                 doubleSidedShadows: !!this.options.viewshedDoubleSidedShadows,
