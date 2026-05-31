@@ -24,6 +24,9 @@ export function createMapStyleControls(
     const controls = new MapCameraControls(camera, domElement, {
         referenceDistance: refDistance,
         rotateSpeed: options.rotateSpeed,
+        pickWorldPoint: options.pickWorldPoint,
+        onAnchorPoint: options.onAnchorPoint,
+        onDoubleClickAnchorPoint: options.onDoubleClickAnchorPoint,
     });
     if (options.initialDistance !== undefined) {
         controls.configureZoomLimits(options.initialDistance);

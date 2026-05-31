@@ -203,6 +203,8 @@ export interface TerrainOptions {
     compressionExperimentEnabled?: boolean;
     tracks?: Track[];
     sun?: boolean;
+    /** Metres above the selected terrain surface for manual viewshed point source. */
+    viewshedSourceHeight?: number;
     camZ: number;
     /** R3F / external OrbitControls own the camera; skip internal map controls. */
     externalControls?: boolean;
@@ -219,11 +221,22 @@ const defaultTerrainOptions: TerrainOptions = {
     compressionExperimentEnabled: false,
     camZ: 15000,
     sun: true,
+    viewshedSourceHeight: 2,
 };
+
+const DEFAULT_VIEWSHED_SOURCE_HEIGHT = 2;
 
 type PivotMarkerParts = {
     group: THREE.Group;
     sphereMaterial: THREE.MeshBasicMaterial;
+    ringMaterial: THREE.MeshBasicMaterial;
+    poleMaterial: THREE.LineBasicMaterial;
+};
+
+type ViewshedLightParts = {
+    group: THREE.Group;
+    light: THREE.PointLight;
+    markerMaterial: THREE.MeshBasicMaterial;
     ringMaterial: THREE.MeshBasicMaterial;
     poleMaterial: THREE.LineBasicMaterial;
 };
@@ -268,6 +281,12 @@ export type TerrainDebugSnapshot = {
         scale: VectorSnapshot;
         visible: boolean;
         colour: string;
+    };
+    viewshedSource?: {
+        surface: VectorSnapshot;
+        position: VectorSnapshot;
+        heightOffset: number;
+        visible: boolean;
     };
     lastPick: ReturnType<typeof getLastTerrainPickDebug>;
     layers: {
@@ -354,6 +373,74 @@ function createPivotMarkerParts(): PivotMarkerParts {
     return { group, sphereMaterial, ringMaterial, poleMaterial };
 }
 
+function createViewshedLightParts(): ViewshedLightParts {
+    const group = new THREE.Group();
+    group.name = "viewshed-source";
+    group.visible = false;
+    group.renderOrder = 10_001;
+
+    const light = new THREE.PointLight(0xfff1c7);
+    light.name = "viewshed-source-light";
+    light.intensity = 3;
+    light.power = 100;
+    light.decay = 0.1;
+    light.castShadow = true;
+    light.shadow.mapSize.width = 1024;
+    light.shadow.mapSize.height = 1024;
+    light.shadow.bias = -0.0002;
+    light.shadow.camera.near = 0.1;
+    light.shadow.camera.far = 200000;
+    group.add(light);
+
+    const markerMaterial = new THREE.MeshBasicMaterial({
+        transparent: true,
+        opacity: 0.72,
+        color: 0xfff1c7,
+        depthTest: false,
+        depthWrite: false,
+    });
+    const marker = new THREE.Mesh(
+        new THREE.SphereGeometry(0.35, 20, 12),
+        markerMaterial,
+    );
+    marker.renderOrder = group.renderOrder;
+    group.add(marker);
+
+    const ringMaterial = new THREE.MeshBasicMaterial({
+        color: 0xfff1c7,
+        depthTest: false,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.45,
+    });
+    const ring = new THREE.Mesh(
+        new THREE.RingGeometry(0.7, 1.05, 48),
+        ringMaterial,
+    );
+    ring.renderOrder = group.renderOrder;
+    group.add(ring);
+
+    const poleMaterial = new THREE.LineBasicMaterial({
+        color: 0xfff1c7,
+        depthTest: false,
+        depthWrite: false,
+        transparent: true,
+        opacity: 0.65,
+    });
+    const pole = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(0, 0, -1),
+            new THREE.Vector3(0, 0, 1),
+        ]),
+        poleMaterial,
+    );
+    pole.renderOrder = group.renderOrder;
+    group.add(pole);
+
+    return { group, light, markerMaterial, ringMaterial, poleMaterial };
+}
+
 export class TerrainRenderer extends ThreactTrackballBase {
     coord: EastNorth;
     tileProp: DsmCatItem;
@@ -372,6 +459,8 @@ export class TerrainRenderer extends ThreactTrackballBase {
     private desiredTrackUrls = new Set<string>();
     private pivotMarkerParts?: PivotMarkerParts;
     private lastPivotMarkerSource: TerrainAnchorSource | null = null;
+    private viewshedLightParts?: ViewshedLightParts;
+    private viewshedSurfacePoint?: THREE.Vector3;
 
     isTerrainInited(): boolean {
         return this.terrainInited;
@@ -509,6 +598,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
     applyTerrainOptions() {
         syncCompressionExperiment(!!this.options.compressionExperimentEnabled);
         this.syncLightRig();
+        this.syncViewshedLightSource();
         this.syncLayerVisibility();
         if (!this.markerAdded) {
             this.addMarker();
@@ -612,6 +702,43 @@ export class TerrainRenderer extends ThreactTrackballBase {
         this.updatePivotMarkerScale();
     }
 
+    private ensureViewshedLight(): ViewshedLightParts {
+        if (!this.viewshedLightParts) {
+            this.viewshedLightParts = createViewshedLightParts();
+            this.scene.add(this.viewshedLightParts.group);
+        }
+        return this.viewshedLightParts;
+    }
+
+    private viewshedSourceHeight(): number {
+        return this.options.viewshedSourceHeight ?? DEFAULT_VIEWSHED_SOURCE_HEIGHT;
+    }
+
+    private updateViewshedMarkerScale(): void {
+        if (!this.viewshedLightParts?.group.visible) return;
+        const distance = this.camera.position.distanceTo(
+            this.viewshedLightParts.group.position,
+        );
+        const scale = Math.max(5, Math.min(140, distance * 0.016));
+        this.viewshedLightParts.group.scale.setScalar(scale);
+    }
+
+    private syncViewshedLightSource(): void {
+        if (!this.viewshedSurfacePoint) return;
+        const parts = this.ensureViewshedLight();
+        parts.group.position
+            .copy(this.viewshedSurfacePoint)
+            .add(new THREE.Vector3(0, 0, this.viewshedSourceHeight()));
+        parts.group.visible = true;
+        this.updateViewshedMarkerScale();
+    }
+
+    setViewshedLightSource(surfacePoint: THREE.Vector3): void {
+        this.viewshedSurfacePoint = surfacePoint.clone();
+        this.syncViewshedLightSource();
+        this.showTerrainPivotMarker(surfacePoint, "terrain");
+    }
+
     private vectorSnapshot(v: THREE.Vector3): VectorSnapshot {
         return { x: v.x, y: v.y, z: v.z };
     }
@@ -667,6 +794,14 @@ export class TerrainRenderer extends ThreactTrackballBase {
                 colour: marker.sphereMaterial.color.getHexString(),
             };
         }
+        if (this.viewshedLightParts && this.viewshedSurfacePoint) {
+            snapshot.viewshedSource = {
+                surface: this.vectorSnapshot(this.viewshedSurfacePoint),
+                position: this.vectorSnapshot(this.viewshedLightParts.group.position),
+                heightOffset: this.viewshedSourceHeight(),
+                visible: this.viewshedLightParts.group.visible,
+            };
+        }
         return snapshot;
     }
 
@@ -696,6 +831,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
         //if so, we won't have a separate updateLOD() pass here.
         this.syncLightRig();
         this.updatePivotMarkerScale();
+        this.updateViewshedMarkerScale();
         super.update();
     }
 
@@ -723,6 +859,9 @@ export class TerrainRenderer extends ThreactTrackballBase {
         );
         this.mapCtrl?.setAnchorPointListener((point, source) =>
             this.showTerrainPivotMarker(point, source),
+        );
+        this.mapCtrl?.setDoubleClickAnchorPointListener((point) =>
+            this.setViewshedLightSource(point),
         );
         super.render(renderer);
     }

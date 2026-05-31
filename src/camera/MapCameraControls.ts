@@ -29,6 +29,7 @@ export type MapCameraControlsOptions = {
     rotateSpeed?: number;
     pickWorldPoint?: (clientX: number, clientY: number) => Vector3 | null;
     onAnchorPoint?: (point: Vector3, source: TerrainAnchorSource) => void;
+    onDoubleClickAnchorPoint?: (point: Vector3) => void;
 };
 
 const GROUND_PLANE = new Plane(new Vector3(0, 0, 1), 0);
@@ -124,6 +125,7 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
     private gestureMidY = 0;
     private pickWorldPoint?: (clientX: number, clientY: number) => Vector3 | null;
     private onAnchorPoint?: (point: Vector3, source: TerrainAnchorSource) => void;
+    private onDoubleClickAnchorPoint?: (point: Vector3) => void;
 
     constructor(
         camera: PerspectiveCamera,
@@ -143,6 +145,7 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
         }
         this.pickWorldPoint = options.pickWorldPoint;
         this.onAnchorPoint = options.onAnchorPoint;
+        this.onDoubleClickAnchorPoint = options.onDoubleClickAnchorPoint;
 
         this.applyCameraFromState();
         this.domElement.style.touchAction = "none";
@@ -192,6 +195,12 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
         listener: ((point: Vector3, source: TerrainAnchorSource) => void) | undefined,
     ): void {
         this.onAnchorPoint = listener;
+    }
+
+    setDoubleClickAnchorPointListener(
+        listener: ((point: Vector3) => void) | undefined,
+    ): void {
+        this.onDoubleClickAnchorPoint = listener;
     }
 
     getViewState(): TerrainViewState {
@@ -473,6 +482,10 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
             emit: true,
         });
         if (!anchor) return;
+        if (this.onDoubleClickAnchorPoint) {
+            this.onDoubleClickAnchorPoint(anchor.clone());
+            return;
+        }
         this.target.copy(anchor);
         this.distance *= 0.5;
         this.clampDistance();

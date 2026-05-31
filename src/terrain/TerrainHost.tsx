@@ -50,6 +50,7 @@ function useTerrainRenderer(coord: EastNorth, options: TerrainOptions) {
     options.osTerr50Layer,
     options.compressionExperimentEnabled,
     options.sun,
+    options.viewshedSourceHeight,
     options.camZ,
     options.externalControls,
     tracksKey,
@@ -78,6 +79,8 @@ function MapCameraControlsR3F({
         renderer.pickTerrainWorldAtClient(gl, clientX, clientY),
       onAnchorPoint: (point, source) =>
         renderer.showTerrainPivotMarker(point, source),
+      onDoubleClickAnchorPoint: (point) =>
+        renderer.setViewshedLightSource(point),
     });
     configureTerrainZoomLimits(controls, camZ);
     setTerrainCameraTarget(controls, camera, coord, camZ);
@@ -122,6 +125,7 @@ function TerrainR3FScene({
     options.osTerr50Layer,
     options.compressionExperimentEnabled,
     options.sun,
+    options.viewshedSourceHeight,
     camZ,
     tracksKey,
   ]);

@@ -85,6 +85,15 @@ function App() {
       label: 'pan damping',
     },
   });
+  const {viewshedSourceHeight} = useControls('Viewshed', {
+    viewshedSourceHeight: {
+      value: 1.6,
+      min: 0,
+      max: 50,
+      step: 0.1,
+      label: 'source height (m)',
+    },
+  });
   useEffect(() => {
     setSmoothZoomTuning({speed: zoomSpeed, smoothMs: zoomSmoothMs});
     setSensitivityTuning({panGain, zoomGain});
@@ -108,10 +117,11 @@ function App() {
       osTerr50Layer,
       compressionExperimentEnabled: compressionExperimentEnabled,
       sun: inspectionLight,
+      viewshedSourceHeight,
       camZ: 3000,
       tracks: overlayTracks,
     }),
-    [defra10mDTMLayer, defraDSMLayer, osTerr50Layer, compressionExperimentEnabled, inspectionLight, overlayTracks],
+    [defra10mDTMLayer, defraDSMLayer, osTerr50Layer, compressionExperimentEnabled, inspectionLight, viewshedSourceHeight, overlayTracks],
   );
 
   const renderMode: TerrainRenderMode = r3f ? 'r3f' : 'threact';
