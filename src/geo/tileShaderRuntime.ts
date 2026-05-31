@@ -29,6 +29,7 @@ export type TileShaderModule = {
   updateFrame: (ctx: TileShaderFrameContext) => void;
   patchShaderBeforeCompile: (uniforms: TileUniformBag) => PatchBeforeCompile;
   createTileLoadingMaterial: () => THREE.ShaderMaterial;
+  createTerrainPickMaterial: (uniforms: TileUniformBag) => THREE.ShaderMaterial;
   applyCustomDepthForViewshed: (mesh: THREE.Mesh) => void;
 };
 
@@ -102,6 +103,13 @@ export function getTileMaterial(perTileUniforms: TileUniformBag): THREE.MeshStan
   attachCacheKey(mat);
   registerEntry({ mat, perTileUniforms });
   return mat;
+}
+
+export function getTilePickMaterial(perTileUniforms: TileUniformBag): THREE.ShaderMaterial {
+  if (!currentModule) {
+    throw new Error('TileShader not installed — import ./TileShader from the app entry');
+  }
+  return currentModule.createTerrainPickMaterial(mergeTileUniforms(perTileUniforms));
 }
 
 export function applyCustomDepth(mesh: THREE.Mesh, perTileUniforms: TileUniformBag): void {

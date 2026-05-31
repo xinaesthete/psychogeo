@@ -7,7 +7,12 @@ import {
   registerCompressionTile,
 } from './compressionExperiment';
 import { DsmCatItem, getImageFilename } from './TileLoaderUK';
-import { applyCustomDepth, getTileMaterial, type TileUniformBag } from './tileShaderRuntime';
+import {
+  applyCustomDepth,
+  getTileMaterial,
+  getTilePickMaterial,
+  type TileUniformBag,
+} from './tileShaderRuntime';
 
 //BBox & BSphere centred rather than at tile origin
 const tileBSphere = new THREE.Sphere(new THREE.Vector3(0.5, 0.5, 0), 1); //nb radius is wide, but could still potentially miss hills?
@@ -98,6 +103,7 @@ export async function getTileMesh(
 
     const mat = getTileMaterial(uniforms);
     const mesh = new THREE.Mesh(geo, mat);
+    mesh.userData.terrainPickMaterial = getTilePickMaterial(uniforms);
     tileMeshes.push(mesh);
     applyCustomDepth(mesh, uniforms);
     mesh.castShadow = true;

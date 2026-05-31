@@ -5,6 +5,10 @@ import {
     setTerrainCameraTarget,
 } from '../camera/mapControls';
 import { OBLIQUE_PITCH, applySphericalToCamera } from '../camera/viewState';
+import {
+    createGeometryWorldPickMaterial,
+    pickTerrainWorldAtClient,
+} from '../terrain/terrainPicking';
 import { ThreactTrackballBase } from '../threact/threexample';
 import { EastNorth } from './Coordinates';
 import dsmCatalog from './dsm_catalog.json';
@@ -173,6 +177,7 @@ async function getOSDelaunayMesh(coord: EastNorth) {
         if (!geo.attributes["normal"]) geo.computeVertexNormals();
         const mat = osTerrainMat;
         const mesh = new THREE.Mesh(geo, mat);
+        mesh.userData.terrainPickMaterial = createGeometryWorldPickMaterial();
         mesh.castShadow = true;
         mesh.receiveShadow = true;
         
@@ -438,6 +443,30 @@ export class TerrainRenderer extends ThreactTrackballBase {
         //if so, we won't have a separate updateLOD() pass here.
         this.syncLightRig();
         super.update();
+    }
+
+    pickTerrainWorldAtClient(
+        renderer: THREE.WebGLRenderer,
+        clientX: number,
+        clientY: number,
+    ): THREE.Vector3 | null {
+        if (!this.dom) return null;
+        return pickTerrainWorldAtClient(
+            renderer,
+            this.scene,
+            this.camera,
+            this.dom,
+            [this.dsmLayer, this.dtmLayer, this.osTerr50Layer],
+            clientX,
+            clientY,
+        );
+    }
+
+    render(renderer: THREE.WebGLRenderer) {
+        this.mapCtrl?.setWorldPickProvider((clientX, clientY) =>
+            this.pickTerrainWorldAtClient(renderer, clientX, clientY),
+        );
+        super.render(renderer);
     }
 }
 

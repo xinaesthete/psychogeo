@@ -63,6 +63,34 @@ function createTileLoadingMaterial(): THREE.ShaderMaterial {
     });
 }
 
+function createTerrainPickMaterial(uniforms: TileUniformBag): THREE.ShaderMaterial {
+    return new THREE.ShaderMaterial({
+        uniforms: {
+            ...uniforms,
+            pickOrigin: { value: new THREE.Vector3() },
+        },
+        side: THREE.DoubleSide,
+        vertexShader: vertexPreamble + uv_pars_vertexChunk + glsl`
+            varying vec3 vPickWorld;
+            void main() {
+                vec2 uv = uvFromVertID();
+                vec4 p = computePos(uv);
+                vec4 world = modelMatrix * p;
+                vPickWorld = world.xyz;
+                gl_Position = projectionMatrix * viewMatrix * world;
+            }
+        `,
+        fragmentShader: glsl`
+            precision highp float;
+            uniform vec3 pickOrigin;
+            varying vec3 vPickWorld;
+            void main() {
+                gl_FragColor = vec4(vPickWorld - pickOrigin, 1.0);
+            }
+        `,
+    });
+}
+
 // 'frankenShader': MeshStandardMaterial + onBeforeCompile patches (see attributeless in TileLoaderUK).
 /** thar be dragons */
 function patchShaderBeforeCompile(uniforms: TileUniformBag) {
@@ -414,6 +442,7 @@ const tileShaderModule: TileShaderModule = {
     updateFrame,
     patchShaderBeforeCompile,
     createTileLoadingMaterial,
+    createTerrainPickMaterial,
     applyCustomDepthForViewshed,
 };
 

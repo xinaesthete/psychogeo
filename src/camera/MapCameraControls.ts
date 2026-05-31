@@ -27,6 +27,7 @@ import {
 export type MapCameraControlsOptions = {
     referenceDistance?: number;
     rotateSpeed?: number;
+    pickWorldPoint?: (clientX: number, clientY: number) => Vector3 | null;
 };
 
 const GROUND_PLANE = new Plane(new Vector3(0, 0, 1), 0);
@@ -115,6 +116,7 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
     private gestureAngle = 0;
     private gestureMidX = 0;
     private gestureMidY = 0;
+    private pickWorldPoint?: (clientX: number, clientY: number) => Vector3 | null;
 
     constructor(
         camera: PerspectiveCamera,
@@ -132,6 +134,7 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
         if (options.rotateSpeed !== undefined) {
             this.rotateSpeed = options.rotateSpeed;
         }
+        this.pickWorldPoint = options.pickWorldPoint;
 
         this.applyCameraFromState();
         this.domElement.style.touchAction = "none";
@@ -169,6 +172,12 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
         this.configureZoomLimits(camZ);
         this.applyCameraFromState();
         this.dispatchChange();
+    }
+
+    setWorldPickProvider(
+        provider: ((clientX: number, clientY: number) => Vector3 | null) | undefined,
+    ): void {
+        this.pickWorldPoint = provider;
     }
 
     getViewState(): TerrainViewState {
@@ -858,6 +867,11 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
         clientX: number,
         clientY: number,
     ): Vector3 | null {
+        const picked = this.pickWorldPoint?.(clientX, clientY);
+        if (picked) {
+            return _anchor.copy(picked);
+        }
+
         const rect = this.domElement.getBoundingClientRect();
         if (rect.width < 1 || rect.height < 1) return null;
         _ndc.set(

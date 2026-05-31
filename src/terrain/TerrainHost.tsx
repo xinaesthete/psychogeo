@@ -19,6 +19,7 @@ import {
 import { registerCameraViewCommands } from '../camera/cameraViewCommands';
 import { EastNorth } from '../geo/Coordinates';
 import { TerrainOptions } from '../geo/TileLoaderUK';
+import type { TerrainRenderer } from '../geo/TileLoaderUK';
 import { getTerrainRenderer, useTerrain } from '../TerrainContext';
 import { DomAttributes, Threact } from '../threact/threact';
 
@@ -60,9 +61,11 @@ function useTerrainRenderer(coord: EastNorth, options: TerrainOptions) {
 function MapCameraControlsR3F({
   coord,
   camZ,
+  renderer,
 }: {
   coord: EastNorth;
   camZ: number;
+  renderer: TerrainRenderer;
 }) {
   const controlsRef = useRef<MapCameraControls | null>(null);
   const { camera, gl } = useThree();
@@ -71,6 +74,8 @@ function MapCameraControlsR3F({
     if (!(camera instanceof THREE.PerspectiveCamera)) return;
     const controls = createMapStyleControls(camera, gl.domElement, {
       referenceDistance: camZ,
+      pickWorldPoint: (clientX, clientY) =>
+        renderer.pickTerrainWorldAtClient(gl, clientX, clientY),
     });
     configureTerrainZoomLimits(controls, camZ);
     setTerrainCameraTarget(controls, camera, coord, camZ);
@@ -83,7 +88,7 @@ function MapCameraControlsR3F({
       registerCameraViewCommands(null);
       controls.dispose();
     };
-  }, [camera, gl, camZ, coord.east, coord.north]);
+  }, [camera, gl, renderer, camZ, coord.east, coord.north]);
 
   useFrame(() => {
     controlsRef.current?.update();
@@ -123,7 +128,7 @@ function TerrainR3FScene({
   });
   return (
     <>
-      <MapCameraControlsR3F coord={coord} camZ={camZ} />
+      <MapCameraControlsR3F coord={coord} camZ={camZ} renderer={renderer} />
       <primitive object={renderer.scene} />
     </>
   );
