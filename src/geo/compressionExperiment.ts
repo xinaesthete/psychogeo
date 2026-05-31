@@ -258,7 +258,7 @@ export function ensureCompressionShaderUniforms(shared: typeof tileShaderUniform
     shared.compressionEnabled = { value: 0 };
   }
   if (!('heightBlend' in shared)) {
-    shared.heightBlend = { value: 0 };
+    shared.heightBlend = { value: 1 };
   }
   if (!('compressionWaveAmp' in shared)) {
     shared.compressionWaveAmp = { value: 1 };
@@ -653,7 +653,7 @@ export function syncCompressionExperiment(enabled: boolean): void {
 
   if (!enabled && wasEnabled) {
     teardownLossyTextures();
-    u.heightBlend.value = 0;
+    u.heightBlend.value = 1;
     applyModuleUpdate();
     setLoadStatus({
       shaderEnabled: false,

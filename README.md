@@ -1,4 +1,4 @@
-# Experimental Geographical Visualisations
+# TerraCognita - Experimental Geographical Visualisations
 
 This is a personal project that I work on from time to time, there are various different directions in which I would like to take this in future - some more practical and others more artistic (I hope with some value in hybrid forms and symbiosis between the two).
 

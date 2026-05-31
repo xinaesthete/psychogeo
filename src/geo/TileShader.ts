@@ -29,9 +29,9 @@ function ensureUniforms(shared: Record<string, THREE.IUniform>): void {
     ensureUniform(shared, 'contourEmissive', () => ({ value: new THREE.Vector3(0.3, 0.5, 0.7) }));
     ensureUniform(shared, 'majorContourInterval', () => ({ value: 10.0 }));
     ensureUniform(shared, 'majorContourEmissive', () => ({ value: new THREE.Vector3(0.8, 0.5, 0.7) }));
-    ensureUniform(shared, 'heightEmissiveScale', () => ({ value: 1 / 2000 }));
+    ensureUniform(shared, 'heightEmissiveScale', () => ({ value: 0 / 2000 }));
     ensureUniform(shared, 'lodSat', () => ({ value: 0.8 }));
-    ensureUniform(shared, 'lodVal', () => ({ value: 0.1 }));
+    ensureUniform(shared, 'lodVal', () => ({ value: 0.0 }));
     ensureUniform(shared, 'contourStrength', () => ({ value: 0.3 }));
     ensureCompressionShaderUniforms(shared);
 }

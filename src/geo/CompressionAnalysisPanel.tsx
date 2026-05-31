@@ -75,7 +75,7 @@ export function CompressionAnalysisPanel({
   const [quality, setQuality] = useState(() => getLossyCompressionRatio());
   const [qualitySlider, setQualitySlider] = useState(() => sliderFromQuality(getLossyCompressionRatio()));
   const [qualityText, setQualityText] = useState(() => formatQuality(getLossyCompressionRatio()));
-  const [heightBlend, setHeightBlend] = useState(() => uniformNumber('heightBlend', 0));
+  const [heightBlend, setHeightBlend] = useState(() => uniformNumber('heightBlend', 1));
   const [blendMode, setBlendMode] = useState<CompressionBlendMode>(() => blendModeFromUniform());
   const [waveAmp, setWaveAmp] = useState(() => uniformNumber('compressionWaveAmp', 1));
   const [waveFreq, setWaveFreq] = useState(() => uniformNumber('compressionWaveFreq', 12));
@@ -170,7 +170,8 @@ export function CompressionAnalysisPanel({
   useEffect(() => {
     if (loadStatus.recodePhase === 'running' || loadStatus.recodePhase === 'done') {
       setQuality(getLossyCompressionRatio());
-      setHeightBlend(uniformNumber('heightBlend', 0));
+      // todo different model for declerative params/defaults etc (ref mutator)
+      setHeightBlend(uniformNumber('heightBlend', 1));
     }
   }, [loadStatus.recodePhase, loadStatus.completed]);
 

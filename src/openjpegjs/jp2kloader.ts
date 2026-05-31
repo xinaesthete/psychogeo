@@ -100,7 +100,7 @@ export interface TexFrame {
 }
 
 /** Default HTJ2K quality for runtime recode experiment (see scripts/gebco_tiff2jph.js). */
-export const DEFAULT_LOSSY_COMPRESSION_RATIO = 0.9;
+export const DEFAULT_LOSSY_COMPRESSION_RATIO = 0.1;
 
 /** HTJ2K setQuality(false, q): 0 ≈ lossless; higher q → more compression. */
 export const MIN_LOSSY_COMPRESSION_RATIO = 0;
