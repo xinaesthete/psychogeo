@@ -14,9 +14,9 @@ import {
   type TileUniformBag,
 } from './tileShaderRuntime';
 
-//BBox & BSphere centred rather than at tile origin
-const tileBSphere = new THREE.Sphere(new THREE.Vector3(0.5, 0.5, 0), 1); //nb radius is wide, but could still potentially miss hills?
 const tileBBox = new THREE.Box3(new THREE.Vector3(-0.5, -0.5, 0), new THREE.Vector3(0.5, 0.5, 1));
+const tileBSphere = new THREE.Sphere();
+tileBBox.getBoundingSphere(tileBSphere);
 function makeTileGeometry(s: number) {
   const geo = new THREE.BufferGeometry();
   geo.drawRange.count = (s-1) * (s-1) * 6;

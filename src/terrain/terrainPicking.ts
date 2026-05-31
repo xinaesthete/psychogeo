@@ -10,6 +10,35 @@ type SwappedMesh = {
   material: THREE.Material | THREE.Material[];
 };
 
+export type TerrainPickDebugInfo = {
+  reason: "empty-rect" | "outside-rect" | "no-pick-materials" | "empty-pixel" | "hit";
+  clientX: number;
+  clientY: number;
+  pixel?: {
+    x: number;
+    y: number;
+  };
+  rect?: {
+    width: number;
+    height: number;
+    left: number;
+    top: number;
+  };
+  swappedCount?: number;
+  hiddenCount?: number;
+  rgba?: [number, number, number, number];
+  pickOrigin?: {
+    x: number;
+    y: number;
+    z: number;
+  };
+  world?: {
+    x: number;
+    y: number;
+    z: number;
+  };
+};
+
 const pickTarget = new THREE.WebGLRenderTarget(1, 1, {
   depthBuffer: true,
   format: THREE.RGBAFormat,
@@ -27,6 +56,12 @@ const pickedWorld = new THREE.Vector3();
 const previousClearColor = new THREE.Color();
 const previousViewport = new THREE.Vector4();
 const previousScissor = new THREE.Vector4();
+const drawingBufferSize = new THREE.Vector2();
+let lastTerrainPickDebug: TerrainPickDebugInfo | null = null;
+
+export function getLastTerrainPickDebug(): TerrainPickDebugInfo | null {
+  return lastTerrainPickDebug;
+}
 
 export function createGeometryWorldPickMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
@@ -73,7 +108,10 @@ function prepareSceneForTerrainPick(
   for (const root of roots) {
     if (!root.visible) continue;
     root.traverse((object) => {
-      if (object instanceof THREE.Mesh && object.visible) {
+      if (
+        object instanceof THREE.Mesh &&
+        terrainPickMaterial(object)
+      ) {
         candidates.add(object);
       }
     });
@@ -83,12 +121,14 @@ function prepareSceneForTerrainPick(
   const swapped: SwappedMesh[] = [];
 
   scene.traverse((object) => {
-    if (!object.visible) return;
     if (!(object instanceof THREE.Mesh)) {
       if (
-        object instanceof THREE.Line ||
-        object instanceof THREE.Points ||
-        object instanceof THREE.Sprite
+        object.visible &&
+        (
+          object instanceof THREE.Line ||
+          object instanceof THREE.Points ||
+          object instanceof THREE.Sprite
+        )
       ) {
         hidden.push({ object, visible: object.visible });
         object.visible = false;
@@ -96,14 +136,16 @@ function prepareSceneForTerrainPick(
       return;
     }
     const material = terrainPickMaterial(object);
-    if (!candidates.has(object) || !material) {
-      hidden.push({ object, visible: object.visible });
-      object.visible = false;
+    if (candidates.has(object) && material) {
+      setPickOrigin(material, pickOrigin);
+      swapped.push({ mesh: object, material: object.material });
+      object.material = material;
       return;
     }
-    setPickOrigin(material, pickOrigin);
-    swapped.push({ mesh: object, material: object.material });
-    object.material = material;
+    if (object.visible) {
+      hidden.push({ object, visible: object.visible });
+      object.visible = false;
+    }
   });
 
   return { hidden, swapped };
@@ -131,33 +173,59 @@ export function pickTerrainWorldAtClient(
   clientY: number,
 ): THREE.Vector3 | null {
   const rect = domElement.getBoundingClientRect();
-  if (rect.width < 1 || rect.height < 1) return null;
+  const debugBase = {
+    clientX,
+    clientY,
+    rect: {
+      width: rect.width,
+      height: rect.height,
+      left: rect.left,
+      top: rect.top,
+    },
+  };
+  if (rect.width < 1 || rect.height < 1) {
+    lastTerrainPickDebug = { ...debugBase, reason: "empty-rect" };
+    return null;
+  }
   if (
     clientX < rect.left ||
     clientX > rect.right ||
     clientY < rect.top ||
     clientY > rect.bottom
   ) {
+    lastTerrainPickDebug = { ...debugBase, reason: "outside-rect" };
     return null;
   }
 
+  renderer.getDrawingBufferSize(drawingBufferSize);
+  const fullWidth = Math.max(1, drawingBufferSize.x);
+  const fullHeight = Math.max(1, drawingBufferSize.y);
   const x = Math.min(
-    rect.width - 1,
-    Math.max(0, Math.floor(clientX - rect.left)),
+    fullWidth - 1,
+    Math.max(0, Math.floor(((clientX - rect.left) / rect.width) * fullWidth)),
   );
   const y = Math.min(
-    rect.height - 1,
-    Math.max(0, Math.floor(clientY - rect.top)),
+    fullHeight - 1,
+    Math.max(0, Math.floor(((clientY - rect.top) / rect.height) * fullHeight)),
   );
+  const debugWithPixel = { ...debugBase, pixel: { x, y } };
 
+  scene.updateMatrixWorld(true);
+  camera.updateMatrixWorld();
   pickCamera.copy(camera);
-  pickCamera.setViewOffset(rect.width, rect.height, x, y, 1, 1);
+  pickCamera.setViewOffset(fullWidth, fullHeight, x, y, 1, 1);
   pickCamera.updateProjectionMatrix();
   pickCamera.updateMatrixWorld();
 
   pickOrigin.copy(camera.position);
   const { hidden, swapped } = prepareSceneForTerrainPick(scene, roots);
   if (swapped.length === 0) {
+    lastTerrainPickDebug = {
+      ...debugWithPixel,
+      reason: "no-pick-materials",
+      hiddenCount: hidden.length,
+      swappedCount: swapped.length,
+    };
     restoreSceneAfterTerrainPick(hidden, swapped);
     return null;
   }
@@ -187,9 +255,47 @@ export function pickTerrainWorldAtClient(
     restoreSceneAfterTerrainPick(hidden, swapped);
   }
 
-  if (pickPixel[3] <= 0 || !Number.isFinite(pickPixel[0])) return null;
-  return pickedWorld
+  const rgba: [number, number, number, number] = [
+    pickPixel[0],
+    pickPixel[1],
+    pickPixel[2],
+    pickPixel[3],
+  ];
+  if (pickPixel[3] <= 0 || !Number.isFinite(pickPixel[0])) {
+    lastTerrainPickDebug = {
+      ...debugWithPixel,
+      reason: "empty-pixel",
+      hiddenCount: hidden.length,
+      swappedCount: swapped.length,
+      rgba,
+      pickOrigin: {
+        x: pickOrigin.x,
+        y: pickOrigin.y,
+        z: pickOrigin.z,
+      },
+    };
+    return null;
+  }
+  const world = pickedWorld
     .set(pickPixel[0], pickPixel[1], pickPixel[2])
     .add(pickOrigin)
     .clone();
+  lastTerrainPickDebug = {
+    ...debugWithPixel,
+    reason: "hit",
+    hiddenCount: hidden.length,
+    swappedCount: swapped.length,
+    rgba,
+    pickOrigin: {
+      x: pickOrigin.x,
+      y: pickOrigin.y,
+      z: pickOrigin.z,
+    },
+    world: {
+      x: world.x,
+      y: world.y,
+      z: world.z,
+    },
+  };
+  return world;
 }

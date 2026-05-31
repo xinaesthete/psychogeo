@@ -4,9 +4,15 @@ import {
     configureTerrainZoomLimits,
     setTerrainCameraTarget,
 } from '../camera/mapControls';
-import { OBLIQUE_PITCH, applySphericalToCamera } from '../camera/viewState';
+import type { TerrainAnchorSource } from '../camera/MapCameraControls';
+import {
+    OBLIQUE_PITCH,
+    applySphericalToCamera,
+    type TerrainViewState,
+} from '../camera/viewState';
 import {
     createGeometryWorldPickMaterial,
+    getLastTerrainPickDebug,
     pickTerrainWorldAtClient,
 } from '../terrain/terrainPicking';
 import { ThreactTrackballBase } from '../threact/threexample';
@@ -214,6 +220,140 @@ const defaultTerrainOptions: TerrainOptions = {
     camZ: 15000,
     sun: true,
 };
+
+type PivotMarkerParts = {
+    group: THREE.Group;
+    sphereMaterial: THREE.MeshBasicMaterial;
+    ringMaterial: THREE.MeshBasicMaterial;
+    poleMaterial: THREE.LineBasicMaterial;
+};
+
+type VectorSnapshot = {
+    x: number;
+    y: number;
+    z: number;
+};
+
+type QuaternionSnapshot = {
+    x: number;
+    y: number;
+    z: number;
+    w: number;
+};
+
+export type TerrainDebugSnapshot = {
+    coord: EastNorth;
+    camera: {
+        position: VectorSnapshot;
+        quaternion: QuaternionSnapshot;
+        up: VectorSnapshot;
+        direction: VectorSnapshot;
+        fov: number;
+        near: number;
+        far: number;
+        aspect: number;
+        zoom: number;
+    };
+    controls?: {
+        target: VectorSnapshot;
+        viewState: TerrainViewState;
+        minDistance: number;
+        maxDistance: number;
+        minPitch: number;
+        maxPitch: number;
+    };
+    pivotMarker?: {
+        source: TerrainAnchorSource | null;
+        position: VectorSnapshot;
+        scale: VectorSnapshot;
+        visible: boolean;
+        colour: string;
+    };
+    lastPick: ReturnType<typeof getLastTerrainPickDebug>;
+    layers: {
+        dsmVisible: boolean;
+        dtmVisible: boolean;
+        osTerr50Visible: boolean;
+        dsmChildren: number;
+        dtmChildren: number;
+        osTerr50Children: number;
+    };
+};
+
+type TerrainDebugGlobal = {
+    snapshot: () => TerrainDebugSnapshot;
+};
+
+const terrainDebugElementId = "psychogeo-terrain-debug";
+
+declare global {
+    interface Window {
+        psychogeoTerrainDebug?: TerrainDebugGlobal;
+    }
+}
+
+const pivotMarkerColours: Record<TerrainAnchorSource, number> = {
+    terrain: 0x00f5ff,
+    "ground-plane": 0xffcc00,
+    target: 0xff4bd8,
+};
+
+function createPivotMarkerParts(): PivotMarkerParts {
+    const group = new THREE.Group();
+    group.name = "terrain-camera-pivot-marker";
+    group.visible = false;
+    group.renderOrder = 10_000;
+
+    const sphereMaterial = new THREE.MeshBasicMaterial({
+        color: pivotMarkerColours.terrain,
+        depthTest: false,
+        depthWrite: false,
+        transparent: true,
+        opacity: 0.95,
+    });
+    const ringMaterial = new THREE.MeshBasicMaterial({
+        color: pivotMarkerColours.terrain,
+        depthTest: false,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.65,
+    });
+    const poleMaterial = new THREE.LineBasicMaterial({
+        color: pivotMarkerColours.terrain,
+        depthTest: false,
+        depthWrite: false,
+        transparent: true,
+        opacity: 0.85,
+    });
+
+    const sphere = new THREE.Mesh(
+        new THREE.SphereGeometry(0.32, 20, 12),
+        sphereMaterial,
+    );
+    sphere.renderOrder = group.renderOrder;
+    group.add(sphere);
+
+    const ring = new THREE.Mesh(
+        new THREE.RingGeometry(0.65, 1, 48),
+        ringMaterial,
+    );
+    ring.renderOrder = group.renderOrder;
+    group.add(ring);
+
+    const pole = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(0, 0, -0.8),
+            new THREE.Vector3(0, 0, 1.4),
+        ]),
+        poleMaterial,
+    );
+    pole.renderOrder = group.renderOrder;
+    group.add(pole);
+
+    return { group, sphereMaterial, ringMaterial, poleMaterial };
+}
+
 export class TerrainRenderer extends ThreactTrackballBase {
     coord: EastNorth;
     tileProp: DsmCatItem;
@@ -230,6 +370,8 @@ export class TerrainRenderer extends ThreactTrackballBase {
     private osTerr50Loaded = false;
     private readonly loadedTracks = new Map<string, THREE.Group>();
     private desiredTrackUrls = new Set<string>();
+    private pivotMarkerParts?: PivotMarkerParts;
+    private lastPivotMarkerSource: TerrainAnchorSource | null = null;
 
     isTerrainInited(): boolean {
         return this.terrainInited;
@@ -437,11 +579,123 @@ export class TerrainRenderer extends ThreactTrackballBase {
             this.tiles.push(new LazyTile(info, parent));
         });
     }
+
+    private ensurePivotMarker(): PivotMarkerParts {
+        if (!this.pivotMarkerParts) {
+            this.pivotMarkerParts = createPivotMarkerParts();
+            this.scene.add(this.pivotMarkerParts.group);
+        }
+        return this.pivotMarkerParts;
+    }
+
+    private updatePivotMarkerScale(): void {
+        if (!this.pivotMarkerParts?.group.visible) return;
+        const distance = this.camera.position.distanceTo(
+            this.pivotMarkerParts.group.position,
+        );
+        const scale = Math.max(5, Math.min(120, distance * 0.018));
+        this.pivotMarkerParts.group.scale.setScalar(scale);
+    }
+
+    showTerrainPivotMarker(
+        point: THREE.Vector3,
+        source: TerrainAnchorSource,
+    ): void {
+        const marker = this.ensurePivotMarker();
+        const colour = pivotMarkerColours[source];
+        marker.sphereMaterial.color.setHex(colour);
+        marker.ringMaterial.color.setHex(colour);
+        marker.poleMaterial.color.setHex(colour);
+        marker.group.position.copy(point);
+        marker.group.visible = true;
+        this.lastPivotMarkerSource = source;
+        this.updatePivotMarkerScale();
+    }
+
+    private vectorSnapshot(v: THREE.Vector3): VectorSnapshot {
+        return { x: v.x, y: v.y, z: v.z };
+    }
+
+    getTerrainDebugSnapshot(): TerrainDebugSnapshot {
+        const direction = new THREE.Vector3();
+        this.camera.getWorldDirection(direction);
+        const marker = this.pivotMarkerParts;
+        const snapshot: TerrainDebugSnapshot = {
+            coord: { ...this.coord },
+            camera: {
+                position: this.vectorSnapshot(this.camera.position),
+                quaternion: {
+                    x: this.camera.quaternion.x,
+                    y: this.camera.quaternion.y,
+                    z: this.camera.quaternion.z,
+                    w: this.camera.quaternion.w,
+                },
+                up: this.vectorSnapshot(this.camera.up),
+                direction: this.vectorSnapshot(direction),
+                fov: this.camera.fov,
+                near: this.camera.near,
+                far: this.camera.far,
+                aspect: this.camera.aspect,
+                zoom: this.camera.zoom,
+            },
+            layers: {
+                dsmVisible: this.dsmLayer.visible,
+                dtmVisible: this.dtmLayer.visible,
+                osTerr50Visible: this.osTerr50Layer.visible,
+                dsmChildren: this.dsmLayer.children.length,
+                dtmChildren: this.dtmLayer.children.length,
+                osTerr50Children: this.osTerr50Layer.children.length,
+            },
+            lastPick: getLastTerrainPickDebug(),
+        };
+        if (this.mapCtrl) {
+            snapshot.controls = {
+                target: this.vectorSnapshot(this.mapCtrl.target),
+                viewState: this.mapCtrl.getViewState(),
+                minDistance: this.mapCtrl.minDistance,
+                maxDistance: this.mapCtrl.maxDistance,
+                minPitch: this.mapCtrl.minPitch,
+                maxPitch: this.mapCtrl.maxPitch,
+            };
+        }
+        if (marker) {
+            snapshot.pivotMarker = {
+                source: this.lastPivotMarkerSource,
+                position: this.vectorSnapshot(marker.group.position),
+                scale: this.vectorSnapshot(marker.group.scale),
+                visible: marker.group.visible,
+                colour: marker.sphereMaterial.color.getHexString(),
+            };
+        }
+        return snapshot;
+    }
+
+    private syncTerrainDebugGlobal(): void {
+        if (typeof window === "undefined") return;
+        const snapshot = this.getTerrainDebugSnapshot();
+        window.psychogeoTerrainDebug = {
+            snapshot: () => snapshot,
+        };
+        const existing = document.getElementById(terrainDebugElementId);
+        let debugElement: HTMLScriptElement;
+        if (existing instanceof HTMLScriptElement) {
+            debugElement = existing;
+        } else {
+            existing?.remove();
+            debugElement = document.createElement("script");
+            debugElement.id = terrainDebugElementId;
+            debugElement.type = "application/json";
+            document.body.appendChild(debugElement);
+        }
+        debugElement.textContent = JSON.stringify(snapshot);
+    }
+
     update() {
         tickTileShader();
         //LOD is now done with THREE.LOD, although we may benefit from a different distance function.
         //if so, we won't have a separate updateLOD() pass here.
         this.syncLightRig();
+        this.updatePivotMarkerScale();
         super.update();
     }
 
@@ -463,8 +717,12 @@ export class TerrainRenderer extends ThreactTrackballBase {
     }
 
     render(renderer: THREE.WebGLRenderer) {
+        this.syncTerrainDebugGlobal();
         this.mapCtrl?.setWorldPickProvider((clientX, clientY) =>
             this.pickTerrainWorldAtClient(renderer, clientX, clientY),
+        );
+        this.mapCtrl?.setAnchorPointListener((point, source) =>
+            this.showTerrainPivotMarker(point, source),
         );
         super.render(renderer);
     }

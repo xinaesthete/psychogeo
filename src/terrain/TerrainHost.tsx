@@ -76,6 +76,8 @@ function MapCameraControlsR3F({
       referenceDistance: camZ,
       pickWorldPoint: (clientX, clientY) =>
         renderer.pickTerrainWorldAtClient(gl, clientX, clientY),
+      onAnchorPoint: (point, source) =>
+        renderer.showTerrainPivotMarker(point, source),
     });
     configureTerrainZoomLimits(controls, camZ);
     setTerrainCameraTarget(controls, camera, coord, camZ);

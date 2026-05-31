@@ -28,6 +28,7 @@ export type MapCameraControlsOptions = {
     referenceDistance?: number;
     rotateSpeed?: number;
     pickWorldPoint?: (clientX: number, clientY: number) => Vector3 | null;
+    onAnchorPoint?: (point: Vector3, source: TerrainAnchorSource) => void;
 };
 
 const GROUND_PLANE = new Plane(new Vector3(0, 0, 1), 0);
@@ -45,6 +46,10 @@ const _axis = new Vector3();
 type DragMode = "pan" | "rotate" | "dolly" | null;
 
 type ActivePointer = { x: number; y: number };
+export type TerrainAnchorSource = "terrain" | "ground-plane" | "target";
+type AnchorOptions = {
+    emit?: boolean;
+};
 
 /** Ignore pinch when finger span is below this (px). */
 const MIN_PINCH_SPAN_PX = 24;
@@ -117,6 +122,7 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
     private gestureMidX = 0;
     private gestureMidY = 0;
     private pickWorldPoint?: (clientX: number, clientY: number) => Vector3 | null;
+    private onAnchorPoint?: (point: Vector3, source: TerrainAnchorSource) => void;
 
     constructor(
         camera: PerspectiveCamera,
@@ -135,6 +141,7 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
             this.rotateSpeed = options.rotateSpeed;
         }
         this.pickWorldPoint = options.pickWorldPoint;
+        this.onAnchorPoint = options.onAnchorPoint;
 
         this.applyCameraFromState();
         this.domElement.style.touchAction = "none";
@@ -178,6 +185,12 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
         provider: ((clientX: number, clientY: number) => Vector3 | null) | undefined,
     ): void {
         this.pickWorldPoint = provider;
+    }
+
+    setAnchorPointListener(
+        listener: ((point: Vector3, source: TerrainAnchorSource) => void) | undefined,
+    ): void {
+        this.onAnchorPoint = listener;
     }
 
     getViewState(): TerrainViewState {
@@ -311,6 +324,10 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
 
         if (event.button === 0) {
             this.dragMode = "pan";
+            const anchor = this.anchorOnGround(event.clientX, event.clientY, {
+                emit: true,
+            });
+            if (!anchor) this.onAnchorPoint?.(this.target, "target");
         } else if (event.button === 1) {
             this.dragMode = "dolly";
         } else if (event.button === 2) {
@@ -451,7 +468,9 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
     };
 
     private onDblClick = (event: MouseEvent) => {
-        const anchor = this.anchorOnGround(event.clientX, event.clientY);
+        const anchor = this.anchorOnGround(event.clientX, event.clientY, {
+            emit: true,
+        });
         if (!anchor) return;
         this.target.copy(anchor);
         this.distance *= 0.5;
@@ -573,11 +592,12 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
 
     /** Ground-anchored orbit pivot for right-drag and two-finger pitch/twist. */
     private initOrbitAboutScreenPoint(clientX: number, clientY: number): void {
-        const anchor = this.anchorOnGround(clientX, clientY);
+        const anchor = this.anchorOnGround(clientX, clientY, { emit: true });
         if (anchor) {
             this.rotatePivot.copy(anchor);
         } else {
             this.rotatePivot.copy(this.target);
+            this.onAnchorPoint?.(this.rotatePivot, "target");
         }
         this.target.copy(this.rotatePivot);
         this.orbitRadius = Math.max(
@@ -811,9 +831,13 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
         clientX: number,
         clientY: number,
         distanceRatio: number,
+        emitAnchor = true,
     ): boolean {
-        const anchor = this.anchorOnGround(clientX, clientY);
+        const anchor = this.anchorOnGround(clientX, clientY, {
+            emit: emitAnchor,
+        });
         if (!anchor) {
+            if (emitAnchor) this.onAnchorPoint?.(this.target, "target");
             _offset.subVectors(this.camera.position, this.target);
             if (_offset.lengthSq() < 1e-12) return false;
             _offset.multiplyScalar(distanceRatio);
@@ -866,9 +890,11 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
     private anchorOnGround(
         clientX: number,
         clientY: number,
+        options: AnchorOptions = {},
     ): Vector3 | null {
         const picked = this.pickWorldPoint?.(clientX, clientY);
         if (picked) {
+            if (options.emit) this.onAnchorPoint?.(picked, "terrain");
             return _anchor.copy(picked);
         }
 
@@ -880,8 +906,10 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
         );
         this.camera.updateMatrixWorld();
         _raycaster.setFromCamera(_ndc, this.camera);
-        return _raycaster.ray.intersectPlane(GROUND_PLANE, _anchor)
-            ? _anchor
-            : null;
+        if (!_raycaster.ray.intersectPlane(GROUND_PLANE, _anchor)) {
+            return null;
+        }
+        if (options.emit) this.onAnchorPoint?.(_anchor, "ground-plane");
+        return _anchor;
     }
 }
