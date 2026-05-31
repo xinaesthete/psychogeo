@@ -85,13 +85,31 @@ function App() {
       label: 'pan damping',
     },
   });
-  const {viewshedSourceHeight} = useControls('Viewshed', {
+  const {
+    viewshedSourceHeight,
+    viewshedShadowRadius,
+    viewshedShadowMapSize,
+  } = useControls('Viewshed', {
     viewshedSourceHeight: {
-      value: 1.6,
+      value: 2,
       min: 0,
       max: 50,
       step: 0.1,
       label: 'source height (m)',
+    },
+    viewshedShadowRadius: {
+      value: 20_000,
+      min: 500,
+      max: 100_000,
+      step: 500,
+      label: 'shadow radius (m)',
+    },
+    viewshedShadowMapSize: {
+      value: 2048,
+      min: 512,
+      max: 4096,
+      step: 512,
+      label: 'shadow map size',
     },
   });
   useEffect(() => {
@@ -118,10 +136,12 @@ function App() {
       compressionExperimentEnabled: compressionExperimentEnabled,
       sun: inspectionLight,
       viewshedSourceHeight,
+      viewshedShadowRadius,
+      viewshedShadowMapSize,
       camZ: 3000,
       tracks: overlayTracks,
     }),
-    [defra10mDTMLayer, defraDSMLayer, osTerr50Layer, compressionExperimentEnabled, inspectionLight, viewshedSourceHeight, overlayTracks],
+    [defra10mDTMLayer, defraDSMLayer, osTerr50Layer, compressionExperimentEnabled, inspectionLight, viewshedSourceHeight, viewshedShadowRadius, viewshedShadowMapSize, overlayTracks],
   );
 
   const renderMode: TerrainRenderMode = r3f ? 'r3f' : 'threact';

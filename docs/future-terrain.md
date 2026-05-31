@@ -89,6 +89,16 @@ flowchart TB
 
 Beyond primary DSM/DTM height tiles, the pipeline may carry **auxiliary rasters** baked offline. One candidate is the **first-return minus last-return** DSM difference: a sparse, low-bit-depth, aggressively compressed field encoding vertical structure in vegetation and built form. Unlike runtime JP2 recompression experiments (gated `compressionExperimentEnabled` in the app — synthetic loss from re-encoding the same DSM), this is real survey signal. Possible uses include approximating **partial shade**, canopy penetration, or modulating emissive/contour response without replacing the main height displacement. Format and resolution TBD; likely much coarser than 4096² full DSM. The tile loader should treat primary height and aux channels as separate optional layers behind a small provider API, not as special cases of j2c decode.
 
+## Viewshed roadmap
+
+The near-term manual viewshed source still uses Three.js point-light shadow maps over the flat OSGB terrain model. That is useful for interaction and debugging, but mountain-scale "what can I see from here?" needs a more explicit viewshed pipeline.
+
+- **Shadow-map precision first.** Keep point-light shadows adjustable by radius and map size, and bake them when the source is stable. Large far planes should be treated as a quality tradeoff, not a hidden default.
+- **Curvature / geoid experiment.** Preserve flat OSGB tile geometry and camera controls, but add a shadow-only vertex transform relative to the viewshed source. Start with an effective Earth radius parameter, optionally including atmospheric refraction, and compare against the flat pass.
+- **Beyond one point-light shadow.** True mountain-top visibility can exceed a single practical cube-shadow range. Candidate approaches include cascaded radial shadow shells, custom horizon-angle buffers, two-step depth passes, logarithmic depth, or a bespoke heightfield viewshed pass.
+- **Light-driven LOD.** Terrain detail needed by the viewshed source should become a first-class tile visibility signal. The renderer camera is not the only consumer of procedural geometry; shadow cameras and future analysis passes need their own working-set and LOD requests.
+- **Debuggability.** Keep source position, eye height, shadow radius, shadow camera near/far, map size, and selected LOD levels visible in the app debug snapshot so future quality regressions can be reproduced without visual guesswork.
+
 ## Routing and mobile (sketch)
 
 Today's [src/App.tsx](../src/App.tsx) mounts a single full-viewport view with Leva controls and side panels. Two natural follow-ups, sketched here only:

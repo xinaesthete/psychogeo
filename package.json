@@ -42,7 +42,8 @@
     "prebench:shp": "pnpm run build:shp-wasm",
     "bench:shp": "node scripts/benchmark-shp.mjs",
     "pretypecheck": "pnpm run build:shp-wasm:dev",
-    "test": "pnpm run typecheck",
+    "test": "pnpm run typecheck && pnpm run test:viewshed",
+    "test:viewshed": "tsc --ignoreConfig --ignoreDeprecations 6.0 --target ES2022 --module commonjs --moduleResolution node --strict true --types node --outDir /tmp/psychogeo-viewshed-tests src/geo/viewshedConfig.ts src/geo/viewshedConfig.test.ts && node /tmp/psychogeo-viewshed-tests/viewshedConfig.test.js",
     "electron": "electron .",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
