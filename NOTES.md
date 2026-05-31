@@ -34,9 +34,21 @@ I probably want to make a Strava API integration partly because this is where I 
 
 I'd also potentially rather not be using that anyway. Might make it able to record directly in the app and import from other sources (maybe push to Strava).
 
+Dealing with missing/unclean data. Quite often sections of a recording are dropped, or there is noise when GPS signal is low etc. I'd like to have some utilities for data-cleaning, adding missing data etc.
+
 ## Different interfaces / uses...
 
 I want to have somewhat serviceable means of using this as a somewhat useful tool while out hiking/cycling: improved mobile UI, less heavy on the battery, clear viewshed representation (with correction for Earth curvature etc).
 
-I'd like to be able to generally have other experimental graphics and music computer-art type things embedded in this kind of geographic context... so thinking about how we make that work.
+I'd like to be able to generally have other experimental graphics and music computer-art type things embedded in this kind of geographic context... so thinking about how we make that work. Things I might publish as webpages vs things I run locally (do I want to further develop Electron app that lets me manage local data etc?).
 
+## Other environmental datasets etc, FOI request considerations...
+
+[CASI Multispectral Imagery](https://environment.data.gov.uk/dataset/18713fc4-c040-4b79-9c46-4738ffbe3c3d)
+
+> Compact Airborne Spectrographic Imager is a multispectral pushbroom system that acquires data in visible and near infrared (VNIR) light. Unlike camera systems that generally acquire data in three (red, green, blue) or four (red, green, blue and near infra-red) bands, the CASI splits light into several discrete bands, up to 288, although approximately 20 are more normally captured.
+> It is capable of collecting data in discrete areas of the electromagnetic spectrum and can target key wavelengths that allow information about ground characteristics and ground cover type to be inferred. For example, the CASI can target the precise wavelengths of chlorophyll absorption or the algae fluorescence peak.
+
+Also "CASI and LIDAR Habitat Map" (downloaded to my local GIS folder as of writing, polygon shapefile showing relevant habitat classes, not the CASI data).
+
+Very MDV related... generally thinking about things like UMAP of tiles/land parcels etc. Potential use-case for some kind of MDV extension/plugin. Might think about whether and how to publish MDV as an npm thing. Should be possible to `npm i mdv`, `import ChartManager from 'mdv'`, register some custom chart-types and `DataLoader`... maybe even a different layout manager.
