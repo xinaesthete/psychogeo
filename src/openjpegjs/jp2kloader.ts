@@ -16,9 +16,77 @@ export interface FrameInfo {
     width: number; height: number; isSigned: boolean; bitsPerSample: number, componentCount: number;
 }
 
+/** Per-tile HTJ2K recode metrics from texture_worker (lossy path only). */
+export interface RecodeStats {
+  quality: number;
+  sourceBytes: number;
+  encodedBytes: number;
+  bytesPerPixel: number;
+  sourceBytesPerPixel: number;
+  compressionVsSource: number;
+  width: number;
+  height: number;
+  pixelCount: number;
+  identicalPixels: number;
+  rmseRaw: number;
+  meanAbsRaw: number;
+  maxAbsRaw: number;
+  rmseNorm: number;
+  meanAbsNorm: number;
+  maxAbsNorm: number;
+}
+
+export interface HeightRange {
+  min: number;
+  max: number;
+}
+
+/** Decode IEEE 754 binary16 half-float bits (matches texture_worker / ttile toHalf). */
+export function halfBitsToFloat(bits: number): number {
+  const sign = (bits & 0x8000) >> 15;
+  const exponent = (bits & 0x7c00) >> 10;
+  const mantissa = bits & 0x03ff;
+
+  if (exponent === 0) {
+    if (mantissa === 0) return sign ? -0 : 0;
+    const m = mantissa / 1024;
+    const v = m * Math.pow(2, -14);
+    return sign ? -v : v;
+  }
+  if (exponent === 0x1f) {
+    return mantissa ? NaN : sign ? -Infinity : Infinity;
+  }
+  const e = exponent - 15;
+  const m = 1 + mantissa / 1024;
+  const v = m * Math.pow(2, e);
+  return sign ? -v : v;
+}
+
+const TTILE_NODATA_METRE = 3000;
+
+/** Metre domain from /ttile/ half-float height (GeoTIFF extract path). */
+export function estimateHeightRangeFromHalfMetresTexture(texData: Uint16Array): HeightRange {
+  let min = Infinity;
+  let max = -Infinity;
+  const step = Math.max(1, Math.floor(texData.length / 5000));
+  for (let i = 0; i < texData.length; i += step) {
+    const metres = halfBitsToFloat(texData[i]);
+    if (!Number.isFinite(metres) || metres <= -199 || metres >= TTILE_NODATA_METRE) continue;
+    min = Math.min(min, metres);
+    max = Math.max(max, metres);
+  }
+  if (!Number.isFinite(min) || max <= min) {
+    return { min: 0, max: 1 };
+  }
+  return { min, max };
+}
+
 export interface TextureTile {
   texture: THREE.Texture;
   frameInfo: FrameInfo;
+  recodeStats?: RecodeStats;
+  /** Per-tile elevation domain (10m DTM float metres → shader uniforms). */
+  heightRange?: HeightRange;
 }
 export interface PixFrame {
   frameInfo: FrameInfo;
@@ -27,43 +95,63 @@ export interface PixFrame {
 export interface TexFrame {
   frameInfo: FrameInfo;
   texData: Uint16Array;
-  //not all code here is very clean wrt naming etc. at the moment.
+  recodeStats?: RecodeStats;
+  heightRange?: HeightRange;
 }
+
+/** Default HTJ2K quality for runtime recode experiment (see scripts/gebco_tiff2jph.js). */
+export const DEFAULT_LOSSY_COMPRESSION_RATIO = 0.1;
+
+/** HTJ2K setQuality(false, q): 0 ≈ lossless; higher q → more compression. */
+export const MIN_LOSSY_COMPRESSION_RATIO = 0;
+
+/**
+ * Upper q for lossy encode (OpenJPH q-step style; see ojph_compress -qstep, typ. ≤ 0.5).
+ * Values far above this tend to abort WASM encode.
+ */
+export const MAX_LOSSY_COMPRESSION_RATIO = 0.9999;
 
 const workers = new WorkerPool(4); //chrome doesn't like it when we assign too many
 workers.maxAge = 9e9;
-//^^^ long life because I have a slight bug when new workers init.
-//not much point in retiring, I think I had a memory leak before because I kept making new decoders
 const times: number[] = [];
-function texDataStats(texData: Uint16Array) {
-  const t = Date.now();
-  const min = texData.reduce((a,b) => Math.min(a, b), Number.MAX_VALUE);
-  const max = texData.reduce((a,b) => Math.max(a, b), Number.MIN_VALUE);
-  const mean = texData.reduce((a, b) => a+b, 0) / texData.length;
-  console.log('got stats in', Date.now()-t);
-  
-  console.log('min', min);
-  console.log('max', max);
-  console.log('mean', mean);
+
+function cacheKey(url: string, compressionRatio: number): string {
+  return `${url}@q=${compressionRatio}`;
 }
 
-async function getTexData(url: string, fullFloat: boolean, compressionRatio = 1) : Promise<TexFrame> {
+function isLossyCacheKey(key: string): boolean {
+  return key.includes('@q=') && !key.endsWith('@q=1');
+}
+
+/** HTJ2K worker fetch URL (10m DTM may use `/ttile/` for fast GeoTIFF extract when experiment is off). */
+function workerHeightUrl(url: string): string {
+  if (url.startsWith('/ttile/')) return '/ltile/' + url.slice(7);
+  return url;
+}
+
+async function getTexData(
+  url: string,
+  fullFloat: boolean,
+  compressionRatio = 1,
+  heightRangeMetres?: HeightRange,
+) : Promise<TexFrame> {
   if (url.startsWith('/ttile')) {
     const r = await fetch(url);
     const frameInfo:FrameInfo = {width: 4096, height: 4096, isSigned: true, bitsPerSample: 16, componentCount: 1};
     const buf = await r.arrayBuffer();
-    
-    //const texData = new Uint16Array(new Float32Array(buf).map(toHalf));//.map(v => Number.isNaN(v) ? -200 : v);
-    const texData = new Uint16Array(buf);//.map(v => Number.isNaN(v) ? -200 : v);
+    const texData = new Uint16Array(buf);
     if (texData.length !== frameInfo.width * frameInfo.height) {
       console.error(`that ain't gonna work - ${texData.length} isn't expected length (${frameInfo.width*frameInfo.height})`);
     }
-    
     return {frameInfo, texData};
   }
   const worker = await workers.getWorker();
   const t = Date.now();
-  const promise = new Promise<TexFrame>(async (resolve, reject) => {
+  const promise = new Promise<TexFrame>((resolve, reject) => {
+    if (!worker) {
+      reject('failed to get worker');
+      return;
+    }
     worker.onmessage = m => {
       workers.releaseWorker(worker);
       const dt = Date.now() - t;
@@ -71,91 +159,121 @@ async function getTexData(url: string, fullFloat: boolean, compressionRatio = 1)
       const avg = times.reduce((a, b) => a + b, 0) / times.length;;
       console.log(`t: ${dt}, min: ${Math.min(...times)}, max: ${Math.max(...times)} avg: ${avg}`);
       if (typeof m.data === "string") reject(m.data);
-      resolve(m.data as TexFrame);
+      const frame = m.data as TexFrame;
+      resolve(frame);
     }
-    if (compressionRatio === 1) worker.postMessage({cmd: "tex", url, fullFloat});
-    else worker.postMessage({cmd: "recode", url, compressionRatio, fullFloat});
+    const workerUrl = workerHeightUrl(url);
+    if (compressionRatio === 1) worker.postMessage({cmd: "tex", url: workerUrl, fullFloat});
+    else worker.postMessage({cmd: "recode", url: workerUrl, compressionRatio, fullFloat, heightRangeMetres});
   });
   return promise;
 }
-const textureCache = new Map<string, TextureTile>();
 
-export async function jp2Texture(url: string, simplerDecodeHack: boolean) {
-  //what if someone else is already waiting for it but it's not in the cache yet?
-  if (textureCache.has(url)) return textureCache.get(url) as TextureTile;
-  const result = await getTexData(url, simplerDecodeHack);
-  const frameInfo = result.frameInfo;
-  // console.log(JSON.stringify(frameInfo, null, 2));
-
-  //https://jsfiddle.net/f2Lommf5/1856/ - doesn't give errors but doesn't seem to load any meaningful data.
-  //const texture = new THREE.DataTexture(data, frameInfo.width, frameInfo.height, THREE.LuminanceFormat, THREE.UnsignedShortType,
-      //THREE.UVMapping, THREE.ClampToEdgeWrapping, THREE.ClampToEdgeWrapping, THREE.NearestFilter, THREE.NearestFilter, 1
-  //);
-  //there is evidence the following work in WebGL2, need to translate to THREE.DataTexture:
-  //internalFormat = gl.DEPTH_COMPONENT16; format = gl.DEPTH_COMPONENT; type = gl.UNSIGNED_SHORT; // OK, red
-  // const texture = new THREE.DataTexture(result.texData, frameInfo.width, frameInfo.height, THREE.RGBFormat, THREE.UnsignedByteType);
+function texFrameToTexture(result: TexFrame): TextureTile {
+  const { frameInfo, recodeStats, heightRange } = result;
   const format = THREE.RedFormat;
   const type = THREE.HalfFloatType;
-  const d = result.texData; //fullFloat ? new Float32Array(result.texData) : result.texData;
-  const texture = new THREE.DataTexture(d, frameInfo.width, frameInfo.height, format, type);
+  const texture = new THREE.DataTexture(result.texData, frameInfo.width, frameInfo.height, format, type);
   texture.minFilter = texture.magFilter = THREE.LinearFilter;
   texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
   texture.flipY = false;
   texture.generateMipmaps = false;
   texture.anisotropy = 16;
   texture.needsUpdate = true;
-  // texture.generateMipmaps = true; //TODO: test & make sure full use being made...
-  const t = {texture, frameInfo};
-  textureCache.set(url, t);
-  return t;
+  return { texture, frameInfo, recodeStats, heightRange };
+}
+
+/** Map slider 0…1 linearly from min to max q (0 = lossless end, 1 = max compression). */
+export function qualityFromSlider(slider: number): number {
+  const t = Math.min(1, Math.max(0, slider));
+  return MIN_LOSSY_COMPRESSION_RATIO + t * (MAX_LOSSY_COMPRESSION_RATIO - MIN_LOSSY_COMPRESSION_RATIO);
+}
+
+/** Inverse of {@link qualityFromSlider} for syncing UI. */
+export function sliderFromQuality(quality: number): number {
+  const q = clampLossyQuality(quality);
+  const span = MAX_LOSSY_COMPRESSION_RATIO - MIN_LOSSY_COMPRESSION_RATIO;
+  if (span <= 0) return 0;
+  return (q - MIN_LOSSY_COMPRESSION_RATIO) / span;
+}
+
+export function clampLossyQuality(quality: number): number {
+  if (!Number.isFinite(quality) || quality < MIN_LOSSY_COMPRESSION_RATIO) {
+    return MIN_LOSSY_COMPRESSION_RATIO;
+  }
+  return Math.min(MAX_LOSSY_COMPRESSION_RATIO, quality);
+}
+
+const textureCache = new Map<string, TextureTile>();
+const inflight = new Map<string, Promise<TextureTile>>();
+
+export async function jp2Texture(
+  url: string,
+  simplerDecodeHack: boolean,
+  compressionRatio = 1,
+  heightRangeMetres?: HeightRange,
+): Promise<TextureTile> {
+  const key = cacheKey(url, compressionRatio);
+  const cached = textureCache.get(key);
+  if (cached) return cached;
+
+  let pending = inflight.get(key);
+  if (!pending) {
+    pending = getTexData(url, simplerDecodeHack, compressionRatio, heightRangeMetres).then((result) => {
+      const tile = texFrameToTexture(result);
+      textureCache.set(key, tile);
+      inflight.delete(key);
+      return tile;
+    }).catch((err) => {
+      inflight.delete(key);
+      throw err;
+    });
+    inflight.set(key, pending);
+  }
+  return pending;
+}
+
+/** Parallel full + lossy decode (eager path). Terrain uses staged full-then-lossy via {@link jp2Texture}. */
+export async function jp2TexturePair(
+  url: string,
+  simplerDecodeHack: boolean,
+  lossyRatio = DEFAULT_LOSSY_COMPRESSION_RATIO,
+): Promise<{ full: TextureTile; lossy: TextureTile; frameInfo: FrameInfo }> {
+  const [full, lossy] = await Promise.all([
+    jp2Texture(url, simplerDecodeHack, 1),
+    jp2Texture(url, simplerDecodeHack, lossyRatio),
+  ]);
+  return { full, lossy, frameInfo: full.frameInfo };
+}
+
+/** Evict runtime-recoded textures (not full-quality @q=1 entries). */
+export function invalidateLossyCache(url?: string, compressionRatio?: number): void {
+  const exactKey =
+    url !== undefined && compressionRatio !== undefined
+      ? cacheKey(url, compressionRatio)
+      : undefined;
+  const toDelete: string[] = [];
+  for (const key of textureCache.keys()) {
+    if (!isLossyCacheKey(key)) continue;
+    if (
+      exactKey === key ||
+      (exactKey === undefined && (url === undefined || key.startsWith(`${url}@q=`)))
+    ) {
+      const entry = textureCache.get(key);
+      entry?.texture.dispose();
+      toDelete.push(key);
+    }
+  }
+  for (const key of toDelete) {
+    textureCache.delete(key);
+    inflight.delete(key);
+  }
 }
 
 export function newGLContext() {
-  //TODO: formalise GL resource management with threact.
+  for (const entry of textureCache.values()) {
+    entry.texture.dispose();
+  }
   textureCache.clear();
-}
-
-
-//https://discourse.threejs.org/t/three-datatexture-works-on-mobile-only-when-i-keep-the-type-three-floattype-but-not-as-three-halffloattype/1864/4
-const floatView = new Float32Array(1);
-const int32View = new Int32Array(floatView.buffer);
-function toHalf(val: number) {
-    floatView[0] = val;
-    var x = int32View[0];
-
-    var bits = (x >> 16) & 0x8000; /* Get the sign */
-    var m = (x >> 12) & 0x07ff; /* Keep one extra bit for rounding */
-    var e = (x >> 23) & 0xff; /* Using int is faster here */
-
-    /* If zero, or denormal, or exponent underflows too much for a denormal
-                   * half, return signed zero. */
-    if (e < 103) return bits;
-
-    /* If NaN, return NaN. If Inf or exponent overflow, return Inf. */
-    if (e > 142) {
-
-        bits |= 0x7c00;
-        /* If exponent was 0xff and one mantissa bit was set, it means NaN,
-                                 * not Inf, so make sure we set one mantissa bit too. */
-        bits |= ((e == 255) ? 0 : 1) && (x & 0x007fffff);
-        return bits;
-
-    }
-
-    /* If exponent underflows but not too much, return a denormal */
-    if (e < 113) {
-
-        m |= 0x0800;
-        /* Extra rounding may overflow and set mantissa to 0 and exponent
-                         * to 1, which is OK. */
-        bits |= (m >> (114 - e)) + ((m >> (113 - e)) & 1);
-        return bits;
-
-    }
-
-    bits |= ((e - 112) << 10) | (m >> 1);
-    /* Extra rounding. An overflow will set mantissa to 0 and increment
-                   * the exponent, which is OK. */
-    bits += m & 1;
-    return bits;
+  inflight.clear();
 }

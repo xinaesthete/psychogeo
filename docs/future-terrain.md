@@ -2,6 +2,12 @@
 
 Rough architecture notes for psychogeo beyond the current WebGL2 / Three.js heightfield stack. Not a commitment or implementation spec.
 
+## Related docs
+
+- [docs/tile-layers.md](tile-layers.md) — proposed in-browser raster-channel API and tile lifecycle that replaces today's ad-hoc per-tile state.
+- [docs/compression-experiment.md](compression-experiment.md) — current state of the HTJ2K compression experiment and how it migrates onto the channel API.
+- [docs/server-side.md](server-side.md) — offline data-processing pipelines, dev UI for controlling them, runtime backend, RSC evaluation, and a future Zarr storage evaluation.
+
 ## Current stack
 
 - JP2 height tiles (DEFRA DSM/DTM) decoded in the browser.
@@ -23,12 +29,18 @@ The engine must own that deformation end-to-end; it is not a standard “terrain
 
 ## Why a bespoke engine (for now)
 
-| Need | Bespoke fit | deck.gl / MapLibre | Cesium |
-|------|-------------|-------------------|--------|
-| Procedural height from texture + `gl_VertexID` | Native | `TerrainLayer` expects height maps / mesh conventions | Quantized mesh terrain |
-| Graph-driven deformation | Direct | Fighting tile lifecycle and LOD | Globe-centric pipeline |
-| UK OSGB-ish flat grid + local Z-up | Current model | Good for 2D map + extrusion | Good for globe |
-| Live shader + uniform iteration | `tileShaderRuntime` | Custom layers possible but separate from terrain | Material system differs |
+Wider comparison across the criteria that actually decide this for psychogeo. Today is three.js + R3F on WebGL2; the realistic forward path is three.js + WebGPU (see § _Possible render path_).
+
+| Criterion | MapLibre + deck.gl Terrain3D | Cesium | three.js + R3F (today) | three.js + WebGPU (target) |
+|-----------|------------------------------|--------|------------------------|----------------------------|
+| Graph-driven deformation of heightfield | Tile lifecycle and `TerrainLayer` not built for per-frame deformation | Globe-centric pipeline; deformation against quantized-mesh terrain non-trivial | Direct — bespoke shader, full vertex control via `onBeforeCompile` | Direct — typed compute + WGSL passes |
+| Custom shaders / GPU compute | deck.gl custom layers possible but live separately from the terrain layer | Material system differs from raw GLSL; harder to share knobs | Native — `onBeforeCompile` + `tileShaderRuntime` | Native — single typed pipeline (e.g. TypeGPU) |
+| Lazy per-tile raster channels (height variants, aux, photo) | `TerrainLayer` expects standard tile schema; attaching aux rasters per-tile is off-grid | Imagery providers plug into globe tiling, not arbitrary channels | Compression experiment implements dual-height + visibility-gated recode; DSM lossy path still buggy; needs channel API (see [tile-layers.md](tile-layers.md)) | Same pattern; compute passes could decode in-place |
+| OSGB-ish flat grid + local Z-up | Good for 2D map + extrusion; flat grid OK | Globe-shaped; flat-projection mode is limited | Native | Native |
+| WebGPU path | deck.gl WebGPU is work-in-progress; not the default | Cesium WebGPU is work-in-progress | Not yet; current build is WebGL2 | This _is_ the target |
+| Mobile fit | Strong — MapLibre is mobile-first | Heavy on memory and bundle size | Workable; LOD bias + control tuning required | Same; gated on WebGPU mobile availability |
+| Ecosystem maturity | Mature (MapLibre) + active (deck.gl) | Mature, large org backing | Very mature (three.js); R3F mature | New — TypeGPU and WebGPU shaders less battle-tested |
+| Getting-started cost from here | Significant rewrite — current shader and tile pipeline do not map onto deck.gl's layer model | Major rewrite; globe model is the wrong fit | Already here | Incremental from current — replace `onBeforeCompile` patches with a WGSL pipeline |
 
 **When to reconsider**
 
@@ -72,6 +84,31 @@ flowchart TB
 - **Edges**: time-ordered segments, spatial proximity, shared place.
 - **Forces**: spring (edge length), repulsion, optional anchor to true geography.
 - **Coupling to terrain**: per-tile control points or shared warp texture; update each frame during playback; optional persistence of layout between sessions.
+
+## Auxiliary height channels
+
+Beyond primary DSM/DTM height tiles, the pipeline may carry **auxiliary rasters** baked offline. One candidate is the **first-return minus last-return** DSM difference: a sparse, low-bit-depth, aggressively compressed field encoding vertical structure in vegetation and built form. Unlike runtime JP2 recompression experiments (gated `compressionExperimentEnabled` in the app — synthetic loss from re-encoding the same DSM), this is real survey signal. Possible uses include approximating **partial shade**, canopy penetration, or modulating emissive/contour response without replacing the main height displacement. Format and resolution TBD; likely much coarser than 4096² full DSM. The tile loader should treat primary height and aux channels as separate optional layers behind a small provider API, not as special cases of j2c decode.
+
+## Routing and mobile (sketch)
+
+Today's [src/App.tsx](../src/App.tsx) mounts a single full-viewport view with Leva controls and side panels. Two natural follow-ups, sketched here only:
+
+**Routing.** Split the app into distinct surfaces, each owning its own panel chrome:
+
+- `/abstract` — current psychogeographic-graphics default (animated contours, viewshed playback). Carries the experimental shader knobs.
+- `/map` — navigable basemap → DSM morph (see [tile-layers.md](tile-layers.md) § _Basemap morph_) for orientation and place-finding. Foreground audience for non-expert users.
+- `/tracks` — track catalog browser; today's `TrackCatalogPanel` is the seed.
+
+Stay single-page for now. Introduce `react-router` once any two surfaces have distinct chrome. The renderer cache in [src/TerrainContext.ts](../src/TerrainContext.ts) already supports multiple coordinates so route-scoped views are feasible without redesigning the terrain layer.
+
+**Mobile.** A usable mobile build needs, in roughly priority order:
+
+- Touch-first camera controls — extend [src/camera/MapCameraControls.ts](../src/camera/MapCameraControls.ts) (or its successor) with single-finger pan + two-finger pinch / rotate.
+- Collapsible / drawer-style chrome — Leva is desktop-shaped; wrap or replace it with a single bottom-sheet panel.
+- Lower default LOD bias and a smaller working set to fit phone GPU-memory budgets; informed by the working-set budget concept in [tile-layers.md](tile-layers.md) § _Visibility model_.
+- Disable the compression experiment on mobile by default — it doubles GPU height-texture memory.
+
+Detailed wiring belongs in its own doc once a non-experimental surface (probably `/map`) is the immediate target.
 
 ## Open questions
 

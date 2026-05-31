@@ -7,21 +7,19 @@ import {
 import { OBLIQUE_PITCH, applySphericalToCamera } from '../camera/viewState';
 import { ThreactTrackballBase } from '../threact/threexample';
 import { EastNorth } from './Coordinates';
-import * as dsm_cat from './dsm_catalog.json' //pending rethink of API...
-import * as dtm_10m from './10m_dtm_catalog.json' //similarly pending rethink of API...
+import dsmCatalog from './dsm_catalog.json';
+import dtm10mCatalog from './10m_dtm_catalog.json';
 import { threeGeometryFromShpZip } from './ShpProcessor';
 import {
-    applyCustomDepth,
     applyCustomDepthForViewshed,
     getTileLoadingMaterial,
     tickTileShader,
 } from './tileShaderRuntime';
 import { loadGpxGeometry } from './TrackVis';
+import { syncCompressionExperiment } from './compressionExperiment';
 import { getTileMesh } from './LodUtils';
 
 
-const cat = (dsm_cat as any).default;
-const cat10m = (dtm_10m as any).default;
 type DsmSources = Partial<Record<"500" | "1000" | "2000", string>>;
 export interface DsmCatItem {
     min_ele?: number;
@@ -32,9 +30,12 @@ export interface DsmCatItem {
     nrows: number,
     ncols: number,
     source_filename: string,
-    sources: DsmSources,
+    sources?: DsmSources,
     mesh?: THREE.Object3D //nb, one caveat is that having a given Object3D expects to appear once in one scenegraph
 }
+
+const cat: Record<string, DsmCatItem> = dsmCatalog;
+const cat10m: Record<string, DsmCatItem> = dtm10mCatalog;
 
 
 /** 
@@ -57,11 +58,12 @@ export function getTileProperties(coord: EastNorth, lowRes = false) {
     const low = truncateEastNorth(coord, lowRes);
     const k = low.east + ", " + low.north;
 
-    return (lowRes ? cat10m[k] : cat[k]) as DsmCatItem;
+    return (lowRes ? cat10m[k] : cat[k]);
 }
 
-export function getImageFilename(source_filename: string, lowRes = false) {
-    if (lowRes) return "/ttile/" + source_filename; //ltile vs ttile...
+/** @param useJ2k When true on 10m DTM, fetch HTJ2K via `/ltile/` (required for worker recode). */
+export function getImageFilename(source_filename: string, lowRes = false, useJ2k = false) {
+    if (lowRes) return (useJ2k ? "/ltile/" : "/ttile/") + source_filename;
     return "/tile/" + source_filename; // /tile/ interpreted as url for fetch, tile: uses electron api
 }
 
@@ -162,11 +164,6 @@ class LazyTileOS {
             });
         }
     }
-    async rasterize(destRT: THREE.WebGLRenderTarget) {
-        //render normalised height into a buffer
-        //read it back into memory
-        //send the data to a worker to compress & save to disk, along with appropriate metadata.
-    }
 }
 async function getOSDelaunayMesh(coord: EastNorth) {
     try {
@@ -179,7 +176,7 @@ async function getOSDelaunayMesh(coord: EastNorth) {
         mesh.castShadow = true;
         mesh.receiveShadow = true;
         
-        applyCustomDepthForViewshed(mesh as THREE.Mesh);
+        applyCustomDepthForViewshed(mesh);
         return mesh;
     } catch (e) {
         console.error(e);
@@ -191,6 +188,8 @@ export interface TerrainOptions {
     osTerr50Layer?: boolean;
     defraDSMLayer?: boolean;
     defra10mDTMLayer?: boolean;
+    /** Runtime JP2 recode + dual-height shader experiment (off by default). */
+    compressionExperimentEnabled?: boolean;
     tracks?: Track[];
     sun?: boolean;
     camZ: number;
@@ -206,6 +205,7 @@ const defaultTerrainOptions: TerrainOptions = {
     osTerr50Layer: false,
     defraDSMLayer: false,
     defra10mDTMLayer: true,
+    compressionExperimentEnabled: false,
     camZ: 15000,
     sun: true,
 };
@@ -245,6 +245,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
             initialDistance: this.options.camZ,
             referenceDistance: this.options.camZ,
         };
+        syncCompressionExperiment(!!this.options.compressionExperimentEnabled);
         if (this.terrainInited) {
             this.applyTerrainOptions();
         }
@@ -268,6 +269,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
             ...options,
             sun: options.sun ?? defaultTerrainOptions.sun,
         };
+        syncCompressionExperiment(!!this.options.compressionExperimentEnabled);
         console.table(this.options);
         this.coord = {...coord};
         this.tileProp = getTileProperties(coord);
@@ -358,15 +360,12 @@ export class TerrainRenderer extends ThreactTrackballBase {
     }
 
     applyTerrainOptions() {
+        syncCompressionExperiment(!!this.options.compressionExperimentEnabled);
         this.syncLightRig();
         this.syncLayerVisibility();
         if (!this.markerAdded) {
             this.addMarker();
             this.markerAdded = true;
-        }
-        if (onlyDebugGeometry) {
-            this.planeBaseTest();
-            return;
         }
         if (this.options.osTerr50Layer && !this.osTerr50Loaded) {
             this.osTerr50Loaded = true;
@@ -415,24 +414,6 @@ export class TerrainRenderer extends ThreactTrackballBase {
             this.lightRig = undefined;
         }
     }
-    planeBaseTest() {
-        const geo = new THREE.PlaneGeometry(10000, 10000, 2000, 2000);
-        const mat = new THREE.MeshStandardMaterial();
-        JP2.jp2Texture(getImageFilename(this.tileProp.source_filename), false).then(({texture, frameInfo}) => {
-            mat.displacementMap = texture;
-            mat.displacementScale = (this.tileProp.max_ele! - this.tileProp.min_ele!) * 10;
-            const m = new THREE.Mesh(geo, mat);
-            m.frustumCulled = false;
-            //this is interesting: shadows definitely not working with either / both DoubleSide
-            // mat.side = THREE.DoubleSide;
-            // mat.shadowSide = THREE.DoubleSide;
-            m.receiveShadow = true;
-            m.castShadow = true;
-            m.position.z = -mat.displacementScale/2;
-            applyCustomDepth(m, {});
-            this.scene.add(m);
-        });
-    }
     //TODO: manage tiles differently, particularly LOD.
     async bigShpTest() {
         const o = this.coord;
@@ -447,7 +428,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
     async makeTiles(lowRes = false) {
         const parent = lowRes ? this.dtmLayer : this.dsmLayer;
         Object.entries(lowRes ? cat10m : cat).forEach((k) => {
-            const info = k[1] as DsmCatItem;
+            const info = k[1];
             this.tiles.push(new LazyTile(info, parent));
         });
     }

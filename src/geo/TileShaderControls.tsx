@@ -13,7 +13,6 @@ function setVec3FromColor(v: THREE.Vector3, hex: string): void {
 
 /**
  * Leva panel for shared terrain shader uniforms (live, no recompile).
- * When adding uniforms in TileShader.ensureUniforms, add matching controls here.
  */
 export function TileShaderControls() {
   const u = tileShaderUniforms;

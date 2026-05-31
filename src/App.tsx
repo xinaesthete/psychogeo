@@ -8,6 +8,7 @@ import {
 import { DEFAULT_PAN_INERTIA, setPanInertiaTuning } from './camera/panInertia';
 import { DEFAULT_SMOOTH_ZOOM, setSmoothZoomTuning } from './camera/smoothZoom';
 import { convertWgsToOSGB, EastNorth } from './geo/Coordinates';
+import { CompressionAnalysisPanel } from './geo/CompressionAnalysisPanel';
 import { newGLContext, TerrainOptions, Track } from './geo/TileLoaderUK';
 import { TerrainHost, TerrainRenderMode } from './terrain/TerrainHost';
 import { CameraViewControls } from './camera/CameraViewControls';
@@ -38,8 +39,14 @@ const DEV_LOCATIONS = {
 } as const;
 
 function App() {
+  const [compressionExperimentEnabled, setCompressionExperimentEnabled] = useState(false);
+
   const {defra10mDTMLayer, defraDSMLayer, osTerr50Layer, inspectionLight, r3f} = useControls({
-    defra10mDTMLayer: false, defraDSMLayer: true, osTerr50Layer: false, inspectionLight: true, r3f: false
+    defra10mDTMLayer: false,
+    defraDSMLayer: true,
+    osTerr50Layer: false,
+    inspectionLight: true,
+    r3f: false,
   });
   const {zoomSpeed, zoomSmoothMs, panGain, zoomGain, panDamping} = useControls('Camera', {
     zoomSpeed: {
@@ -99,11 +106,12 @@ function App() {
       defra10mDTMLayer,
       defraDSMLayer,
       osTerr50Layer,
+      compressionExperimentEnabled: compressionExperimentEnabled,
       sun: inspectionLight,
       camZ: 3000,
       tracks: overlayTracks,
     }),
-    [defra10mDTMLayer, defraDSMLayer, osTerr50Layer, inspectionLight, overlayTracks],
+    [defra10mDTMLayer, defraDSMLayer, osTerr50Layer, compressionExperimentEnabled, inspectionLight, overlayTracks],
   );
 
   const renderMode: TerrainRenderMode = r3f ? 'r3f' : 'threact';
@@ -114,6 +122,10 @@ function App() {
         coord={winchester}
         options={terrainOptions}
         renderMode={renderMode}
+      />
+      <CompressionAnalysisPanel
+        enabled={compressionExperimentEnabled}
+        onEnabledChange={setCompressionExperimentEnabled}
       />
       <TrackCatalogPanel
         selectedIds={selectedTrackIds}
