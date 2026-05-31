@@ -102,14 +102,15 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
 
     private smoothing = false;
     private targetGroundDistance = 1;
-    private wheelCursorX = 0;
-    private wheelCursorY = 0;
+    private readonly zoomAnchor = new Vector3();
+    private hasZoomAnchor = false;
     private wheelIdleTimer: ReturnType<typeof setTimeout> | undefined;
     private ignoreWheelUntil = 0;
 
     private panInertiaActive = false;
     private panVelX = 0;
     private panVelY = 0;
+    private panMetersPerPixel = 1;
     private lastPanClientX = 0;
     private lastPanClientY = 0;
     private lastPointerMoveTime = 0;
@@ -328,8 +329,18 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
                 emit: true,
             });
             if (!anchor) this.onAnchorPoint?.(this.target, "target");
+            this.panMetersPerPixel = this.metersPerPixelForGroundDistance(
+                anchor
+                    ? this.camera.position.distanceTo(anchor)
+                    : this.viewDirectionGroundDistance(),
+            );
         } else if (event.button === 1) {
             this.dragMode = "dolly";
+            this.targetGroundDistance = this.setZoomAnchorFromScreenPoint(
+                event.clientX,
+                event.clientY,
+                true,
+            );
         } else if (event.button === 2) {
             this.dragMode = "rotate";
             this.initOrbitAboutScreenPoint(event.clientX, event.clientY);
@@ -391,11 +402,7 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
             this.rotatePixels(dx, dy);
         } else if (this.dragMode === "dolly") {
             const scale = Math.pow(0.98, dy);
-            this.zoomAboutGroundPoint(
-                event.clientX,
-                event.clientY,
-                scale,
-            );
+            this.zoomAboutCachedAnchor(scale);
         }
         this.dispatchChange();
     };
@@ -437,12 +444,10 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
         if (performance.now() < this.ignoreWheelUntil) return;
         this.stopPanInertia();
 
-        this.wheelCursorX = event.clientX;
-        this.wheelCursorY = event.clientY;
-
-        const actualGround = this.groundDistanceAtCursor(
+        const actualGround = this.setZoomAnchorFromScreenPoint(
             event.clientX,
             event.clientY,
+            true,
         );
         const { zoomGain } = getSensitivityTuning();
         const tuning = getSmoothZoomTuning();
@@ -452,11 +457,7 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
         );
 
         if (tuning.smoothMs <= 0) {
-            this.zoomAboutGroundPoint(
-                event.clientX,
-                event.clientY,
-                scale,
-            );
+            this.zoomAboutCachedAnchor(scale);
             this.syncStateFromCamera();
             this.dispatchChange();
             return;
@@ -485,10 +486,7 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
         this.wheelIdleTimer = setTimeout(() => {
             this.wheelIdleTimer = undefined;
             this.smoothing = false;
-            this.targetGroundDistance = this.groundDistanceAtCursor(
-                this.wheelCursorX,
-                this.wheelCursorY,
-            );
+            this.targetGroundDistance = this.currentZoomAnchorDistance();
             this.ignoreWheelUntil =
                 performance.now() + tuning.wheelCooldownMs;
         }, tuning.wheelIdleMs);
@@ -555,29 +553,19 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
 
     private tickSmoothZoom(): boolean {
         const tuning = getSmoothZoomTuning();
-        const current = this.groundDistanceAtCursor(
-            this.wheelCursorX,
-            this.wheelCursorY,
-        );
+        const current = this.currentZoomAnchorDistance();
         const alpha = 1 - Math.exp(-20 / tuning.smoothMs);
         const next =
             current + (this.targetGroundDistance - current) * alpha;
         const ratio = current > 1e-6 ? next / current : 1;
-        this.zoomAboutGroundPoint(
-            this.wheelCursorX,
-            this.wheelCursorY,
-            ratio,
-        );
+        this.zoomAboutCachedAnchor(ratio);
         this.syncStateFromCamera();
         this.dispatchChange();
 
         if (
             Math.abs(
                 this.targetGroundDistance -
-                    this.groundDistanceAtCursor(
-                        this.wheelCursorX,
-                        this.wheelCursorY,
-                    ),
+                    this.currentZoomAnchorDistance(),
             ) < 0.5
         ) {
             this.smoothing = false;
@@ -603,6 +591,9 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
         this.orbitRadius = Math.max(
             this.camera.position.distanceTo(this.rotatePivot),
             this.minDistance,
+        );
+        this.panMetersPerPixel = this.metersPerPixelForGroundDistance(
+            this.orbitRadius,
         );
         this.orbitStartOffset.subVectors(
             this.camera.position,
@@ -812,10 +803,10 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
     private panPixels(
         deltaX: number,
         deltaY: number,
-        clientX: number,
-        clientY: number,
+        _clientX: number,
+        _clientY: number,
     ): void {
-        const mpp = this.groundMetersPerPixel(clientX, clientY);
+        const mpp = this.panMetersPerPixel;
         _right.setFromMatrixColumn(this.camera.matrix, 0);
         _forward.crossVectors(TERRAIN_WORLD_UP, _right).normalize();
         _move
@@ -825,6 +816,62 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
         this.camera.position.add(_move);
         this.target.add(_move);
         this.syncStateFromCamera();
+    }
+
+    private setZoomAnchorFromScreenPoint(
+        clientX: number,
+        clientY: number,
+        emitAnchor: boolean,
+    ): number {
+        const anchor = this.anchorOnGround(clientX, clientY, {
+            emit: emitAnchor,
+        });
+        if (anchor) {
+            this.zoomAnchor.copy(anchor);
+            this.hasZoomAnchor = true;
+            return Math.max(this.camera.position.distanceTo(anchor), 1e-3);
+        }
+        this.hasZoomAnchor = false;
+        if (emitAnchor) this.onAnchorPoint?.(this.target, "target");
+        return this.currentZoomAnchorDistance();
+    }
+
+    private currentZoomAnchorDistance(): number {
+        if (this.hasZoomAnchor) {
+            return Math.max(
+                this.camera.position.distanceTo(this.zoomAnchor),
+                1e-3,
+            );
+        }
+        _offset.subVectors(this.camera.position, this.target);
+        if (_offset.lengthSq() > 1e-12) {
+            return Math.max(_offset.length(), 1e-3);
+        }
+        return this.viewDirectionGroundDistance();
+    }
+
+    private zoomAboutCachedAnchor(distanceRatio: number): boolean {
+        if (!this.hasZoomAnchor) {
+            _offset.subVectors(this.camera.position, this.target);
+            if (_offset.lengthSq() < 1e-12) return false;
+            _offset.multiplyScalar(distanceRatio);
+            _delta.copy(this.target).add(_offset).sub(this.camera.position);
+            this.camera.position.add(_delta);
+            this.target.add(_delta);
+            return true;
+        }
+
+        _offset.subVectors(this.camera.position, this.zoomAnchor);
+        const dist = _offset.length();
+        if (dist < 1e-6) return false;
+
+        const nextDist = dist * distanceRatio;
+        if (nextDist < 1e-6) return false;
+        _offset.multiplyScalar(nextDist / dist);
+        _delta.copy(this.zoomAnchor).add(_offset).sub(this.camera.position);
+        this.camera.position.add(_delta);
+        this.target.add(_delta);
+        return true;
     }
 
     private zoomAboutGroundPoint(
@@ -860,31 +907,22 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
         return true;
     }
 
-    private groundMetersPerPixel(clientX: number, clientY: number): number {
-        const g = this.groundDistanceAtCursor(clientX, clientY);
+    private metersPerPixelForGroundDistance(distance: number): number {
         const fovRad = (this.camera.fov * Math.PI) / 180;
         const base =
-            (2 * g * Math.tan(fovRad / 2)) /
+            (2 * distance * Math.tan(fovRad / 2)) /
             Math.max(this.domElement.clientHeight, 1);
         const { panGain } = getSensitivityTuning();
         return base * panGain;
     }
 
-    private groundDistanceAtCursor(clientX: number, clientY: number): number {
-        const anchor = this.anchorOnGround(clientX, clientY);
-        if (anchor) {
-            return Math.max(this.camera.position.distanceTo(anchor), 1e-3);
-        }
-
+    private viewDirectionGroundDistance(): number {
         this.camera.getWorldDirection(_viewDir);
         if (Math.abs(_viewDir.z) < 1e-6) {
             return Math.max(this.camera.position.z, 1e-3);
         }
         const t = -this.camera.position.z / _viewDir.z;
-        if (t <= 0) {
-            return Math.max(this.camera.position.z, 1e-3);
-        }
-        return Math.max(t, 1e-3);
+        return Math.max(t > 0 ? t : this.camera.position.z, 1e-3);
     }
 
     private anchorOnGround(
