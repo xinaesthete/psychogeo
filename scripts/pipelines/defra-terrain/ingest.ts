@@ -10,6 +10,7 @@ import {
   includeExtent,
   makeManifest,
   makeShard,
+  summarizeStorage,
 } from './manifest.ts';
 import { readRasterSource, windowRaster, downsampleNearest, type RasterSource } from './raster.ts';
 import { scanDefraZips, type DefraTileGroup } from './scan.ts';
@@ -20,12 +21,49 @@ import type {
   TileExtent,
   TileIndexShard,
   TileRecord,
+  DatasetStorageStats,
 } from './types.ts';
+
+export type IngestProgressEvent =
+  | {
+      readonly phase: 'scan';
+      readonly groups: number;
+    }
+  | {
+      readonly phase: 'group-start';
+      readonly tileRef: string;
+      readonly year: number;
+      readonly groupIndex: number;
+      readonly groupCount: number;
+    }
+  | {
+      readonly phase: 'tile';
+      readonly tileId: string;
+      readonly tileIndex: number;
+      readonly tileCount: number;
+      readonly channels: number;
+      readonly bytes: number;
+    }
+  | {
+      readonly phase: 'group-complete';
+      readonly tileRef: string;
+      readonly tiles: number;
+      readonly channels: number;
+      readonly bytes: number;
+    }
+  | {
+      readonly phase: 'complete';
+      readonly tileCount: number;
+      readonly channelCount: number;
+      readonly shardCount: number;
+      readonly totalPayloadBytes: number;
+    };
 
 export interface IngestOptions {
   readonly inputDir: string;
   readonly outDir: string;
   readonly datasetId?: string;
+  readonly onProgress?: (event: IngestProgressEvent) => void;
 }
 
 export interface IngestResult {
@@ -34,6 +72,7 @@ export interface IngestResult {
   readonly shardCount: number;
   readonly tileCount: number;
   readonly channelCount: number;
+  readonly storage: DatasetStorageStats;
 }
 
 function channelById(channelId: TerrainChannelId): ChannelManifest {
@@ -48,6 +87,20 @@ function shardIdForExtent(extent: TileExtent): string {
 
 function hrefJoin(...parts: string[]): string {
   return parts.join('/').replaceAll('//', '/');
+}
+
+function recordBytes(record: ChannelTileRecord): number {
+  return record.bytes;
+}
+
+function recordsBytes(records: TileRecord[]): number {
+  let bytes = 0;
+  for (const record of records) {
+    for (const channel of Object.values(record.channels)) {
+      bytes += channel.bytes;
+    }
+  }
+  return bytes;
 }
 
 function makeOneKmNominalExtents(extent: TileExtent): TileExtent[] {
@@ -210,6 +263,7 @@ async function loadGroupRasters(group: DefraTileGroup): Promise<{
 export async function ingestDefraTerrain(options: IngestOptions): Promise<IngestResult> {
   const datasetId = options.datasetId ?? `defra-terrain-${new Date().toISOString().replaceAll(':', '-')}`;
   const groups = await scanDefraZips(options.inputDir);
+  options.onProgress?.({ phase: 'scan', groups: groups.length });
   const shards: TileIndexShard[] = [];
   let bounds = emptyExtent();
   let tileCount = 0;
@@ -217,15 +271,24 @@ export async function ingestDefraTerrain(options: IngestOptions): Promise<Ingest
 
   await mkdir(options.outDir, { recursive: true });
 
-  for (const group of groups) {
+  for (const [groupIndex, group] of groups.entries()) {
     if (!group.sources.FZ) continue;
+    options.onProgress?.({
+      phase: 'group-start',
+      tileRef: group.tileRef,
+      year: group.year,
+      groupIndex: groupIndex + 1,
+      groupCount: groups.length,
+    });
     const rasters = await loadGroupRasters(group);
     const shardId = shardIdForExtent(rasters.fz.extent);
     const baseChannel = await encodeBaseChannel(options.outDir, rasters.fz, shardId);
     const records: TileRecord[] = [];
+    let groupChannelCount = 0;
     bounds = includeExtent(bounds, rasters.fz.extent);
+    const nominalExtents = makeOneKmNominalExtents(rasters.fz.extent);
 
-    for (const nominalExtent of makeOneKmNominalExtents(rasters.fz.extent)) {
+    for (const [tileIndex, nominalExtent] of nominalExtents.entries()) {
       const tileId = `${Math.round(nominalExtent.eastMin)}_${Math.round(nominalExtent.northMin)}`;
       const tileDir = hrefJoin('tiles', tileId);
       const channels: Record<string, ChannelTileRecord> = {
@@ -263,7 +326,10 @@ export async function ingestDefraTerrain(options: IngestOptions): Promise<Ingest
           hrefJoin(tileDir, 'height.dtm.0.j2c'),
         );
       }
-      channelCount += Object.keys(channels).length;
+      const tileChannelCount = Object.keys(channels).length;
+      const tileBytes = Object.values(channels).reduce((sum, channel) => sum + recordBytes(channel), 0);
+      channelCount += tileChannelCount;
+      groupChannelCount += tileChannelCount;
       tileCount += 1;
       records.push({
         tileId,
@@ -275,9 +341,24 @@ export async function ingestDefraTerrain(options: IngestOptions): Promise<Ingest
           (item) => item !== undefined,
         ),
       });
+      options.onProgress?.({
+        phase: 'tile',
+        tileId,
+        tileIndex: tileIndex + 1,
+        tileCount: nominalExtents.length,
+        channels: tileChannelCount,
+        bytes: tileBytes,
+      });
     }
 
     shards.push(makeShard(datasetId, shardId, records));
+    options.onProgress?.({
+      phase: 'group-complete',
+      tileRef: group.tileRef,
+      tiles: records.length,
+      channels: groupChannelCount,
+      bytes: recordsBytes(records),
+    });
   }
 
   if (extentIsEmpty(bounds)) throw new Error(`No ingestable FZ DSM ZIPs found in ${options.inputDir}`);
@@ -288,7 +369,8 @@ export async function ingestDefraTerrain(options: IngestOptions): Promise<Ingest
     shardHrefs.push(href);
     await writeJson(path.join(options.outDir, href), shard);
   }
-  const manifest = makeManifest(datasetId, bounds, shardHrefs);
+  const storage = summarizeStorage(shards);
+  const manifest = makeManifest(datasetId, bounds, shardHrefs, storage);
   await writeJson(path.join(options.outDir, 'manifest.json'), manifest);
   await writeJson(path.join(options.outDir, 'dsm_catalog.compat.json'), exportDsmCatalog(shards));
   await writeJson(path.join(options.outDir, 'validation-report.json'), {
@@ -297,6 +379,14 @@ export async function ingestDefraTerrain(options: IngestOptions): Promise<Ingest
     channelCount,
     shardCount: shards.length,
     bounds,
+    storage,
+  });
+  options.onProgress?.({
+    phase: 'complete',
+    tileCount,
+    channelCount,
+    shardCount: shards.length,
+    totalPayloadBytes: storage.totalPayloadBytes,
   });
 
   return {
@@ -305,5 +395,6 @@ export async function ingestDefraTerrain(options: IngestOptions): Promise<Ingest
     shardCount: shards.length,
     tileCount,
     channelCount,
+    storage,
   };
 }

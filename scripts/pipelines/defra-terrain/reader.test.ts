@@ -47,7 +47,21 @@ describe('terrain manifest reader', () => {
     await writeFile(path.join(root, 'index/455000_205000.json'), `${JSON.stringify(shard)}\n`);
     await writeFile(
       path.join(root, 'manifest.json'),
-      `${JSON.stringify(makeManifest('test', shard.extent, ['index/455000_205000.json'], '2026-06-01T00:00:00.000Z'))}\n`,
+      `${JSON.stringify(makeManifest('test', shard.extent, ['index/455000_205000.json'], {
+        tileCount: 1,
+        channelPayloadCount: 1,
+        totalPayloadBytes: 100,
+        channels: [
+          {
+            channelId: 'height.dsm.fz',
+            payloadCount: 1,
+            totalBytes: 100,
+            minBytes: 100,
+            maxBytes: 100,
+            meanBytes: 100,
+          },
+        ],
+      }, '2026-06-01T00:00:00.000Z'))}\n`,
     );
 
     const resolved = await resolveTerrainTile(root, 455500, 205500, 'height.dsm.fz');

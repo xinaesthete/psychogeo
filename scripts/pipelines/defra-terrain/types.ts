@@ -49,6 +49,22 @@ export interface ChannelManifest {
   readonly sourceReturnKind?: DefraReturnKind;
 }
 
+export interface ChannelStorageStats {
+  readonly channelId: TerrainChannelId;
+  readonly payloadCount: number;
+  readonly totalBytes: number;
+  readonly minBytes: number;
+  readonly maxBytes: number;
+  readonly meanBytes: number;
+}
+
+export interface DatasetStorageStats {
+  readonly tileCount: number;
+  readonly channelPayloadCount: number;
+  readonly totalPayloadBytes: number;
+  readonly channels: ChannelStorageStats[];
+}
+
 export interface ChannelTileRecord {
   readonly channelId: TerrainChannelId;
   readonly href: string;
@@ -105,6 +121,7 @@ export interface TerrainManifestV1 {
   };
   readonly bounds: TileExtent;
   readonly channels: ChannelManifest[];
+  readonly storage: DatasetStorageStats;
   readonly index: {
     readonly shardTemplate: 'index/{east}_{north}.json';
     readonly shardSizeMetres: number;

@@ -1,5 +1,7 @@
 import type {
   ChannelManifest,
+  ChannelStorageStats,
+  DatasetStorageStats,
   DsmCatalogItem,
   TerrainManifestV1,
   TileExtent,
@@ -90,6 +92,7 @@ export function makeManifest(
   datasetId: string,
   bounds: TileExtent,
   shards: string[],
+  storage: DatasetStorageStats,
   createdAt = new Date().toISOString(),
 ): TerrainManifestV1 {
   return {
@@ -113,11 +116,48 @@ export function makeManifest(
     },
     bounds,
     channels: CHANNELS,
+    storage,
     index: {
       shardTemplate: 'index/{east}_{north}.json',
       shardSizeMetres: 5000,
       shards,
     },
+  };
+}
+
+export function summarizeStorage(shards: TileIndexShard[]): DatasetStorageStats {
+  const channelBytes = new Map<string, number[]>();
+  let tileCount = 0;
+
+  for (const shard of shards) {
+    for (const tile of shard.tiles) {
+      tileCount += 1;
+      for (const channel of Object.values(tile.channels)) {
+        const entries = channelBytes.get(channel.channelId) ?? [];
+        entries.push(channel.bytes);
+        channelBytes.set(channel.channelId, entries);
+      }
+    }
+  }
+
+  const channels: ChannelStorageStats[] = CHANNELS.map((channel) => {
+    const bytes = channelBytes.get(channel.id) ?? [];
+    const totalBytes = bytes.reduce((sum, value) => sum + value, 0);
+    return {
+      channelId: channel.id,
+      payloadCount: bytes.length,
+      totalBytes,
+      minBytes: bytes.length > 0 ? Math.min(...bytes) : 0,
+      maxBytes: bytes.length > 0 ? Math.max(...bytes) : 0,
+      meanBytes: bytes.length > 0 ? totalBytes / bytes.length : 0,
+    };
+  });
+
+  return {
+    tileCount,
+    channelPayloadCount: channels.reduce((sum, channel) => sum + channel.payloadCount, 0),
+    totalPayloadBytes: channels.reduce((sum, channel) => sum + channel.totalBytes, 0),
+    channels,
   };
 }
 
