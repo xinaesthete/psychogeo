@@ -15,6 +15,9 @@ const path = require('path');
 const app = express();
 app.use(express.static(path.join(__dirname, '../dist')));
 console.log('using ' + path.join(__dirname, '../dist'));
+const terrainDatasetsRoot = process.env.PSYCHOGEO_TERRAIN_DATASETS_ROOT || path.join(gisRoot, 'DEFRA');
+console.log('serving terrain datasets from ' + terrainDatasetsRoot);
+app.use('/terrain-datasets', express.static(terrainDatasetsRoot));
 
 app.get('/ping', function (req, res) {
   console.log('ping');

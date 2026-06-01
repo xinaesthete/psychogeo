@@ -32,6 +32,7 @@ export default defineConfig({
       '/gpx': 'http://localhost:8082',
       '/ltile': 'http://localhost:8082',
       '/ttile': 'http://localhost:8082',
+      '/terrain-datasets': 'http://localhost:8082',
       '/ping': 'http://localhost:8082',
     },
   },

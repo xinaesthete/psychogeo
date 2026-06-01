@@ -39,6 +39,7 @@ if (!import.meta.hot?.data.glInited) {
  */
 const DEV_LOCATIONS = {
   winchester: () => convertWgsToOSGB({ lat: 51.064, lon: -1.3098227 }),
+  terracognitaDefraV1: (): EastNorth => ({ east: 455000, north: 205000 }),
   beinnSgrithael: (): EastNorth => ({ east: 183786, north: 812828 }),
   cornwall: (): EastNorth => ({ east: 201582, north: 43954 }),
   branscombe: (): EastNorth => ({ east: 320709, north: 88243 }),
@@ -47,12 +48,26 @@ const DEV_LOCATIONS = {
 function App() {
   const [compressionExperimentEnabled, setCompressionExperimentEnabled] = useState(false);
 
-  const {defra10mDTMLayer, defraDSMLayer, osTerr50Layer, inspectionLight, r3f} = useControls({
+  const {defra10mDTMLayer, terrainHeightSource, osTerr50Layer, inspectionLight, r3f} = useControls({
     defra10mDTMLayer: false,
-    defraDSMLayer: true,
+    terrainHeightSource: {
+      value: 'legacy',
+      options: {
+        'legacy DEFRA DSM prototype': 'legacy',
+        'v1 dataset FZ DSM': 'v1',
+        off: 'off',
+      },
+      label: 'DSM source',
+    },
     osTerr50Layer: false,
     inspectionLight: true,
     r3f: false,
+  });
+  const { terrainDatasetManifestUrl } = useControls('Terrain dataset', {
+    terrainDatasetManifestUrl: {
+      value: '/terrain-datasets/terracognita-defra-v1/manifest.json',
+      label: 'manifest URL',
+    },
   });
   const {zoomSpeed, zoomSmoothMs, panGain, zoomGain, panDamping} = useControls('Camera', {
     zoomSpeed: {
@@ -138,6 +153,9 @@ function App() {
   }, [zoomSpeed, zoomSmoothMs, panGain, zoomGain, panDamping]);
 
   const winchester = useMemo(() => DEV_LOCATIONS.winchester(), []);
+  const terrainDatasetV1 = terrainHeightSource === 'v1';
+  const defraDSMLayer = terrainHeightSource !== 'off';
+  const terrainCoord = terrainDatasetV1 ? DEV_LOCATIONS.terracognitaDefraV1() : winchester;
 
   const [selectedTrackIds, setSelectedTrackIds] = useState<Set<string>>(() => new Set());
   const [overlayTracks, setOverlayTracks] = useState<Track[]>([]);
@@ -159,10 +177,16 @@ function App() {
       viewshedShadowMapSize,
       viewshedShadowNearScale,
       viewshedDoubleSidedShadows,
+      terrainDataset: terrainDatasetV1
+        ? {
+            manifestUrl: terrainDatasetManifestUrl,
+            channelId: 'height.dsm.fz',
+          }
+        : undefined,
       camZ: 3000,
       tracks: overlayTracks,
     }),
-    [defra10mDTMLayer, defraDSMLayer, osTerr50Layer, compressionExperimentEnabled, inspectionLight, viewshedSourceHeight, viewshedShadowRadius, viewshedShadowMapSize, viewshedShadowNearScale, viewshedDoubleSidedShadows, overlayTracks],
+    [defra10mDTMLayer, defraDSMLayer, osTerr50Layer, compressionExperimentEnabled, inspectionLight, viewshedSourceHeight, viewshedShadowRadius, viewshedShadowMapSize, viewshedShadowNearScale, viewshedDoubleSidedShadows, terrainDatasetV1, terrainDatasetManifestUrl, overlayTracks],
   );
 
   const renderMode: TerrainRenderMode = r3f ? 'r3f' : 'threact';
@@ -170,7 +194,7 @@ function App() {
   return (
     <div className="App">
       <TerrainHost
-        coord={winchester}
+        coord={terrainCoord}
         options={terrainOptions}
         renderMode={renderMode}
       />

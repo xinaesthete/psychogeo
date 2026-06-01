@@ -40,6 +40,10 @@ import {
     resolveViewshedShadowConfig,
     type ViewshedShadowConfig,
 } from './viewshedConfig';
+import {
+    loadTerrainDatasetCatalog,
+    type TerrainDatasetConfig,
+} from './terrainDatasetCatalog';
 
 
 type DsmSources = Partial<Record<"500" | "1000" | "2000", string>>;
@@ -85,6 +89,9 @@ export function getTileProperties(coord: EastNorth, lowRes = false) {
 
 /** @param useJ2k When true on 10m DTM, fetch HTJ2K via `/ltile/` (required for worker recode). */
 export function getImageFilename(source_filename: string, lowRes = false, useJ2k = false) {
+    if (source_filename.startsWith('/') || source_filename.startsWith('http://') || source_filename.startsWith('https://')) {
+        return source_filename;
+    }
     if (lowRes) return (useJ2k ? "/ltile/" : "/ttile/") + source_filename;
     return "/tile/" + source_filename; // /tile/ interpreted as url for fetch, tile: uses electron api
 }
@@ -213,6 +220,8 @@ export interface TerrainOptions {
     defra10mDTMLayer?: boolean;
     /** Runtime JP2 recode + dual-height shader experiment (off by default). */
     compressionExperimentEnabled?: boolean;
+    /** Manifest-backed local/remote terrain dataset, currently adapted onto the DSM layer. */
+    terrainDataset?: TerrainDatasetConfig;
     tracks?: Track[];
     sun?: boolean;
     /** Metres above the selected terrain surface for manual viewshed point source. */
@@ -246,6 +255,11 @@ const defaultTerrainOptions: TerrainOptions = {
     viewshedShadowMapSize: DEFAULT_VIEWSHED_SHADOW_MAP_SIZE,
     viewshedDoubleSidedShadows: false,
 };
+
+function terrainDatasetKey(config: TerrainDatasetConfig | undefined): string {
+    if (!config) return "";
+    return `${config.manifestUrl}|${config.channelId}`;
+}
 
 type PivotMarkerParts = {
     group: THREE.Group;
@@ -497,6 +511,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
     private viewshedSurfacePoint?: THREE.Vector3;
     private lastViewshedLodStateKey = "";
     private lastSyncedDoubleSidedShadows: boolean | undefined;
+    private terrainDatasetKey = "";
 
     isTerrainInited(): boolean {
         return this.terrainInited;
@@ -504,12 +519,19 @@ export class TerrainRenderer extends ThreactTrackballBase {
 
     /** Merge Leva / React options without resetting the camera. */
     updateOptions(patch: Partial<TerrainOptions>): void {
+        const nextTerrainDatasetKey = terrainDatasetKey(patch.terrainDataset ?? this.options.terrainDataset);
+        const terrainDatasetChanged = nextTerrainDatasetKey !== this.terrainDatasetKey;
         this.options = {
             ...this.options,
             ...patch,
             camZ: patch.camZ ?? this.options.camZ,
             sun: patch.sun ?? this.options.sun,
         };
+        if (terrainDatasetChanged) {
+            this.terrainDatasetKey = nextTerrainDatasetKey;
+            this.clearLayer(this.dsmLayer);
+            this.dsmTilesLoaded = false;
+        }
         if (patch.externalControls) {
             this.externalControls = true;
         }
@@ -541,6 +563,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
             ...options,
             sun: options.sun ?? defaultTerrainOptions.sun,
         };
+        this.terrainDatasetKey = terrainDatasetKey(this.options.terrainDataset);
         syncCompressionExperiment(!!this.options.compressionExperimentEnabled);
         console.table(this.options);
         this.coord = {...coord};
@@ -604,6 +627,11 @@ export class TerrainRenderer extends ThreactTrackballBase {
         this.dsmLayer.visible = !!this.options.defraDSMLayer;
         this.dtmLayer.visible = !!this.options.defra10mDTMLayer;
         this.osTerr50Layer.visible = !!this.options.osTerr50Layer;
+    }
+    private clearLayer(layer: THREE.Group): void {
+        while (layer.children.length > 0) {
+            layer.remove(layer.children[0]);
+        }
     }
     addAxes() {
         const ax = new THREE.AxesHelper(100);
@@ -700,7 +728,10 @@ export class TerrainRenderer extends ThreactTrackballBase {
     }
     async makeTiles(lowRes = false) {
         const parent = lowRes ? this.dtmLayer : this.dsmLayer;
-        Object.entries(lowRes ? cat10m : cat).forEach((k) => {
+        const catalog = !lowRes && this.options.terrainDataset
+            ? await loadTerrainDatasetCatalog(this.options.terrainDataset)
+            : lowRes ? cat10m : cat;
+        Object.entries(catalog).forEach((k) => {
             const info = k[1];
             this.tiles.push(new LazyTile(info, parent));
         });

@@ -114,7 +114,13 @@ export async function encodeHtj2k(
   encoder.setQuality(lossyQuality === 0, lossyQuality);
   encoder.setIsUsingColorTransform(false);
   const decodedBuffer = encoder.getDecodedBuffer(frameInfo);
-  decodedBuffer.set(raster.pixels);
+  decodedBuffer.set(
+    new Uint8Array(
+      raster.pixels.buffer,
+      raster.pixels.byteOffset,
+      raster.pixels.byteLength,
+    ),
+  );
   encoder.encode();
   return new Uint8Array(encoder.getEncodedBuffer());
 }
