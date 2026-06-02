@@ -7,5 +7,6 @@
     "titleBar.activeForeground": "#FBFAFE",
     "titleBar.inactiveBackground": "#24138A",
     "titleBar.inactiveForeground": "#FAF9FE"
-  }
+  },
+  "typescript.tsdk": "node_modules/typescript/lib"
 }
