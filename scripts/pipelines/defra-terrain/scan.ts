@@ -12,20 +12,40 @@ export interface DefraTileGroup {
   readonly sources: Partial<Record<DefraReturnKind, DefraZipSource>>;
 }
 
-const ZIP_PATTERN =
-  /^LIDAR-(?:(FZ|LZ)_DSM|DTM)-1m-(\d{4})-([A-Z]{2}\d{2}(?:ne|nw|se|sw))\.zip$/i;
+const LEGACY_ZIP_PATTERN = /^LIDAR-(?:(FZ|LZ)_DSM|DTM)-1m-(\d{4})-([A-Z]{2}\d{2}(?:ne|nw|se|sw))\.zip$/i;
+const NLP_ZIP_PATTERN =
+  /^National-LIDAR-Programme-(DSM|DTM)-(\d{4})-([A-Z]{2}\d{2}(?:ne|nw|se|sw))\.zip$/i;
 
 export function parseDefraZipName(zipPath: string): DefraZipSource | null {
   const zipBasename = path.basename(zipPath);
-  const match = ZIP_PATTERN.exec(zipBasename);
-  if (!match) return null;
+  const legacyMatch = LEGACY_ZIP_PATTERN.exec(zipBasename);
+  const nlpMatch = NLP_ZIP_PATTERN.exec(zipBasename);
+  if (!legacyMatch && !nlpMatch) return null;
 
-  const rawReturnKind = match[1];
-  const returnKind: DefraReturnKind =
-    rawReturnKind === undefined ? 'DTM' : rawReturnKind.toUpperCase() === 'FZ' ? 'FZ' : 'LZ';
-  const year = Number.parseInt(match[2], 10);
-  const tileRef = match[3];
-  const product = returnKind === 'DTM' ? 'DTM' : `${returnKind}_DSM`;
+  let returnKind: DefraReturnKind;
+  let year: number;
+  let tileRef: string;
+  let product: string;
+
+  if (legacyMatch) {
+    const rawReturnKind = legacyMatch[1];
+    returnKind = rawReturnKind === undefined ? 'DTM' : rawReturnKind.toUpperCase() === 'FZ' ? 'FZ' : 'LZ';
+    year = Number.parseInt(legacyMatch[2], 10);
+    tileRef = legacyMatch[3];
+    product = returnKind === 'DTM' ? 'DTM' : `${returnKind}_DSM`;
+  } else if (nlpMatch) {
+    const rawProduct = nlpMatch[1].toUpperCase();
+    // National LIDAR Programme files expose a single DSM channel; ingest it as the main DSM input.
+    // actually this is very much subject to review and there will be different shapes
+    // we shouldn't really be referring to DSM as "FZ" and the regex pattern logic is not what we'll want later
+    // also todo zod schema
+    returnKind = rawProduct === 'DTM' ? 'DTM' : 'FZ';
+    year = Number.parseInt(nlpMatch[2], 10);
+    tileRef = nlpMatch[3];
+    product = rawProduct;
+  } else {
+    return null;
+  }
 
   return {
     product,

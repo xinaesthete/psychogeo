@@ -83,6 +83,27 @@ export interface ChannelTileRecord {
   readonly sourceReturnKind?: DefraReturnKind;
 }
 
+export interface TileIngestIssue {
+  readonly channelId: TerrainChannelId;
+  readonly code: 'window-too-small' | 'encode-failed';
+  readonly message: string;
+  readonly width: number;
+  readonly height: number;
+}
+
+export interface IngestChannelFailure {
+  readonly at: string;
+  readonly sourceTileRef: string;
+  readonly year: number;
+  readonly tileId: string;
+  readonly channelId: TerrainChannelId;
+  readonly nominalExtent: TileExtent;
+  readonly width: number;
+  readonly height: number;
+  readonly code: TileIngestIssue['code'];
+  readonly message: string;
+}
+
 export interface TileRecord {
   readonly tileId: string;
   readonly sourceTileRef: string;
@@ -90,6 +111,7 @@ export interface TileRecord {
   readonly nominalExtent: TileExtent;
   readonly channels: Record<string, ChannelTileRecord>;
   readonly provenance: SourceProvenance[];
+  readonly issues?: TileIngestIssue[];
 }
 
 export interface TileIndexShard {

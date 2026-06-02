@@ -3,6 +3,8 @@ import { inspectDataset } from './inspect.ts';
 import { ingestDefraTerrain, type IngestProgressEvent } from './ingest.ts';
 import { scanDefraZips, summarizeScan } from './scan.ts';
 
+const startTime = Date.now(); //Temporal.Now.instant();
+
 interface CliArgs {
   readonly command: string;
   readonly input?: string;
@@ -55,17 +57,35 @@ function formatBytes(bytes: number): string {
 }
 
 function formatProgress(event: IngestProgressEvent): string {
+  // node24 doesn't have Temporal
+  // const dt = Temporal.Now.instant().since(startTime);
+  // const pre = `[defra] (${dt.minutes}:${dt.seconds})`
+  const dt = Date.now() - startTime;
+  const totalSeconds = Math.floor(dt / 1000);
+  const mins = Math.floor(totalSeconds / 60);
+  const secs = totalSeconds % 60;
+  const pre = `[defra] (${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')})`;
   switch (event.phase) {
     case 'scan':
-      return `[defra] scanned ${event.groups} source groups`;
+      return `${pre} scanned ${event.groups} source groups`;
+    case 'resume':
+      return `${pre} resuming: ${event.completedGroups} groups done, ${event.remainingGroups} remaining`;
+    case 'recover':
+      return `${pre} ${event.message}`;
     case 'group-start':
-      return `[defra] group ${event.groupIndex}/${event.groupCount}: ${event.tileRef} ${event.year}`;
+      return `${pre} group ${event.groupIndex}/${event.groupCount}: ${event.tileRef} ${event.year}`;
+    case 'group-skip':
+      return `${pre} skip ${event.groupIndex}/${event.groupCount}: ${event.tileRef} ${event.year} (existing shard ${event.shardId})`;
     case 'tile':
-      return `[defra] tile ${event.tileIndex}/${event.tileCount}: ${event.tileId}, ${event.channels} channels, ${formatBytes(event.bytes)}`;
+      return `${pre} tile ${event.tileIndex}/${event.tileCount}: ${event.tileId}, ${event.channels} channels, ${formatBytes(event.bytes)}`;
+    case 'channel-failed':
+      return `${pre} ${event.tileRef} ${event.tileId} ${event.channelId}: ${event.message}`;
+    case 'tile-skip':
+      return `${pre} skip tile ${event.tileRef} ${event.tileId}: ${event.message}`;
     case 'group-complete':
-      return `[defra] complete ${event.tileRef}: ${event.tiles} tiles, ${event.channels} channels, ${formatBytes(event.bytes)}`;
+      return `${pre} complete ${event.tileRef}: ${event.tiles} tiles, ${event.channels} channels, ${formatBytes(event.bytes)}`;
     case 'complete':
-      return `[defra] wrote ${event.tileCount} tiles, ${event.channelCount} channel payloads, ${event.shardCount} shards, ${formatBytes(event.totalPayloadBytes)} payload`;
+      return `${pre} wrote ${event.tileCount} tiles, ${event.channelCount} channel payloads, ${event.shardCount} shards, ${formatBytes(event.totalPayloadBytes)} payload`;
   }
 }
 

@@ -14,9 +14,11 @@ interface FrameInfo {
 interface EncoderInstance {
   setQuality(lossless: boolean, quality: number): void;
   setIsUsingColorTransform(enabled: boolean): void;
-  getDecodedBuffer(frameInfo: FrameInfo): Uint16Array | Int16Array;
+  getDecodedBuffer(frameInfo: FrameInfo): Uint8Array;
   encode(): void;
   getEncodedBuffer(): Uint8Array;
+  delete?(): void;
+  isDeleted?(): boolean;
 }
 
 type EncoderConstructor = new () => EncoderInstance;
@@ -67,6 +69,7 @@ async function getEncoderConstructor(): Promise<EncoderConstructor> {
     const restoreFetch = patchNodeFetchForOpenJph();
     try {
       const require = createRequire(path.join(process.cwd(), 'scripts/pipelines/defra-terrain/htj2k.ts'));
+      // TODO(defra/openjph): replace this vendored runtime with a typed package and publishable build.
       const moduleValue: unknown = require(path.resolve('public/openjphjs.js'));
       const startedAt = Date.now();
       const poll = () => {
@@ -103,24 +106,36 @@ export async function encodeHtj2k(
   const Encoder = await getEncoderConstructor();
   const encoder = new Encoder();
   if (!isEncoderInstance(encoder)) throw new Error('OpenJPH encoder has an unexpected shape.');
-  const signed = raster.pixels instanceof Int16Array;
-  const frameInfo: FrameInfo = {
-    bitsPerSample: 16,
-    isSigned: signed,
-    width,
-    height,
-    componentCount: 1,
-  };
-  encoder.setQuality(lossyQuality === 0, lossyQuality);
-  encoder.setIsUsingColorTransform(false);
-  const decodedBuffer = encoder.getDecodedBuffer(frameInfo);
-  decodedBuffer.set(
-    new Uint8Array(
-      raster.pixels.buffer,
-      raster.pixels.byteOffset,
-      raster.pixels.byteLength,
-    ),
-  );
-  encoder.encode();
-  return new Uint8Array(encoder.getEncodedBuffer());
+  try {
+    const signed = raster.pixels instanceof Int16Array;
+    const frameInfo: FrameInfo = {
+      bitsPerSample: 16,
+      isSigned: signed,
+      width,
+      height,
+      componentCount: 1,
+    };
+    encoder.setQuality(lossyQuality === 0, lossyQuality);
+    encoder.setIsUsingColorTransform(false);
+    const decodedBuffer = encoder.getDecodedBuffer(frameInfo);
+    const rasterBytes = new Uint8Array(raster.pixels.buffer, raster.pixels.byteOffset, raster.pixels.byteLength);
+    const expectedBytes = width * height * 2 * frameInfo.componentCount;
+    if (decodedBuffer.byteLength !== expectedBytes) {
+      throw new Error(
+        `HTJ2K decoded buffer size mismatch: expected=${expectedBytes}, actual=${decodedBuffer.byteLength}, width=${width}, height=${height}, signed=${signed}`,
+      );
+    }
+    if (rasterBytes.byteLength !== expectedBytes) {
+      throw new Error(
+        `HTJ2K raster byte size mismatch: expected=${expectedBytes}, actual=${rasterBytes.byteLength}, width=${width}, height=${height}, signed=${signed}`,
+      );
+    }
+    decodedBuffer.set(rasterBytes);
+    encoder.encode();
+    return new Uint8Array(encoder.getEncodedBuffer());
+  } finally {
+    if (typeof encoder.delete === 'function' && !encoder.isDeleted?.()) {
+      encoder.delete();
+    }
+  }
 }

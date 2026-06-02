@@ -21,6 +21,25 @@ describe('DEFRA ZIP scan parsing', () => {
     });
   });
 
+  it('parses National LIDAR Programme DSM/DTM source filenames', () => {
+    expect(
+      parseDefraZipName('/data/National-LIDAR-Programme-DSM-2022-NZ05ne.zip'),
+    ).toMatchObject({
+      returnKind: 'FZ',
+      product: 'DSM',
+      year: 2022,
+      tileRef: 'NZ05ne',
+    });
+    expect(
+      parseDefraZipName('/data/National-LIDAR-Programme-DTM-2022-NZ05ne.zip'),
+    ).toMatchObject({
+      returnKind: 'DTM',
+      product: 'DTM',
+      year: 2022,
+      tileRef: 'NZ05ne',
+    });
+  });
+
   it('summarises grouped sources deterministically', () => {
     expect(
       summarizeScan([
