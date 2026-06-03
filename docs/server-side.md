@@ -154,6 +154,8 @@ OME-Zarr defines a multiscale pyramid layout that aligns with the 12-level LOD m
 
 Shard small chunks together to reduce file count and HTTP-request overhead. Important when serving from static hosting where round-trip cost dominates. Evaluate shard size against typical viewport tile-set size from the working-set budget in [tile-layers.md](tile-layers.md) § _Visibility model_.
 
+The bespoke v2 track documents the same idea without Zarr: **contiguous HTJ2K segment files** with per-tile byte offsets and browser `Range` fetches — see [planning/storage-and-pipeline-v2.md](planning/storage-and-pipeline-v2.md) § _Contiguous segment files_.
+
 ### 6.5 Browser library
 
 - **zarrita.js** — lighter, Zarr v3-first. Custom-codec support is the key thing to evaluate.

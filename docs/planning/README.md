@@ -8,7 +8,7 @@ Next-step planning derived from [NOTES.md](../../NOTES.md) § _Managing datasets
 |-----|--------|
 | [dataset-operations.md](dataset-operations.md) | Configurable data roots, dev proxy, dataset registry, pipeline job UI |
 | [terrain-catalog-and-lod.md](terrain-catalog-and-lod.md) | Hierarchical index, lazy tile scene graph, geometric LOD vs raster pyramid |
-| [storage-and-pipeline-v2.md](storage-and-pipeline-v2.md) | Pipeline v2 on DEFRA or existing outputs, zarr-image levels, GIS ecosystem, index slimming |
+| [storage-and-pipeline-v2.md](storage-and-pipeline-v2.md) | Pipeline v2 on DEFRA or existing outputs, zarr-image levels, **segment files + HTTP Range**, GIS ecosystem, index slimming |
 | [sqlite-catalog.md](sqlite-catalog.md) | SQLite for ops registry and/or per-dataset terrain index (vs JSON shards / quadtree) |
 
 ## Existing architecture (read alongside)

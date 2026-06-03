@@ -120,6 +120,29 @@ Stay single-page for now. Introduce `react-router` once any two surfaces have di
 - Lower default LOD bias and a smaller working set to fit phone GPU-memory budgets; informed by the working-set budget concept in [tile-layers.md](tile-layers.md) § _Visibility model_.
 - Disable the compression experiment on mobile by default — it doubles GPU height-texture memory.
 
+**Offline and low signal.** Useful for hiking/cycling ([NOTES.md](../../NOTES.md) § _Different interfaces_) when coverage is patchy — but only as part of **deliberate region download**, not browse-as-you-go HTTP caching.
+
+| Layer | Role |
+|-------|------|
+| **Service worker** | App shell (JS, WASM, CSS) so the app loads after one good session; optional intercept for **prefetched** terrain URLs. |
+| **Local byte store** | IndexedDB, Cache Storage, or OPFS for downloaded index slices + segment/tile bytes. Primary offline read path for payloads. |
+| **Network** | Fallback when a tile is not in the local pack. |
+
+Model after offline map apps (download this area on Wi‑Fi, use on the hill):
+
+1. User or app defines a **region** — bbox, route corridor, or one or more 5 km DEFRA groups ([storage-and-pipeline-v2.md](planning/storage-and-pipeline-v2.md) segment boundaries are a natural pack unit).
+2. **Prefetch job** (on Wi‑Fi) — viewport index query + payload bytes; store with dataset **generation id** for invalidation.
+3. **`RasterChannel.load`** — local store first, network second ([tile-layers.md](tile-layers.md)); GPU working-set eviction stays separate from HTTP/disk cache.
+4. **UX** — size estimate, progress, expiry/eviction warning (iOS PWA storage is reclaimable under pressure).
+
+What **not** to rely on:
+
+- Opportunistic SW cache of every pan — national terrain is hundreds of GB; mobile quota is MB–low GB.
+- First visit with no signal — nothing cached yet.
+- SW alone for **Range** slices into large segments — prefer caching whole segments or assembled per-tile blobs under explicit keys.
+
+**Electron / sideload** ([NOTES.md](../../NOTES.md)) remains the path for multi‑GB regional datasets copied from disk; PWA offline packs suit smaller corridors. Spec detailed wiring when `/map` is the target surface.
+
 Detailed wiring belongs in its own doc once a non-experimental surface (probably `/map`) is the immediate target.
 
 ## Open questions

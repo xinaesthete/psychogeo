@@ -57,7 +57,8 @@ Evolve `psychogeo.terrain.v1` index from flat shard list + fat per-tile records 
 
 Per-tile records at leaf should hold only:
 
-- `tileId`, `nominalExtent`, channel hrefs + encoding scalars (min/max/scale).
+- `tileId`, `nominalExtent`, channel payload pointer + encoding scalars (min/max/scale).
+- Pointer is either a per-tile `href` (v1) or **`segmentHref` + `byteOffset` + `byteLength`** for contiguous packed blobs fetched via HTTP Range ([storage-and-pipeline-v2.md](storage-and-pipeline-v2.md) § _Contiguous segment files_).
 - **Not** duplicated dataset-level prose, full provenance arrays, or per-channel quality stats on every row (those belong in dataset manifest or a provenance sidecar keyed by `tileId`).
 
 Redundancy today: each `TileRecord` in a shard repeats extent, encoding metadata, and provenance suitable for dataset-level documentation — contributing to multi-GB `index/` ([NOTES.md](../../NOTES.md)).

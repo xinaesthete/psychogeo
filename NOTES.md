@@ -20,6 +20,8 @@ At some point will experiment with zarr (perhaps spatialdata, although it's a st
 
 New version of bespoke pipeline may well have a very zarr-image-like structure for levels.
 
+Consider **fewer payload files**: contiguous `.j2c` segments + byte offsets in index, fetched with HTTP Range (see [docs/planning/storage-and-pipeline-v2.md](docs/planning/storage-and-pipeline-v2.md) § _Contiguous segment files_) — addresses exFAT file-count / `._` overhead as well as CDN static hosting. **Fewer HTTP round-trips** is a separate knob: viewport index query + branch overviews + wide Range / per-tile channel packing ([§ _Reducing HTTP round-trips_](docs/planning/storage-and-pipeline-v2.md#reducing-http-round-trips)).
+
 New pipeline should be able to operate on existing outputs or DEFRA data.
 
 We currently load and parse a large `manifest.json` and then create a scene with all known nodes. When zoomed out we get a massive amount of VRAM thrashing even for the data we are able to load.
@@ -31,6 +33,22 @@ Need to be able to abort loading on tiles that aren't visible, and unload data w
 side-note: may want to experiment with dithering to see if it is nicer, some visually undesirable aspects may be related to quantization.
 
 **Planning docs:** [docs/planning/README.md](docs/planning/README.md) — [dataset operations](docs/planning/dataset-operations.md), [terrain catalog & LOD](docs/planning/terrain-catalog-and-lod.md), [storage & pipeline v2](docs/planning/storage-and-pipeline-v2.md). Runtime channel model: [docs/tile-layers.md](docs/tile-layers.md).
+
+## Current issues (during pipeline run)
+
+Something that I happened to spot during conversion, that I don't think is listed in the conversion metadata?
+
+Command failed: unzip -p /Volumes/CrucialOx9/data/GIS/DEFRA/composite-zips/LIDAR-LZ_DSM-1m-2022-SJ69se.zip SJ69se_LZ_DSM_1m.tif
+SJ69se_LZ_DSM_1m.tif    bad CRC 818dd7ea  (should be f5be339e)
+
+I keep seeing masses of `._` files, and the output dir ballooning in size. Hope that it's safe to remove with
+
+```
+find "/Volumes/CrucialOx9/data/GIS/DEFRA/LIDAR-DSM-DZ-2022-terracognita-defra-v1" -name '._*' -delete
+```
+
+also quite slow to run the above.
+
 
 ## Hosting / backend
 
@@ -60,7 +78,7 @@ Dealing with missing/unclean data. Quite often sections of a recording are dropp
 
 ## Different interfaces / uses...
 
-I want to have somewhat serviceable means of using this as a somewhat useful tool while out hiking/cycling: improved mobile UI, less heavy on the battery, clear viewshed representation (with correction for Earth curvature etc).
+I want to have somewhat serviceable means of using this as a somewhat useful tool while out hiking/cycling: improved mobile UI, less heavy on the battery, clear viewshed representation (with correction for Earth curvature etc). **Offline:** deliberate region download + local tile store (SW for app shell); see [docs/future-terrain.md](docs/future-terrain.md) § _Offline and low signal_.
 
 I'd like to be able to generally have other experimental graphics and music computer-art type things embedded in this kind of geographic context... so thinking about how we make that work. Things I might publish as webpages vs things I run locally (do I want to further develop Electron app that lets me manage local data etc?).
 

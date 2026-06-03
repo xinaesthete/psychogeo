@@ -36,7 +36,7 @@ Gaps relative to notes:
    - `source=defra-zips` — current scan path.
    - `source=psychogeo-v1` — read existing manifest + payloads; transcode, re-index, or add channels without re-downloading DEFRA.
 3. **Separation of concerns**
-   - **Payload store** — files or zarr arrays (HTJ2K blobs).
+   - **Payload store** — segment files, per-tile files, or zarr arrays (HTJ2K blobs). See [§ Contiguous segment files](#contiguous-segment-files-range-requests) for packing many tiles into fewer objects.
    - **Index** — hierarchical, small nodes ([terrain-catalog-and-lod.md](terrain-catalog-and-lod.md)).
    - **Provenance** — optional `provenance.jsonl` or per-tile sidecar, not inlined in every index row.
 4. **Progress + validation** — unchanged intent from [server-side.md](../server-side.md): JSON-lines progress, schema validate before promote.
@@ -84,6 +84,126 @@ dataset/
 
 **Overlap / seams** ([NOTES.md](../../NOTES.md), [tile-layers.md](../tile-layers.md)): ingest should bake `apronMetres` into extent and encoding window so adjacent tiles can blend in shader; pipeline records `nominalExtent` vs `extent` separately (types already distinguish these).
 
+## Contiguous segment files (range requests)
+
+v1 writes **one `.j2c` file per nominal tile × channel** ([ingest.ts](../../scripts/pipelines/defra-terrain/ingest.ts) `writeEncodedChannel`). At national scale that implies hundreds of thousands of files. On exFAT/USB volumes this is especially costly (1 MB allocation units, macOS `._` sidecars per file, slow directory walks). The same file-count tax applies on APFS when serving from static hosting or S3 — many small objects dominate metadata and HTTP round-trips even when logical payload size is modest.
+
+**Alternative:** pack **contiguous** runs of encoded tiles into **segment files**; the index stores `(segmentHref, byteOffset, byteLength)` per tile (and channel / pyramid level) instead of a unique path per blob.
+
+### Layout (illustrative)
+
+```
+dataset/
+  segments/
+    height.dsm.fz/
+      L5/
+        465000_480000.seg    # many 1 km tiles from one 5 km ingest group, concatenated
+  index/
+    …                      # leaf rows point into segments
+```
+
+Each segment is an opaque byte stream of back-to-back HTJ2K codestreams (order defined at ingest, recorded in index or a small `.seg.json` sidecar manifest).
+
+### Runtime fetch
+
+Browser (or proxy) issues a normal `GET` with **`Range: bytes=offset-(offset+length-1)`** on `segmentHref`. The WASM decoder receives exactly one tile’s bytes — same as today’s full-file fetch, no change to OpenJPH input.
+
+Requirements:
+
+| Layer | Responsibility |
+|-------|----------------|
+| **Static host / CDN / S3** | Honour `Range` (standard for S3, nginx, most CDNs). |
+| **Dev proxy** ([start-server.js](../../src/start-server.js)) | Forward `Range` on terrain dataset routes (or map segment URL → `fs.createReadStream` with `{ start, end }`). |
+| **Catalog / channel record** | Expose `segmentHref`, `offset`, `length` (and encoding scalars) instead of per-tile `href`. |
+| **`RasterChannel.load`** | `fetch(url, { headers: { Range: … } })` → `arrayBuffer` → existing decode path. |
+
+This aligns with [server-side.md](../server-side.md) § 6.4 (Zarr shard = fewer files + range reads) and [terrain-catalog-and-lod.md](terrain-catalog-and-lod.md) § 2 (index holds pointers, not fat blobs).
+
+### Packaging strategies (open choice)
+
+| Strategy | Segment boundary | Fits |
+|----------|------------------|------|
+| **DEFRA group** | One segment per 5 km source tile × channel × level | Matches ingest batch ([scan.ts](../../scripts/pipelines/defra-terrain/scan.ts)); easy append on resume |
+| **Quadtree leaf** | One segment per catalog leaf node extent | Matches hierarchical index descent |
+| **Spatial strip** | Fixed easting column or row of 1 km cells | Sequential read patterns for cluster ingest |
+
+Tiles need not be byte-aligned to compression boundaries across segment interior — each record’s `length` is the exact encoded size. Optional **padding** between blobs (e.g. 4-byte align) simplifies mmap tooling at the cost of a few bytes per tile.
+
+### Operations
+
+| Operation | Behaviour |
+|-----------|-----------|
+| `ingest-full` / append | Write or extend segments; emit offset table |
+| `reindex` | Rebuild index from existing per-tile `.j2c` **or** existing segments without re-encode |
+| `source=psychogeo-v1` | **Pack** pass: concatenate v1 `tiles/**/*.j2c` into segments + new index (no DEFRA re-read) |
+| Partial tile update | Rewrite one segment, or append new generation segment and supersede index rows |
+
+Immutable segments per dataset generation keep CDN caching simple (`segmentHref` includes content hash or generation id).
+
+### Tradeoffs
+
+| Pros | Cons |
+|------|------|
+| Orders of magnitude fewer files | Replacing one tile may require rewriting a whole segment unless overlay segments are allowed |
+| Better sequential I/O on cluster scratch disks | **One `Range` per tile/channel by default** — same RT count as separate files unless layout batches (see [§ Reducing HTTP round-trips](#reducing-http-round-trips)) |
+| Works on static/S3 without a database | Proxy must implement Range correctly in dev |
+| Natural companion to slim index + SQLite ([sqlite-catalog.md](sqlite-catalog.md)) | Tooling (`ls`, `find`, manual inspection) less granular than per-tile paths |
+
+Not a substitute for **slimmer index JSON** or **multiscale `L*` pyramids** — it addresses **payload file count and filesystem overhead** only.
+
+### Sequencing note
+
+Can land **after** slim shard schema and **`source=psychogeo-v1` reindex**, as a `pack-segments` transform on existing v1 `tiles/` (validates offset index + Range fetch before changing ingest emit). National re-ingest on cluster/APFS can emit segments directly once the index schema stabilises.
+
+## Reducing HTTP round-trips
+
+Today ([terrainDatasetCatalog.ts](../../src/geo/terrainDatasetCatalog.ts)) startup does **`fetch(manifest)` + `Promise.all` over every shard** — thousands of index GETs before any height decode. Per visible 1 km leaf, v1 can add **one GET per channel** (FZ, LZ, DZ, DTM, base). Segments + single `Range` per blob **do not** reduce round-trips unless the **packing layout and loader** deliberately batch bytes. Worth pursuing in this order:
+
+### Tier 1 — high leverage (catalog / scene graph)
+
+| Approach | Effect | Notes |
+|----------|--------|-------|
+| **Viewport index query** | Replaces “download all shards” with 1–few requests | SQLite `index.db` + `GET /terrain-datasets/.../tiles-in-bounds?…` ([sqlite-catalog.md](sqlite-catalog.md)), or descend a quadtree and fetch only intersecting branch/leaf JSON ([terrain-catalog-and-lod.md](terrain-catalog-and-lod.md)). Biggest win for startup and panning. |
+| **Merged branch overviews (catalog C)** | Zoomed out: **1 coarse HTJ2K** per branch instead of N leaf GETs | Matches raster pyramid + sparse scene graph; fixes RT and VRAM when the frustum covers many km². |
+| **Lazy catalog / no full `Record` at boot** | Zero index RT until first frame needs bounds | Pair with TileTree; manifest root may be the only initial fetch. |
+
+### Tier 2 — segment layout + fetch (payload)
+
+Design segments so one request amortises multiple tiles or channels:
+
+| Layout | Request pattern | Tradeoff |
+|--------|-----------------|----------|
+| **All channels for one 1 km tile contiguous** | One `Range` (or full small object) → slice offsets for FZ/LZ/DZ decode | Slightly larger read if only one channel needed; usually all height channels load together anyway. |
+| **Wide `Range` over adjacent 1 km cells** | One GET covers easting strip inside a 5 km segment; loader splits by offset table | Extra bytes if viewport is one tile at corner of strip; good for pan along a row. |
+| **Whole segment for dev / warm patch** | Single GET when prefetching a 5 km group (cluster → browser sideload) | Simple; not for national view. |
+
+**Not recommended as primary:** HTTP multipart **multiple ranges** in one request (`Range: bytes=0-99,200-299`) — CDN and `fetch` behaviour is inconsistent; prefer one contiguous span.
+
+### Tier 3 — optional server / transport
+
+| Approach | Effect | Notes |
+|----------|--------|-------|
+| **`POST /tiles/batch`** (dev proxy or API) | 1 RT returns length-prefixed or multipart bundle of N codestreams | Easiest to prototype; not CDN-static without a worker. Good for uni cluster → browser experiments. |
+| **HTTP/2 / HTTP/3 static host** | Many parallel tile GETs share one connection | Cuts TLS/TCP overhead, not request count; still helps on CDN. |
+| **Precompressed index slice** | One `.cbor` / `.br` blob per viewport from edge function | Alternative to SQLite API for static-only hosting. |
+
+### Tier 4 — repeat visits and mobile offline
+
+| Approach | Effect | Notes |
+|----------|--------|-------|
+| **Service worker + local byte store** | App shell offline; **prefetched** terrain packs in low signal | Deliberate “download region” UX, not opportunistic cache — see [future-terrain.md](../future-terrain.md) § _Offline and low signal_. Pairs with segment packs and bounds index query. |
+| **Early Hints** on manifest | Slightly faster first paint | Marginal |
+| **Larger object part sizes (S3)** | Throughput for big segment uploads | Hosting ops |
+
+### What to implement first
+
+1. **Stop fetching all shards** (spatial query or tree descent) — aligns with catalog Phase 1–2.
+2. **Branch coarse payloads** when zoomed out — fewer payload RTs and less decode work.
+3. **`pack-segments` with per-tile channel run** — one `Range` per nominal tile for all height channels.
+4. **Batch endpoint** only if static Range batching is insufficient for a hosted demo.
+
+Success metric: at a fixed zoom, **payload GET count ≈ visible raster nodes × (1 + optional prefetch margin)**, not catalog tile count × channels.
+
 ## Zarr and GIS ecosystem (evaluation track)
 
 Not blocking v2 bespoke layout. Run when national extent stabilises ([NOTES.md](../../NOTES.md) FOI / full extent).
@@ -121,6 +241,7 @@ Operator-machine datasets and copy/re-point migration are described in [dataset-
 | `ingest-full` | DEFRA dir | new dataset version |
 | `ingest-append` | DEFRA dir + prior manifest | new tiles only |
 | `reindex` | existing payloads | new index tree or `index.db`, same blobs |
+| `pack-segments` | per-tile `.j2c` or v1 `tiles/` | `segments/` + offset index ([§ Contiguous segment files](#contiguous-segment-files-range-requests)) |
 | `index-to-sqlite` | v1 JSON shards | `index.db` beside `tiles/` ([sqlite-catalog.md](sqlite-catalog.md)) |
 | `add-channel` | e.g. `height.aux.dz` | new channel dir + index pointers |
 | `export-compat` | v2 manifest | `dsm_catalog.compat.json` |
@@ -131,10 +252,12 @@ Operator-machine datasets and copy/re-point migration are described in [dataset-
 2. **`source=psychogeo-v1`** mode — reindex national data without re-downloading DEFRA.
 3. **Multiscale `L*` directories** — raster pyramid hrefs in index; scene graph binds tree depth to pyramid level ([terrain-catalog-and-lod.md](terrain-catalog-and-lod.md) §3 — distinct from `GeoLOD` mesh densities).
 4. **Hierarchical index emitter** or **`index.db`** — pair with [terrain-catalog-and-lod.md](terrain-catalog-and-lod.md) Phase 5; compare JSON quadtree vs SQLite in [sqlite-catalog.md](sqlite-catalog.md) before committing.
-5. **Zarr export** — optional publish step from v2 layout for CDN/static hosting ([NOTES.md](../../NOTES.md) hosting).
+5. **`pack-segments` + Range fetch** — concatenate v1 tiles into segment files; wire proxy and channel loader ([§ Contiguous segment files](#contiguous-segment-files-range-requests)).
+6. **Zarr export** — optional publish step from v2 layout for CDN/static hosting ([NOTES.md](../../NOTES.md) hosting).
 
 ## Open questions
 
+- Segment packing unit: DEFRA 5 km group vs quadtree leaf vs strip — affects resume and partial updates.
 - Tile size in metres: keep 1 km shards vs align to DEFRA tile refs (`SU44ne` etc.)?
 - uint16-normalized vs int16-delta default for national DSM — artefact tradeoffs with contour shader?
 - Store LZ/FZ/DZ as separate channels vs generation picks one primary — affects manifest `channels[]` and UI toggles.
