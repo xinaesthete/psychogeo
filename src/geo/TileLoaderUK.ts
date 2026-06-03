@@ -347,11 +347,11 @@ type TerrainDebugGlobal = {
     snapshot: () => TerrainDebugSnapshot;
 };
 
-const terrainDebugElementId = "psychogeo-terrain-debug";
+const terrainDebugElementId = "terracognita-terrain-debug";
 
 declare global {
     interface Window {
-        psychogeoTerrainDebug?: TerrainDebugGlobal;
+        terracognitaTerrainDebug?: TerrainDebugGlobal;
     }
 }
 
@@ -982,7 +982,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
     private syncTerrainDebugGlobal(): void {
         if (typeof window === "undefined") return;
         const snapshot = this.getTerrainDebugSnapshot();
-        window.psychogeoTerrainDebug = {
+        window.terracognitaTerrainDebug = {
             snapshot: () => snapshot,
         };
         const existing = document.getElementById(terrainDebugElementId);

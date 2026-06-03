@@ -1,1 +1,2 @@
 - avoid `as` casts, especially `as any`.
+- Project name is **TerraCognita** (`terracognita` in package.json). On-disk terrain dataset schema IDs remain `psychogeo.terrain.*` until a deliberate migration — do not rename them casually.

@@ -4,7 +4,9 @@ import { describe, expect, it } from 'vitest';
 import { ingestDefraTerrain } from './ingest.ts';
 
 const sampleDir = '/Users/ptodd/data/GIS/DEFRA/test-tiles';
-const shouldRunGolden = process.env.PSYCHOGEO_RUN_DEFRA_GOLDEN === '1';
+const shouldRunGolden =
+  process.env.TERRACOGNITA_RUN_DEFRA_GOLDEN === '1' ||
+  process.env.PSYCHOGEO_RUN_DEFRA_GOLDEN === '1';
 
 async function samplesExist(): Promise<boolean> {
   try {
@@ -20,7 +22,7 @@ describe('DEFRA golden ingest', () => {
   const goldenIt = shouldRunGolden ? it : it.skip;
   goldenIt('ingests the downloaded SP50 sample set into /private/tmp', async () => {
     expect(await samplesExist()).toBe(true);
-    const outDir = path.join('/private/tmp', `psychogeo-defra-golden-${Date.now()}`);
+    const outDir = path.join('/private/tmp', `terracognita-defra-golden-${Date.now()}`);
     const result = await ingestDefraTerrain({
       inputDir: sampleDir,
       outDir,

@@ -9,6 +9,7 @@ The type-only API skeleton lives in [src/geo/tileLayerTypes.ts](../src/geo/tileL
 - [docs/future-terrain.md](future-terrain.md) — overall direction, render-backend evaluation, routing / mobile sketch.
 - [docs/compression-experiment.md](compression-experiment.md) — the first concrete consumer of this API.
 - [docs/server-side.md](server-side.md) — where channel payloads come from (pipelines, manifests, future Zarr).
+- [docs/planning/terrain-catalog-and-lod.md](planning/terrain-catalog-and-lod.md) — hierarchical index, sparse scene graph, **geometric LOD vs raster pyramid** (separate concerns).
 
 ## 1. Model
 
@@ -135,12 +136,13 @@ The manager uses three signals to decide which channels reconcile on which tiles
 
 Today the placeholder pattern in [src/geo/TileLoaderUK.ts](../src/geo/TileLoaderUK.ts) (`LazyTile.onBeforeRender`) triggers load on first-visible draw. That is a one-shot — there is no "became invisible" event, no continuous frustum check, and no way to drop a payload when a tile leaves view. The visibility manager polls the camera frustum each frame (cheap; AABB-vs-frustum on bounding boxes the loader already maintains) and emits transitions: `becameVisible`, `becameInvisible`.
 
-### 3.2 LOD coarseness
+### 3.2 Geometric LOD coarseness
 
-`GeoLOD.getCurrentLevel()` in [src/geo/LodUtils.ts](../src/geo/LodUtils.ts) already reports which of 12 mesh resolutions is selected. The manager forwards this as `TileLoadContext.lodLevel` so a channel can:
+`GeoLOD.getCurrentLevel()` in [src/geo/LodUtils.ts](../src/geo/LodUtils.ts) reports which of **12 procedural mesh densities** is active. The manager forwards this as `TileLoadContext.lodLevel` for mesh-side decisions only.
 
-- Request a payload sized to the current LOD (a coarse channel does not need to ship a 4096² texture when the tile is rendering its level-8 mesh).
-- Re-fetch when the LOD level changes by more than a configurable threshold.
+**Raster pyramid level** (which HTJ2K / href, scene-graph depth) is a separate field — see [planning/terrain-catalog-and-lod.md](planning/terrain-catalog-and-lod.md) §3. A leaf tile can use mesh level 8 while still sampling the same fine pyramid texture; zoom-out savings come from branch nodes + coarse pyramid payloads, not from downgrading the raster file when `GeoLOD` coarsens.
+
+Optional future use of `lodLevel`: skip uploading a mip if geometric LOD is very coarse *and* a matching raster pyramid level is already bound — never infer pyramid level from mesh level alone.
 
 ### 3.3 Working-set budget
 

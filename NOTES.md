@@ -10,6 +10,28 @@ Anticipating have a highly compressed layer that can be loaded cheaply, and then
 
 Need to repeat recompression experiments based on starting with actual lossless data. Note that the baseline I'm currently working with exhibits some artefacts with contour rendering in some places, even if it's otherwise reasonable.
 
+## Managing datasets
+
+Currently somewhat hacky hard-coding of proxy path in server etc. Somewhat think that some interface on user data for managing paths etc in admin/prototype context is probably worth it. Can also have a view on managing jobs.
+
+We need to have a more hierarchical (quadtree or pyramidal grid) structure for the (meta)data, and also the representation of `LodTiles` in the frontend. Current version doesn't scale adequately in various ways.
+
+At some point will experiment with zarr (perhaps spatialdata, although it's a stretch for OME as this is not microscopy). Probably should at least consider something that's more fitting with GIS ecosystem.
+
+New version of bespoke pipeline may well have a very zarr-image-like structure for levels.
+
+New pipeline should be able to operate on existing outputs or DEFRA data.
+
+We currently load and parse a large `manifest.json` and then create a scene with all known nodes. When zoomed out we get a massive amount of VRAM thrashing even for the data we are able to load.
+
+The `index` folder itself is several GB currently, with mostly redundant information.
+
+Need to be able to abort loading on tiles that aren't visible, and unload data when there's memory pressure.
+
+side-note: may want to experiment with dithering to see if it is nicer, some visually undesirable aspects may be related to quantization.
+
+**Planning docs:** [docs/planning/README.md](docs/planning/README.md) — [dataset operations](docs/planning/dataset-operations.md), [terrain catalog & LOD](docs/planning/terrain-catalog-and-lod.md), [storage & pipeline v2](docs/planning/storage-and-pipeline-v2.md). Runtime channel model: [docs/tile-layers.md](docs/tile-layers.md).
+
 ## Hosting / backend
 
 Think about getting tile-data into a form that I could put online somewhere.

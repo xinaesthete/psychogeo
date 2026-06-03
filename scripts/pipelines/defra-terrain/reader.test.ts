@@ -7,7 +7,7 @@ import type { TileRecord } from './types.ts';
 
 describe('terrain manifest reader', () => {
   it('resolves a channel by OSGB coordinate', async () => {
-    const root = path.join('/private/tmp', `psychogeo-reader-${Date.now()}`);
+    const root = path.join('/private/tmp', `terracognita-reader-${Date.now()}`);
     await mkdir(path.join(root, 'index'), { recursive: true });
     const tile: TileRecord = {
       tileId: '455000_205000',

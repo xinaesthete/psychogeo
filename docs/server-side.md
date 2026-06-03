@@ -1,6 +1,6 @@
 # Server-side roadmap
 
-How data gets prepared, served, and persisted for psychogeo. Covers:
+How data gets prepared, served, and persisted for TerraCognita. Covers:
 
 - Offline data-processing pipelines and a dev UI to control them.
 - A runtime backend for catalog-style data (tracks first).
@@ -15,6 +15,7 @@ This doc is a contract, not an implementation. No code lands in this PR.
 - [docs/future-terrain.md](future-terrain.md) — overall direction.
 - [docs/tile-layers.md](tile-layers.md) — the in-browser side of the same data lifecycle; channel payloads come from artefacts that the pipelines below produce.
 - [docs/compression-experiment.md](compression-experiment.md) — the experiment that re-encodes pipeline outputs at runtime.
+- [docs/planning/README.md](planning/README.md) — dataset admin, catalog scale, pipeline v2 (expands § 2–6 here with phased delivery).
 
 ## 1. Where data lives today
 
@@ -104,7 +105,7 @@ The user is "considering RSC". Honest evaluation rather than yes/no:
 
 A bundler / runtime that supports it. Today's stack is Vite + plugins; vanilla Vite does not support RSC. Realistic paths:
 
-- **Next.js** — native RSC. The migration would dominate the project, replacing Vite, the dev server, the build, and React-Router-equivalent. Overkill for psychogeo's size.
+- **Next.js** — native RSC. The migration would dominate the project, replacing Vite, the dev server, the build, and React-Router-equivalent. Overkill for TerraCognita's size.
 - **Waku** — minimal RSC framework, Vite-native, much smaller surface than Next. Less mature but plausible for an internal dev UI.
 - **Roll-your-own RSC plugin for Vite** — high friction, fragile. Not recommended.
 

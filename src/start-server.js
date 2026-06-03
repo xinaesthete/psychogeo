@@ -15,7 +15,10 @@ const path = require('path');
 const app = express();
 app.use(express.static(path.join(__dirname, '../dist')));
 console.log('using ' + path.join(__dirname, '../dist'));
-const terrainDatasetsRoot = process.env.PSYCHOGEO_TERRAIN_DATASETS_ROOT || path.join(gisRoot, 'DEFRA');
+// const terrainDatasetsRoot = process.env.TERRACOGNITA_TERRAIN_DATASETS_ROOT
+//   || process.env.PSYCHOGEO_TERRAIN_DATASETS_ROOT
+//   || path.join(gisRoot, 'DEFRA');
+const terrainDatasetsRoot = "/Volumes/CrucialOx9/data/GIS/DEFRA/";
 console.log('serving terrain datasets from ' + terrainDatasetsRoot);
 app.use('/terrain-datasets', express.static(terrainDatasetsRoot));
 

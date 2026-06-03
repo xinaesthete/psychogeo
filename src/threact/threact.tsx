@@ -1,7 +1,7 @@
 /**
  * Render Three.js scenes as components in React.
  * 
- * First developed for psychogeo project.
+ * First developed for the TerraCognita project.
  * 
  * Not necessarily brilliantly designed, could be either replaced with something else
  * if there's something else that does the same thing, or I may publish as an npm module.

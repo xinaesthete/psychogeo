@@ -1,12 +1,13 @@
 # Future terrain and rendering
 
-Rough architecture notes for psychogeo beyond the current WebGL2 / Three.js heightfield stack. Not a commitment or implementation spec.
+Rough architecture notes for TerraCognita beyond the current WebGL2 / Three.js heightfield stack. Not a commitment or implementation spec.
 
 ## Related docs
 
 - [docs/tile-layers.md](tile-layers.md) — proposed in-browser raster-channel API and tile lifecycle that replaces today's ad-hoc per-tile state.
 - [docs/compression-experiment.md](compression-experiment.md) — current state of the HTJ2K compression experiment and how it migrates onto the channel API.
 - [docs/server-side.md](server-side.md) — offline data-processing pipelines, dev UI for controlling them, runtime backend, RSC evaluation, and a future Zarr storage evaluation.
+- [docs/planning/README.md](planning/README.md) — sequenced next steps for dataset ops, catalog scale, and pipeline v2 (from NOTES § Managing datasets).
 
 ## Current stack
 
@@ -29,7 +30,7 @@ The engine must own that deformation end-to-end; it is not a standard “terrain
 
 ## Why a bespoke engine (for now)
 
-Wider comparison across the criteria that actually decide this for psychogeo. Today is three.js + R3F on WebGL2; the realistic forward path is three.js + WebGPU (see § _Possible render path_).
+Wider comparison across the criteria that actually decide this for TerraCognita. Today is three.js + R3F on WebGL2; the realistic forward path is three.js + WebGPU (see § _Possible render path_).
 
 | Criterion | MapLibre + deck.gl Terrain3D | Cesium | three.js + R3F (today) | three.js + WebGPU (target) |
 |-----------|------------------------------|--------|------------------------|----------------------------|
