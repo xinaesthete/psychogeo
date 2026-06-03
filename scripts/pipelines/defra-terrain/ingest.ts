@@ -1,5 +1,7 @@
+import { availableParallelism } from 'node:os';
 import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { createWriteLock, mapPool } from './concurrency.ts';
 import { encodeDeltaInt16, encodeUint16Normalized, type EncodedRaster } from './encoding.ts';
 import { encodeHtj2k } from './htj2k.ts';
 import {
@@ -46,6 +48,8 @@ export type IngestProgressEvent =
   | {
       readonly phase: 'scan';
       readonly groups: number;
+      readonly tileConcurrency: number;
+      readonly groupConcurrency: number;
     }
   | {
       readonly phase: 'resume';
@@ -111,7 +115,24 @@ export interface IngestOptions {
   readonly inputDir: string;
   readonly outDir: string;
   readonly datasetId?: string;
+  /** Parallel 1 km tiles encoded per source group. Default: min(8, availableParallelism()). */
+  readonly tileConcurrency?: number;
+  /** Parallel source groups in flight. Default: 1 (each group loads full ZIP rasters). */
+  readonly groupConcurrency?: number;
   readonly onProgress?: (event: IngestProgressEvent) => void;
+}
+
+export function defaultTileConcurrency(): number {
+  return Math.min(8, Math.max(1, availableParallelism()));
+}
+
+export function parseConcurrencyFlag(value: string | undefined, fallback: number): number {
+  if (value === undefined) return fallback;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    throw new Error(`Concurrency must be a positive integer, got: ${value}`);
+  }
+  return parsed;
 }
 
 export interface IngestResult {
@@ -597,6 +618,196 @@ async function loadGroupRasters(group: DefraTileGroup): Promise<{
   return { fz, lz, dtm };
 }
 
+interface GroupRasters {
+  readonly fz: RasterSource;
+  readonly lz?: RasterSource;
+  readonly dtm?: RasterSource;
+}
+
+interface ProcessNominalTileResult {
+  readonly record?: TileRecord;
+  readonly channelCount: number;
+}
+
+async function processNominalTile(
+  outDir: string,
+  group: DefraTileGroup,
+  rasters: GroupRasters,
+  baseChannel: ChannelTileRecord,
+  nominalExtent: TileExtent,
+  tileIndex: number,
+  tileCount: number,
+  failures: IngestChannelFailure[],
+  onProgress: IngestOptions['onProgress'],
+): Promise<ProcessNominalTileResult> {
+  const tileId = `${Math.round(nominalExtent.eastMin)}_${Math.round(nominalExtent.northMin)}`;
+  const tileDir = hrefJoin('tiles', tileId);
+  const encodeContext: ChannelEncodeContext = {
+    failures,
+    onProgress,
+    sourceTileRef: group.tileRef,
+    year: group.year,
+    tileId,
+    nominalExtent,
+  };
+  const issues: TileIngestIssue[] = [];
+  const channels: Record<string, ChannelTileRecord> = {
+    [baseChannel.channelId]: baseChannel,
+  };
+  const fzResult = await tryEncodeHeightChannel(
+    outDir,
+    rasters.fz,
+    'height.dsm.fz',
+    encodeContext,
+    hrefJoin(tileDir, 'height.dsm.fz.0.j2c'),
+  );
+  if (fzResult.record) channels['height.dsm.fz'] = fzResult.record;
+  if (fzResult.issue) issues.push(fzResult.issue);
+  if (rasters.lz) {
+    const lzResult = await tryEncodeHeightChannel(
+      outDir,
+      rasters.lz,
+      'height.dsm.lz',
+      encodeContext,
+      hrefJoin(tileDir, 'height.dsm.lz.0.j2c'),
+    );
+    if (lzResult.record) channels['height.dsm.lz'] = lzResult.record;
+    if (lzResult.issue) issues.push(lzResult.issue);
+    const dzResult = await tryEncodeDeltaChannel(
+      outDir,
+      rasters.fz,
+      rasters.lz,
+      encodeContext,
+      hrefJoin(tileDir, 'height.aux.dz.0.j2c'),
+    );
+    if (dzResult.record) channels['height.aux.dz'] = dzResult.record;
+    if (dzResult.issue) issues.push(dzResult.issue);
+  }
+  if (rasters.dtm) {
+    const dtmResult = await tryEncodeHeightChannel(
+      outDir,
+      rasters.dtm,
+      'height.dtm',
+      encodeContext,
+      hrefJoin(tileDir, 'height.dtm.0.j2c'),
+    );
+    if (dtmResult.record) channels['height.dtm'] = dtmResult.record;
+    if (dtmResult.issue) issues.push(dtmResult.issue);
+  }
+  if (!channels['height.dsm.fz']) {
+    onProgress?.({
+      phase: 'tile-skip',
+      tileRef: group.tileRef,
+      tileId,
+      message: issues.length > 0 ? issues.map((issue) => issue.message).join('; ') : 'primary DSM missing',
+    });
+    return { channelCount: 0 };
+  }
+  const tileChannelCount = Object.keys(channels).length;
+  const tileBytes = Object.values(channels).reduce((sum, channel) => sum + recordBytes(channel), 0);
+  onProgress?.({
+    phase: 'tile',
+    tileId,
+    tileIndex: tileIndex + 1,
+    tileCount,
+    channels: tileChannelCount,
+    bytes: tileBytes,
+  });
+  return {
+    channelCount: tileChannelCount,
+    record: {
+      tileId,
+      sourceTileRef: group.tileRef,
+      extent: nominalExtent,
+      nominalExtent,
+      channels,
+      provenance: [rasters.fz.provenance, rasters.lz?.provenance, rasters.dtm?.provenance].filter(
+        (item) => item !== undefined,
+      ),
+      issues: issues.length > 0 ? issues : undefined,
+    },
+  };
+}
+
+interface GroupIngestResult {
+  readonly shard?: TileIndexShard;
+  readonly shardId: string;
+  readonly extent: TileExtent;
+  readonly processedTiles: number;
+  readonly processedChannels: number;
+  readonly groupChannelCount: number;
+  readonly groupBytes: number;
+}
+
+async function ingestOneGroup(
+  options: IngestOptions,
+  datasetId: string,
+  group: DefraTileGroup,
+  tileConcurrency: number,
+  failures: IngestChannelFailure[],
+): Promise<GroupIngestResult | undefined> {
+  const rasters = await loadGroupRasters(group);
+  const shardId = shardIdForExtent(rasters.fz.extent);
+  let baseChannel: ChannelTileRecord;
+  try {
+    baseChannel = await encodeBaseChannel(options.outDir, rasters.fz, shardId);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    recordChannelFailure(
+      {
+        failures,
+        onProgress: options.onProgress,
+        sourceTileRef: group.tileRef,
+        year: group.year,
+        tileId: shardId,
+        nominalExtent: rasters.fz.extent,
+      },
+      'height.dsm.base',
+      0,
+      0,
+      'encode-failed',
+      `base channel encode failed: ${message}`,
+    );
+    return undefined;
+  }
+
+  const nominalExtents = makeOneKmNominalExtents(rasters.fz.extent);
+  const tileResults = await mapPool(
+    nominalExtents,
+    tileConcurrency,
+    (nominalExtent, tileIndex) =>
+      processNominalTile(
+        options.outDir,
+        group,
+        rasters,
+        baseChannel,
+        nominalExtent,
+        tileIndex,
+        nominalExtents.length,
+        failures,
+        options.onProgress,
+      ),
+  );
+
+  const records: TileRecord[] = [];
+  let processedChannels = 0;
+  for (const tileResult of tileResults) {
+    if (!tileResult.record) continue;
+    records.push(tileResult.record);
+    processedChannels += tileResult.channelCount;
+  }
+
+  return {
+    shard: records.length > 0 ? makeShard(datasetId, shardId, records) : undefined,
+    shardId,
+    extent: rasters.fz.extent,
+    processedTiles: records.length,
+    processedChannels,
+    groupChannelCount: processedChannels,
+    groupBytes: recordsBytes(records),
+  };
+}
+
 export async function ingestDefraTerrain(options: IngestOptions): Promise<IngestResult> {
   const existingState = await loadExistingDatasetState(options.outDir);
   const datasetId =
@@ -604,8 +815,15 @@ export async function ingestDefraTerrain(options: IngestOptions): Promise<Ingest
     existingState.datasetId ??
     `defra-terrain-${new Date().toISOString().replaceAll(':', '-')}`;
   const createdAt = existingState.createdAt ?? new Date().toISOString();
+  const tileConcurrency = options.tileConcurrency ?? defaultTileConcurrency();
+  const groupConcurrency = options.groupConcurrency ?? 1;
   const groups = await scanDefraZips(options.inputDir);
-  options.onProgress?.({ phase: 'scan', groups: groups.length });
+  options.onProgress?.({
+    phase: 'scan',
+    groups: groups.length,
+    tileConcurrency,
+    groupConcurrency,
+  });
   const shards: TileIndexShard[] = [...existingState.shards];
   let completedGroups = [...existingState.completedGroups];
   const completedGroupKeys = new Set(
@@ -651,8 +869,12 @@ export async function ingestDefraTerrain(options: IngestOptions): Promise<Ingest
     );
   }
 
-  for (const [groupIndex, group] of groups.entries()) {
-    if (!group.sources.FZ) continue;
+  const serializeWrites = createWriteLock();
+  const groupWork = groups
+    .map((group, groupIndex) => ({ group, groupIndex }))
+    .filter(({ group }) => group.sources.FZ !== undefined);
+
+  await mapPool(groupWork, groupConcurrency, async ({ group, groupIndex }) => {
     const completed = completedGroupByKey.get(groupKey(group.tileRef, group.year));
     if (completed) {
       options.onProgress?.({
@@ -663,8 +885,9 @@ export async function ingestDefraTerrain(options: IngestOptions): Promise<Ingest
         groupIndex: groupIndex + 1,
         groupCount: groups.length,
       });
-      continue;
+      return;
     }
+
     options.onProgress?.({
       phase: 'group-start',
       tileRef: group.tileRef,
@@ -672,132 +895,44 @@ export async function ingestDefraTerrain(options: IngestOptions): Promise<Ingest
       groupIndex: groupIndex + 1,
       groupCount: groups.length,
     });
-    const rasters = await loadGroupRasters(group);
-    const shardId = shardIdForExtent(rasters.fz.extent);
-    let baseChannel: ChannelTileRecord;
-    try {
-      baseChannel = await encodeBaseChannel(options.outDir, rasters.fz, shardId);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      recordChannelFailure(
-        {
-          failures,
-          onProgress: options.onProgress,
-          sourceTileRef: group.tileRef,
-          year: group.year,
-          tileId: shardId,
-          nominalExtent: rasters.fz.extent,
-        },
-        'height.dsm.base',
-        0,
-        0,
-        'encode-failed',
-        `base channel encode failed: ${message}`,
-      );
-      continue;
-    }
-    const records: TileRecord[] = [];
-    let groupChannelCount = 0;
-    bounds = includeExtent(bounds, rasters.fz.extent);
-    const nominalExtents = makeOneKmNominalExtents(rasters.fz.extent);
 
-    for (const [tileIndex, nominalExtent] of nominalExtents.entries()) {
-      const tileId = `${Math.round(nominalExtent.eastMin)}_${Math.round(nominalExtent.northMin)}`;
-      const tileDir = hrefJoin('tiles', tileId);
-      const encodeContext: ChannelEncodeContext = {
-        failures,
-        onProgress: options.onProgress,
-        sourceTileRef: group.tileRef,
-        year: group.year,
-        tileId,
-        nominalExtent,
-      };
-      const issues: TileIngestIssue[] = [];
-      const channels: Record<string, ChannelTileRecord> = {
-        [baseChannel.channelId]: baseChannel,
-      };
-      const fzResult = await tryEncodeHeightChannel(
-        options.outDir,
-        rasters.fz,
-        'height.dsm.fz',
-        encodeContext,
-        hrefJoin(tileDir, 'height.dsm.fz.0.j2c'),
-      );
-      if (fzResult.record) channels['height.dsm.fz'] = fzResult.record;
-      if (fzResult.issue) issues.push(fzResult.issue);
-      if (rasters.lz) {
-        const lzResult = await tryEncodeHeightChannel(
-          options.outDir,
-          rasters.lz,
-          'height.dsm.lz',
-          encodeContext,
-          hrefJoin(tileDir, 'height.dsm.lz.0.j2c'),
-        );
-        if (lzResult.record) channels['height.dsm.lz'] = lzResult.record;
-        if (lzResult.issue) issues.push(lzResult.issue);
-        const dzResult = await tryEncodeDeltaChannel(
-          options.outDir,
-          rasters.fz,
-          rasters.lz,
-          encodeContext,
-          hrefJoin(tileDir, 'height.aux.dz.0.j2c'),
-        );
-        if (dzResult.record) channels['height.aux.dz'] = dzResult.record;
-        if (dzResult.issue) issues.push(dzResult.issue);
-      }
-      if (rasters.dtm) {
-        const dtmResult = await tryEncodeHeightChannel(
-          options.outDir,
-          rasters.dtm,
-          'height.dtm',
-          encodeContext,
-          hrefJoin(tileDir, 'height.dtm.0.j2c'),
-        );
-        if (dtmResult.record) channels['height.dtm'] = dtmResult.record;
-        if (dtmResult.issue) issues.push(dtmResult.issue);
-      }
-      if (!channels['height.dsm.fz']) {
+    const result = await ingestOneGroup(options, datasetId, group, tileConcurrency, failures);
+    if (!result) return;
+
+    await serializeWrites(async () => {
+      bounds = includeExtent(bounds, result.extent);
+
+      if (!result.shard) {
         options.onProgress?.({
-          phase: 'tile-skip',
+          phase: 'group-complete',
           tileRef: group.tileRef,
-          tileId,
-          message: issues.length > 0 ? issues.map((issue) => issue.message).join('; ') : 'primary DSM missing',
+          tiles: 0,
+          channels: 0,
+          bytes: 0,
         });
-        continue;
+        await persistDatasetSnapshot(
+          options.outDir,
+          datasetId,
+          shards,
+          bounds,
+          createdAt,
+          processedTileCount,
+          processedChannelCount,
+          failures,
+          true,
+        );
+        return;
       }
-      const tileChannelCount = Object.keys(channels).length;
-      const tileBytes = Object.values(channels).reduce((sum, channel) => sum + recordBytes(channel), 0);
-      processedChannelCount += tileChannelCount;
-      groupChannelCount += tileChannelCount;
-      processedTileCount += 1;
-      records.push({
-        tileId,
-        sourceTileRef: group.tileRef,
-        extent: nominalExtent,
-        nominalExtent,
-        channels,
-        provenance: [rasters.fz.provenance, rasters.lz?.provenance, rasters.dtm?.provenance].filter(
-          (item) => item !== undefined,
-        ),
-        issues: issues.length > 0 ? issues : undefined,
-      });
-      options.onProgress?.({
-        phase: 'tile',
-        tileId,
-        tileIndex: tileIndex + 1,
-        tileCount: nominalExtents.length,
-        channels: tileChannelCount,
-        bytes: tileBytes,
-      });
-    }
 
-    if (records.length === 0) {
-      options.onProgress?.({
-        phase: 'group-complete',
+      shards.push(result.shard);
+      processedTileCount += result.processedTiles;
+      processedChannelCount += result.processedChannels;
+      completedGroups = await persistCompletedGroup(options.outDir, result.shard, completedGroups, group);
+      completedGroupKeys.add(groupKey(group.tileRef, group.year));
+      completedGroupByKey.set(groupKey(group.tileRef, group.year), {
         tileRef: group.tileRef,
-        tiles: 0,
-        channels: 0,
-        bytes: 0,
+        year: group.year,
+        shardId: result.shardId,
       });
       await persistDatasetSnapshot(
         options.outDir,
@@ -810,37 +945,15 @@ export async function ingestDefraTerrain(options: IngestOptions): Promise<Ingest
         failures,
         true,
       );
-      continue;
-    }
-
-    const shard = makeShard(datasetId, shardId, records);
-    shards.push(shard);
-    completedGroups = await persistCompletedGroup(options.outDir, shard, completedGroups, group);
-    completedGroupKeys.add(groupKey(group.tileRef, group.year));
-    completedGroupByKey.set(groupKey(group.tileRef, group.year), {
-      tileRef: group.tileRef,
-      year: group.year,
-      shardId,
+      options.onProgress?.({
+        phase: 'group-complete',
+        tileRef: group.tileRef,
+        tiles: result.processedTiles,
+        channels: result.groupChannelCount,
+        bytes: result.groupBytes,
+      });
     });
-    await persistDatasetSnapshot(
-      options.outDir,
-      datasetId,
-      shards,
-      bounds,
-      createdAt,
-      processedTileCount,
-      processedChannelCount,
-      failures,
-      true,
-    );
-    options.onProgress?.({
-      phase: 'group-complete',
-      tileRef: group.tileRef,
-      tiles: records.length,
-      channels: groupChannelCount,
-      bytes: recordsBytes(records),
-    });
-  }
+  });
 
   if (extentIsEmpty(bounds)) throw new Error(`No ingestable DSM ZIPs found in ${options.inputDir}`);
 

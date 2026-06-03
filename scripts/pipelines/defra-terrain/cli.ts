@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 import { inspectDataset } from './inspect.ts';
-import { ingestDefraTerrain, type IngestProgressEvent } from './ingest.ts';
+import {
+  defaultTileConcurrency,
+  ingestDefraTerrain,
+  parseConcurrencyFlag,
+  type IngestProgressEvent,
+} from './ingest.ts';
 import { scanDefraZips, summarizeScan } from './scan.ts';
 
 const startTime = Date.now(); //Temporal.Now.instant();
@@ -11,6 +16,8 @@ interface CliArgs {
   readonly out?: string;
   readonly dataset?: string;
   readonly datasetId?: string;
+  readonly tileConcurrency?: string;
+  readonly groupConcurrency?: string;
   readonly progress: boolean;
 }
 
@@ -18,7 +25,8 @@ function usage(): string {
   return [
     'Usage:',
     '  pnpm pipeline:defra -- scan --input <dir>',
-    '  pnpm pipeline:defra -- ingest --input <dir> --out <dataset-dir> [--dataset-id <id>] [--progress]',
+    '  pnpm pipeline:defra -- ingest --input <dir> --out <dataset-dir> [--dataset-id <id>]',
+    '      [--tile-concurrency <n>] [--group-concurrency <n>] [--progress]',
     '  pnpm pipeline:defra -- inspect --dataset <dataset-dir>',
   ].join('\n');
 }
@@ -45,6 +53,8 @@ function parseArgs(argv: string[]): CliArgs {
     out: values.get('out'),
     dataset: values.get('dataset'),
     datasetId: values.get('dataset-id'),
+    tileConcurrency: values.get('tile-concurrency'),
+    groupConcurrency: values.get('group-concurrency'),
     progress: flags.has('progress'),
   };
 }
@@ -67,7 +77,7 @@ function formatProgress(event: IngestProgressEvent): string {
   const pre = `[defra] (${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')})`;
   switch (event.phase) {
     case 'scan':
-      return `${pre} scanned ${event.groups} source groups`;
+      return `${pre} scanned ${event.groups} source groups (tile×${event.tileConcurrency}, group×${event.groupConcurrency})`;
     case 'resume':
       return `${pre} resuming: ${event.completedGroups} groups done, ${event.remainingGroups} remaining`;
     case 'recover':
@@ -106,10 +116,14 @@ async function main(): Promise<void> {
   if (args.command === 'ingest') {
     if (!args.input) throw new Error('--input is required for ingest');
     if (!args.out) throw new Error('--out is required for ingest');
+    const tileConcurrency = parseConcurrencyFlag(args.tileConcurrency, defaultTileConcurrency());
+    const groupConcurrency = parseConcurrencyFlag(args.groupConcurrency, 1);
     const result = await ingestDefraTerrain({
       inputDir: args.input,
       outDir: args.out,
       datasetId: args.datasetId,
+      tileConcurrency,
+      groupConcurrency,
       onProgress: progressLogger(args.progress),
     });
     console.log(
