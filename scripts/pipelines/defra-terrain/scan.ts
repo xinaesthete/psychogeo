@@ -63,6 +63,7 @@ export async function scanDefraZips(inputDir: string): Promise<DefraTileGroup[]>
 
   for (const entry of dirEntries) {
     if (!entry.isFile() || !entry.name.endsWith('.zip')) continue;
+    if (entry.name.startsWith('._')) continue;
     const source = parseDefraZipName(path.join(inputDir, entry.name));
     if (!source) continue;
     const key = `${source.year}:${source.tileRef}`;

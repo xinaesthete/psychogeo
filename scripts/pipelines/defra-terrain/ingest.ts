@@ -200,7 +200,16 @@ async function writeJson(filePath: string, value: unknown): Promise<void> {
   await rename(tempPath, filePath);
 }
 
+function isMacOsMetadataName(name: string): boolean {
+  return name.startsWith('._') || name === '.DS_Store';
+}
+
+function isIndexShardFile(name: string): boolean {
+  return name.endsWith('.json') && name !== COMPLETED_GROUPS_FILE && !isMacOsMetadataName(name);
+}
+
 async function readJsonIfExists<T>(filePath: string): Promise<T | undefined> {
+  if (isMacOsMetadataName(path.basename(filePath))) return undefined;
   try {
     const content = await readFile(filePath, 'utf8');
     return JSON.parse(content) as T;
@@ -227,8 +236,7 @@ async function loadExistingDatasetState(outDir: string): Promise<ExistingDataset
   try {
     const entries = await readdir(indexDir, { withFileTypes: true });
     for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
-      if (entry.name === COMPLETED_GROUPS_FILE) continue;
+      if (!entry.isFile() || !isIndexShardFile(entry.name)) continue;
       const shard = await readJsonIfExists<TileIndexShard>(path.join(indexDir, entry.name));
       if (shard) shards.push(shard);
     }
