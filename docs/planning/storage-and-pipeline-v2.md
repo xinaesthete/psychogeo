@@ -58,11 +58,13 @@ flowchart LR
 
 ## Zarr-image-like levels (bespoke first)
 
+**Implemented (2026):** bounded cell ingest via `pnpm pipeline:defra -- ingest-v2` writes `psychogeo.terrain.v2` / `tc-dsm-pyramid` datasets under `scripts/pipelines/defra-terrain/v2/`. Root `metadata.json` holds `tileMatrixSet.levels[]` (configurable depth); per-node `pyramid/{cell}/…/manifest.json` files carry columnar `leaf.enc` and merged `levels.{n}` encoding scalars. Paths and bounds are derived from OSGB grid refs — see `v2/derive.ts`.
+
 Before adopting Zarr, define an internal layout that **could** map to OME-Zarr multiscale later:
 
 ```
 dataset/
-  manifest.json          # psychogeo.terrain.v2 — bounds, channels, index root
+  metadata.json          # psychogeo.terrain.v2 — channels, tileMatrixSet, indexRoot
   index/
     root.json              # quadtree root
     ...

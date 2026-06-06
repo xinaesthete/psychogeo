@@ -22,7 +22,8 @@
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "three": "^0.183.2",
-    "three-stdlib": "^2.36.1"
+    "three-stdlib": "^2.36.1",
+    "zod": "^4.4.3"
   },
   "scripts": {
     "build:shp-wasm": "wasm-pack build rust/shp_processor_wasm --target web --out-dir pkg --out-name shp_processor_wasm",

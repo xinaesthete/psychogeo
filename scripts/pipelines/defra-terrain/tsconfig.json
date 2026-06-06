@@ -8,5 +8,5 @@
     "types": ["node", "vitest/globals"],
     "noEmit": true
   },
-  "include": ["*.ts"]
+  "include": ["*.ts", "v2/**/*.ts"]
 }

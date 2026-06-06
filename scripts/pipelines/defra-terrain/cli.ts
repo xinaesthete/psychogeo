@@ -7,6 +7,10 @@ import {
   type IngestProgressEvent,
 } from './ingest.ts';
 import { scanDefraZips, summarizeScan } from './scan.ts';
+import { CHANNELS } from './manifest.ts';
+import type { TerrainChannelId } from './types.ts';
+import { ingestDefraTerrainV2, type IngestV2ProgressEvent } from './v2/ingest.ts';
+import { inspectDatasetV2 } from './v2/inspect.ts';
 
 const startTime = Date.now(); //Temporal.Now.instant();
 
@@ -16,9 +20,14 @@ interface CliArgs {
   readonly out?: string;
   readonly dataset?: string;
   readonly datasetId?: string;
+  readonly cell?: string;
+  readonly channel?: string;
+  readonly pyramidPreset?: string;
+  readonly pyramidLevels?: string;
   readonly tileConcurrency?: string;
   readonly groupConcurrency?: string;
   readonly progress: boolean;
+  readonly noMerge: boolean;
 }
 
 function usage(): string {
@@ -28,6 +37,11 @@ function usage(): string {
     '  pnpm pipeline:defra -- ingest --input <dir> --out <dataset-dir> [--dataset-id <id>]',
     '      [--tile-concurrency <n>] [--group-concurrency <n>] [--progress]',
     '  pnpm pipeline:defra -- inspect --dataset <dataset-dir>',
+    '  pnpm pipeline:defra -- ingest-v2 --input <dir> --out <dataset-dir> --cell <gridRef>',
+    '      [--channel height.dsm.fz] [--dataset-id <id>]',
+    '      [--pyramid-preset cell|regional|national] [--pyramid-levels <path.json>]',
+    '      [--tile-concurrency <n>] [--no-merge] [--progress]',
+    '  pnpm pipeline:defra -- inspect-v2 --dataset <dataset-dir>',
   ].join('\n');
 }
 
@@ -53,9 +67,14 @@ function parseArgs(argv: string[]): CliArgs {
     out: values.get('out'),
     dataset: values.get('dataset'),
     datasetId: values.get('dataset-id'),
+    cell: values.get('cell'),
+    channel: values.get('channel'),
+    pyramidPreset: values.get('pyramid-preset'),
+    pyramidLevels: values.get('pyramid-levels'),
     tileConcurrency: values.get('tile-concurrency'),
     groupConcurrency: values.get('group-concurrency'),
     progress: flags.has('progress'),
+    noMerge: flags.has('no-merge'),
   };
 }
 
@@ -106,6 +125,52 @@ function progressLogger(enabled: boolean): ((event: IngestProgressEvent) => void
   };
 }
 
+function formatV2Progress(event: IngestV2ProgressEvent): string {
+  const dt = Date.now() - startTime;
+  const totalSeconds = Math.floor(dt / 1000);
+  const mins = Math.floor(totalSeconds / 60);
+  const secs = totalSeconds % 60;
+  const pre = `[defra-v2] (${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')})`;
+  switch (event.phase) {
+    case 'scan':
+      return `${pre} scanned ${event.groups} source groups for cell ingest`;
+    case 'group-start':
+      return `${pre} group ${event.groupIndex}/${event.groupCount}: ${event.tileRef}`;
+    case 'group-skip':
+      return `${pre} skip ${event.groupIndex}/${event.groupCount}: ${event.tileRef}`;
+    case 'tile':
+      return `${pre} leaf ${event.tileRef} ${event.eastMin}_${event.northMin}`;
+    case 'group-complete':
+      return `${pre} complete ${event.tileRef}: ${event.presentSlots} leaf slots`;
+    case 'merge-level':
+      return `${pre} merge L${event.level} ${event.gridRef}`;
+    case 'merge-complete':
+      return `${pre} merged ${event.levels} pyramid levels`;
+    case 'complete':
+      return `${pre} wrote ${event.leafChunks} leaf chunks across ${event.groups} groups`;
+  }
+}
+
+function progressLoggerV2(enabled: boolean): ((event: IngestV2ProgressEvent) => void) | undefined {
+  if (!enabled) return undefined;
+  return (event) => {
+    console.error(formatV2Progress(event));
+  };
+}
+
+function parsePyramidPreset(value: string | undefined): 'cell' | 'regional' | 'national' | undefined {
+  if (!value) return undefined;
+  if (value === 'cell' || value === 'regional' || value === 'national') return value;
+  throw new Error(`Unknown --pyramid-preset: ${value}`);
+}
+
+function parseChannelId(value: string | undefined): TerrainChannelId | undefined {
+  if (!value) return undefined;
+  const channel = CHANNELS.find((entry) => entry.id === value);
+  if (!channel) throw new Error(`Unknown --channel: ${value}`);
+  return channel.id;
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   if (args.command === 'scan') {
@@ -134,6 +199,33 @@ async function main(): Promise<void> {
   if (args.command === 'inspect') {
     if (!args.dataset) throw new Error('--dataset is required for inspect');
     console.log(await inspectDataset(args.dataset));
+    return;
+  }
+  if (args.command === 'ingest-v2') {
+    if (!args.input) throw new Error('--input is required for ingest-v2');
+    if (!args.out) throw new Error('--out is required for ingest-v2');
+    if (!args.cell) throw new Error('--cell is required for ingest-v2');
+    const tileConcurrency = parseConcurrencyFlag(args.tileConcurrency, defaultTileConcurrency());
+    const result = await ingestDefraTerrainV2({
+      inputDir: args.input,
+      outDir: args.out,
+      cell: args.cell,
+      datasetId: args.datasetId,
+      channelId: parseChannelId(args.channel),
+      pyramidPreset: parsePyramidPreset(args.pyramidPreset),
+      pyramidLevelsPath: args.pyramidLevels,
+      tileConcurrency,
+      runMerge: !args.noMerge,
+      onProgress: progressLoggerV2(args.progress),
+    });
+    console.log(
+      `wrote ${result.metadataPath} (${result.groupCount} groups, ${result.leafChunkCount} leaf chunks)`,
+    );
+    return;
+  }
+  if (args.command === 'inspect-v2') {
+    if (!args.dataset) throw new Error('--dataset is required for inspect-v2');
+    console.log(await inspectDatasetV2(args.dataset));
     return;
   }
   throw new Error(usage());
