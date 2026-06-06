@@ -65,9 +65,9 @@ function App() {
   });
   const { terrainDatasetManifestUrl } = useControls('Terrain dataset', {
     terrainDatasetManifestUrl: {
-      // value: '/terrain-datasets/terracognita-defra-v1/manifest.json',
+      value: '/terrain-datasets/terracognita-defra-v1/manifest.json',
       // value: '/terrain-datasets/National-LIDAR-Programme-DSM-2022-terracognita-defra-v1/manifest.json',
-      value: '/terrain-datasets/LIDAR-DSM-DZ-2022-terracognita-defra-v1/manifest.json',
+      // value: '/terrain-datasets/LIDAR-DSM-DZ-2022-terracognita-defra-v1/manifest.json',
       label: 'manifest URL',
     },
   });
