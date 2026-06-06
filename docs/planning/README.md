@@ -8,7 +8,8 @@ Next-step planning derived from [NOTES.md](../../NOTES.md) § _Managing datasets
 |-----|--------|
 | [dataset-operations.md](dataset-operations.md) | Configurable data roots, dev proxy, dataset registry, pipeline job UI |
 | [terrain-catalog-and-lod.md](terrain-catalog-and-lod.md) | Hierarchical index, lazy tile scene graph, geometric LOD vs raster pyramid |
-| [storage-and-pipeline-v2.md](storage-and-pipeline-v2.md) | Pipeline v2 on DEFRA or existing outputs, zarr-image levels, **segment files + HTTP Range**, GIS ecosystem, index slimming |
+| [storage-and-pipeline-v2.md](storage-and-pipeline-v2.md) | Pipeline v2 roadmap: v1 reindex, segments, Zarr, GIS ecosystem |
+| [v2-pyramid-pipeline.md](v2-pyramid-pipeline.md) | **Implemented** `tc-dsm-pyramid` format, CLI, schema, derivation contract |
 | [sqlite-catalog.md](sqlite-catalog.md) | SQLite for ops registry and/or per-dataset terrain index (vs JSON shards / quadtree) |
 
 ## Existing architecture (read alongside)
@@ -40,10 +41,13 @@ flowchart LR
   subgraph mid [Mid term]
     SQL[sqlite index optional]
     Chan[tile-layers manager]
-    Pipe[storage-and-pipeline v2 index]
+    Pipe[v2 pyramid pipeline]
+    Render[v2 frontend catalog]
   end
   Cat1 --> SQL
   SQL --> Chan
+  Pipe --> Render
+  Render --> Chan
   subgraph later [Later]
     Zarr[Zarr / GIS store]
     Host[static hosting § NOTES hosting]
@@ -56,5 +60,6 @@ flowchart LR
 
 1. **Dataset operations** — stop editing three files to point at a new dataset; unblocks national-scale ingest experiments.
 2. **Catalog + LOD graph** — do not materialise the full tile set at startup; spatial queries + visibility-gated load (feeds tile-layers migration).
-3. **Pipeline v2 + slimmer index** — incremental ingest, less redundant JSON, optional compat export.
-4. **Storage migration** — Zarr or GIS-native only after (2) and (3) define what the runtime actually queries.
+3. **Pipeline v2 (`tc-dsm-pyramid`)** — bounded cell ingest implemented ([v2-pyramid-pipeline.md](v2-pyramid-pipeline.md)); national reindex, segments, and compat export remain.
+4. **Frontend v2 catalog** — port `derive.ts`, lazy manifest descent, pyramid-aware `RasterChannel` ([terrain-catalog-and-lod.md](terrain-catalog-and-lod.md#frontend-rendering-v2-datasets)).
+5. **Storage migration** — Zarr or GIS-native only after catalog and pipeline contracts stabilise.

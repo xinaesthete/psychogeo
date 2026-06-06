@@ -9,7 +9,8 @@ The type-only API skeleton lives in [src/geo/tileLayerTypes.ts](../src/geo/tileL
 - [docs/future-terrain.md](future-terrain.md) — overall direction, render-backend evaluation, routing / mobile sketch.
 - [docs/compression-experiment.md](compression-experiment.md) — the first concrete consumer of this API.
 - [docs/server-side.md](server-side.md) — where channel payloads come from (pipelines, manifests, future Zarr).
-- [docs/planning/terrain-catalog-and-lod.md](planning/terrain-catalog-and-lod.md) — hierarchical index, sparse scene graph, **geometric LOD vs raster pyramid** (separate concerns).
+- [docs/planning/terrain-catalog-and-lod.md](planning/terrain-catalog-and-lod.md) — hierarchical index, sparse scene graph, **geometric LOD vs raster pyramid**, [frontend v2 integration phases](planning/terrain-catalog-and-lod.md#frontend-rendering-v2-datasets).
+- [docs/planning/v2-pyramid-pipeline.md](planning/v2-pyramid-pipeline.md) — **implemented** on-disk pyramid format (`tc-dsm-pyramid`) that future channels will load from.
 
 ## 1. Model
 
@@ -242,7 +243,32 @@ A short catalogue showing the abstraction is wide enough to subsume current and 
 
 Convention: dotted ids namespace channels by data family so manager-level operations ("detach all `height.*`") are trivial.
 
-## 7. Migration map
+## 7. V2 pyramid datasets (`tc-dsm-pyramid`)
+
+The pipeline now emits [psychogeo.terrain.v2](../docs/planning/v2-pyramid-pipeline.md) datasets with merged raster levels (default 1 m / 8 m / 32 m). Channel loading must treat **pyramid level** and **geometric LOD** as separate inputs:
+
+```ts
+export interface TileLoadContext {
+  readonly tile: TileNode;
+  readonly lodLevel: number;        // GeoLOD mesh density (unchanged)
+  readonly pyramidLevel: number;   // tileMatrixSet level → which .j2c resolution
+  readonly encoding: { min: number; max: number; scale: number; offset: number };
+  readonly signal: AbortSignal;
+  readonly generation: number;
+}
+```
+
+| Pyramid level | Typical node extent | Payload |
+|---------------|---------------------|---------|
+| L2 | 10 km cell | one merged `.j2c` @ 32 m |
+| L1 | 5 km quadrant | one merged `.j2c` @ 8 m |
+| L0 | 1 km slot | leaf `.j2c` @ 1 m; encoding from columnar `leaf.enc` |
+
+`height.primary` loads the URL from [PyramidCatalog](../docs/planning/terrain-catalog-and-lod.md#r2--pyramidcatalog-loader) (`resolveChunksInBounds`); encoding scalars come from the node manifest, not from a per-tile v1 shard record.
+
+Frontend work is phased in [terrain-catalog-and-lod.md § Frontend rendering](../docs/planning/terrain-catalog-and-lod.md#frontend-rendering-v2-datasets) (R1–R5). Until then, the app continues to load v1 `manifest.json` + shards.
+
+## 8. Migration map
 
 How current modules map onto the new model. No code changes in this PR; this is the target for follow-up PRs (sequenced in [compression-experiment.md](compression-experiment.md) § _Migration plan_).
 
@@ -253,6 +279,7 @@ How current modules map onto the new model. No code changes in this PR; this is 
 | `LazyTile.onBeforeRender` in [src/geo/TileLoaderUK.ts](../src/geo/TileLoaderUK.ts) | Replaced by `TileLayerManager.observeVisibility(camera)` driven from the render loop, with explicit `becameVisible` / `becameInvisible` transitions. |
 | `registerCompressionTile` in [src/geo/compressionExperiment.ts](../src/geo/compressionExperiment.ts) | Gone. Replaced by attaching a `RasterChannel<{ q: number }>` factory once, at experiment-enable time. |
 | Module-singleton state in [src/geo/compressionExperiment.ts](../src/geo/compressionExperiment.ts) (`trackedTiles`, `loadStatus`, `recodeReport`) | Lives on the channel and the manager; no module globals, so two `TerrainRenderer`s can coexist and HMR is not racing a singleton. |
+| `loadTerrainDatasetCatalog` in [terrainDatasetCatalog.ts](../src/geo/terrainDatasetCatalog.ts) | v1 only today. v2: `PyramidCatalog` — lazy manifest descent per [v2/reader.ts](../scripts/pipelines/defra-terrain/v2/reader.ts). |
 | `TileUniformBag` in [src/geo/tileShaderRuntime.ts](../src/geo/tileShaderRuntime.ts) | Stays — it remains the right way to bind per-tile uniforms into the shader. `applyToTile` writes into it. |
 | Track loading via `TrackVis` in [src/geo/TileLoaderUK.ts](../src/geo/TileLoaderUK.ts) | Optionally re-shaped as a `vector.tracks` channel. Deferred; tracks are not a raster and need their own thinking before forcing them into this API. |
 

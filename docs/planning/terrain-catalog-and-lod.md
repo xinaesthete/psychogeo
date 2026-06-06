@@ -5,7 +5,8 @@ Addressing [NOTES.md](../../NOTES.md): full manifest load, scene with all known 
 ## Related docs
 
 - [docs/tile-layers.md](../tile-layers.md) § _Visibility model_ — frustum transitions, working-set budget (runtime enforcement).
-- [storage-and-pipeline-v2.md](storage-and-pipeline-v2.md) — slimmer hierarchical index on disk.
+- [v2-pyramid-pipeline.md](v2-pyramid-pipeline.md) — **implemented** on-disk `tc-dsm-pyramid` format and derivation contract.
+- [storage-and-pipeline-v2.md](storage-and-pipeline-v2.md) — longer-term pipeline ops (segments, v1 reindex, Zarr).
 - [dataset-operations.md](dataset-operations.md) — which manifest URL is active.
 - [sqlite-catalog.md](sqlite-catalog.md) — per-dataset `index.db` + bounds queries as an alternative to JSON shard trees.
 
@@ -47,7 +48,17 @@ Separate **metadata tree** (what exists, where, at what resolution) from **scene
 
 ### 1. Hierarchical catalog index (on disk / over network)
 
-Evolve `psychogeo.terrain.v1` index from flat shard list + fat per-tile records toward a **pyramid / quadtree** over OSGB space:
+**Implemented format:** `psychogeo.terrain.v2` / `tc-dsm-pyramid` — OSGB-nested manifests under `pyramid/{cell}/`, columnar `leaf.enc`, merged branch overviews. Spec: [v2-pyramid-pipeline.md](v2-pyramid-pipeline.md). Pipeline reader: [v2/reader.ts](../../scripts/pipelines/defra-terrain/v2/reader.ts).
+
+Evolution from v1: flat shard list + fat per-tile records → **spatial tree** where each node owns only encoding scalars; bounds and URLs are derived.
+
+| Tier | Node example | Manifest carries |
+|------|--------------|------------------|
+| 10 km | `SP51` | `children[]`, `levels.2` (32 m merged) |
+| 5 km | `SP51ne` | `levels.1` (8 m merged), `leaf.enc` (25× columnar) |
+| 1 km | (derived slots) | HTJ2K at `0/{east}_{north}.j2c` — no per-slot manifest rows |
+
+Legacy v1 index shape (still supported at runtime):
 
 | Level | Node carries | Child linkage |
 |-------|----------------|---------------|
@@ -66,10 +77,14 @@ Redundancy today: each `TileRecord` in a shard repeats extent, encoding metadata
 **Query API** (browser or thin server):
 
 ```
+// v2 (implemented in pipeline reader; port to browser)
+resolveChunksInBounds(datasetRoot, bounds, targetPyramidLevel?) → ChunkFetchDescriptor[]
+
+// v1 / generic target
 getIndexNode(manifest, east, north, depth?) → { children?, tiles?, channels? }
 ```
 
-Viewport-driven: fetch root → descend only into quadrants intersecting frustum (and viewshed shadow frustum — see [future-terrain.md](../future-terrain.md) § _Light-driven LOD_).
+Viewport-driven: fetch `metadata.json` → descend into intersecting node manifests only. At leaf tier, slot indices are **pure arithmetic** (no chunk array scan). See [v2-pyramid-pipeline.md § Derivation contract](v2-pyramid-pipeline.md#derivation-contract).
 
 **Alternative:** per-dataset **`index.db`** (SQLite + R-tree) with a single bounds query — same viewport driver, fewer HTTP round-trips than a deep JSON tree. Evaluated in [sqlite-catalog.md](sqlite-catalog.md). The frontend query API (`getIndexNode` / `tiles-in-bounds`) should be storage-agnostic so JSON quadtree and SQLite are interchangeable behind the proxy.
 
@@ -167,9 +182,97 @@ channels: {
 | **B. Per-tile multiscale** | `L0…Ln` hrefs on each leaf record | Branches optional; coarse levels used when leaf not spawned |
 | **C. Merged overviews** | Branch nodes own coarse HTJ2K covering many leaves | Strong match to §2 Warm/Hot split; clearest zoom-out path |
 
-Recommendation: **C** (or **B**) at national scale for raster; **keep `GeoLOD` as-is** inside leaves. Winchester can stay on **A** until the tree exists.
+Recommendation: **C** (merged overviews) — **now emitted by v2 pipeline** at 8 m / 32 m defaults. **Keep `GeoLOD` as-is** inside leaves. Winchester / legacy v1 datasets stay on approach **A** until the v2 catalog path lands in the app.
 
-Populate `DsmCatItem.sources` (or channel records) with pyramid level keys; do not overload them as geometric LOD indices.
+Populate channel records with pyramid level keys from `tileMatrixSet.levels[]`; do not overload them as geometric LOD indices.
+
+## Frontend rendering (v2 datasets)
+
+The v2 pipeline is implemented; the **browser still loads v1** via [terrainDatasetCatalog.ts](../../src/geo/terrainDatasetCatalog.ts) and [TileLoaderUK.ts](../../src/geo/TileLoaderUK.ts). This section plans the migration.
+
+### Design constraints (unchanged)
+
+- **Geometric LOD** ([LodUtils.ts](../../src/geo/LodUtils.ts)) — 12 procedural mesh densities per *active* tile node; samples the bound height texture. Independent of pyramid level.
+- **Raster pyramid** — discrete encoded resolutions on disk; scene-graph depth picks which `.j2c` to fetch. v2 provides L0 (1 m leaves), L1 (8 m @ 5 km), L2 (32 m @ 10 km) by default.
+
+### Target data flow
+
+```mermaid
+sequenceDiagram
+  participant Cam as Camera
+  participant Tree as TileTree
+  participant Cat as PyramidCatalog
+  participant Net as HTTP
+  participant Mgr as TileLayerManager
+  participant Geo as GeoLOD
+
+  Cam->>Tree: frustum bounds + screen scale
+  Tree->>Cat: resolveChunksInBounds(bounds, pyramidLevel)
+  Cat->>Net: metadata + 1–4 node manifests
+  Cat-->>Tree: ChunkFetchDescriptor[]
+  Tree->>Mgr: observeVisibility(tileNode, pyramidLevel)
+  Mgr->>Net: GET .j2c (AbortSignal)
+  Mgr->>Tree: RasterPayload texture
+  Tree->>Geo: mesh density from camera distance
+```
+
+### Implementation phases
+
+#### R1 — Shared derive module
+
+- Port [v2/derive.ts](../../scripts/pipelines/defra-terrain/v2/derive.ts) and [v2/osgb.ts](../../scripts/pipelines/defra-terrain/v2/osgb.ts) to `src/geo/pyramidDerive.ts` (or re-export from a shared package). **No behaviour drift** — browser and pipeline must share tests or golden vectors.
+- Port zod schemas (or generate JSON Schema) for runtime validation of fetched manifests.
+
+#### R2 — PyramidCatalog loader
+
+New module `src/geo/pyramidCatalog.ts`:
+
+- `loadPyramidDataset(manifestUrl)` — fetch root `metadata.json` (note: v2 uses `metadata.json`, not v1 `manifest.json`).
+- `resolveChunksInBounds(catalog, bounds, targetLevel?)` — mirror [v2/reader.ts](../../scripts/pipelines/defra-terrain/v2/reader.ts); return `{ url, encoding, eastMin, northMin, width, height, pyramidLevel }`.
+- `pickPyramidLevel(metadata, viewportMetres)` — coarsest level with adequate ground resolution for screen coverage; iterate `tileMatrixSet.levels[]` (no hardcoded level count).
+
+**Acceptance:** Given a v2 dataset URL and viewport, ≤ 5 manifest fetches and payload GET count ≈ visible chunks.
+
+#### R3 — TileTree + pyramid-aware nodes
+
+Replace eager `makeTiles` loop with [TileTree](#2-scene-graph-sparse-tile-nodes):
+
+| Camera state | Nodes spawned | Raster attached |
+|--------------|---------------|-----------------|
+| Zoomed out (large viewport) | 0–1 node @ 10 km | `levels.2` merged chunk (32 m) |
+| Medium | 1–4 nodes @ 5 km | `levels.1` merged chunk (8 m) each |
+| Zoomed in | 1 km slots in view | `leaf.enc` L0 per visible slot |
+
+- Node extent from `gridRefToBounds`; no catalog entry per tile at startup.
+- Descend from cell root only into quadrants intersecting frustum (+ viewshed frustum when applicable).
+
+**Acceptance:** Object3D count proportional to visible area; national v2 dataset does not create 10⁴+ placeholders at boot.
+
+#### R4 — RasterChannel integration
+
+Wire [tile-layers.md](../tile-layers.md) API:
+
+- Extend `TileLoadContext` with `pyramidLevel: number` (separate from geometric `lodLevel`).
+- `height.primary` channel: fetch URL from `ChunkFetchDescriptor`; apply `encoding` scalars for shader denormalisation (same as v1 `min/max/scale/offset`).
+- `AbortSignal` on fetch/decode; evict texture when node leaves frustum.
+
+**Acceptance:** Pan/zoom stable VRAM; zoom out cancels in-flight leaf decodes when switching to merged L1/L2.
+
+#### R5 — App wiring
+
+- [App.tsx](../../src/App.tsx) / dataset config: support `metadata.json` URL for v2 datasets (detect `schemaVersion`).
+- [start-server.js](../../src/start-server.js): static serve unchanged (`/terrain-datasets/.../metadata.json`).
+- Optional: compat shim that reads v2 and exposes v1-shaped catalog for incremental migration (defer unless needed).
+
+### v1 vs v2 at runtime
+
+| | v1 | v2 |
+|---|----|----|
+| Root file | `manifest.json` | `metadata.json` |
+| Index | flat `index/*.json` shards | nested `pyramid/{cell}/…/manifest.json` |
+| Startup fetch | all shards | metadata + viewport manifests |
+| Coarse zoom | `height.dsm.base` (optional, rarely loaded) | merged `levels.1`, `levels.2` by design |
+| Catalog API | `loadTerrainDatasetCatalog` | `PyramidCatalog.resolveChunksInBounds` |
 
 ### 4. Load cancellation and memory pressure
 
@@ -222,8 +325,8 @@ Acceptance: compression experiment uses channels; no module singleton; second re
 
 ### Phase 5 — Hierarchical index on disk
 
-- Pipeline emits quadtree index + slim leaf shards ([storage-and-pipeline-v2.md](storage-and-pipeline-v2.md)).
-- Deprecate full-shard download path.
+- ~~Pipeline emits hierarchical index~~ — **done** for bounded cell ingest ([v2-pyramid-pipeline.md](v2-pyramid-pipeline.md)).
+- **Remaining:** national multi-cell tree, frontend catalog ([§ Frontend rendering](#frontend-rendering-v2-datasets)), deprecate v1 full-shard download path.
 
 ## Metrics to track
 

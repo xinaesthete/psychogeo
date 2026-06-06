@@ -58,24 +58,30 @@ flowchart LR
 
 ## Zarr-image-like levels (bespoke first)
 
-**Implemented (2026):** bounded cell ingest via `pnpm pipeline:defra -- ingest-v2` writes `psychogeo.terrain.v2` / `tc-dsm-pyramid` datasets under `scripts/pipelines/defra-terrain/v2/`. Root `metadata.json` holds `tileMatrixSet.levels[]` (configurable depth); per-node `pyramid/{cell}/…/manifest.json` files carry columnar `leaf.enc` and merged `levels.{n}` encoding scalars. Paths and bounds are derived from OSGB grid refs — see `v2/derive.ts`.
+**Implemented:** bounded cell ingest writes `psychogeo.terrain.v2` / `tc-dsm-pyramid` datasets. See **[v2-pyramid-pipeline.md](v2-pyramid-pipeline.md)** for the authoritative format spec (on-disk layout, schema, derivation contract, CLI, pyramid presets).
 
-Before adopting Zarr, define an internal layout that **could** map to OME-Zarr multiscale later:
+Summary:
+
+- Root `metadata.json` + nested `pyramid/{cell}/…/manifest.json` per OSGB node.
+- Columnar `leaf.enc` at 5 km nodes; merged `{level}/{gridRef}.j2c` at branch tiers.
+- Paths and bounds derived from grid refs ([derive.ts](../../scripts/pipelines/defra-terrain/v2/derive.ts)); zod-validated ([schema.ts](../../scripts/pipelines/defra-terrain/v2/schema.ts)).
+
+The layout below was an **early sketch** (channel-centric dirs). The implemented tree is **spatial-node-centric** under `pyramid/`:
 
 ```
 dataset/
-  metadata.json          # psychogeo.terrain.v2 — channels, tileMatrixSet, indexRoot
-  index/
-    root.json              # quadtree root
-    ...
-  channels/
-    height.dsm.fz/
-      L0/                  # coarsest (overview)
-      L1/
-      ...
-      L{n}/                # full 1 m (or native) resolution
-        {tileId}.j2c
+  metadata.json
+  pyramid/
+    SP51/
+      manifest.json
+      2/SP51.j2c
+      SP51ne/
+        manifest.json
+        0/{east}_{north}.j2c
+        1/SP51ne.j2c
 ```
+
+Future Zarr export would map `tileMatrixSet.levels[]` to OME-Zarr multiscale `datasets[]`:
 
 | Concept | Bespoke v2 | OME-Zarr equivalent |
 |---------|------------|---------------------|
@@ -250,12 +256,13 @@ Operator-machine datasets and copy/re-point migration are described in [dataset-
 
 ## Sequencing with other work
 
-1. **Slim shard schema** in v1 generator (quick win on disk size) — no v2 flag day.
-2. **`source=psychogeo-v1`** mode — reindex national data without re-downloading DEFRA.
-3. **Multiscale `L*` directories** — raster pyramid hrefs in index; scene graph binds tree depth to pyramid level ([terrain-catalog-and-lod.md](terrain-catalog-and-lod.md) §3 — distinct from `GeoLOD` mesh densities).
-4. **Hierarchical index emitter** or **`index.db`** — pair with [terrain-catalog-and-lod.md](terrain-catalog-and-lod.md) Phase 5; compare JSON quadtree vs SQLite in [sqlite-catalog.md](sqlite-catalog.md) before committing.
-5. **`pack-segments` + Range fetch** — concatenate v1 tiles into segment files; wire proxy and channel loader ([§ Contiguous segment files](#contiguous-segment-files-range-requests)).
-6. **Zarr export** — optional publish step from v2 layout for CDN/static hosting ([NOTES.md](../../NOTES.md) hosting).
+1. ~~**Multiscale pyramid + hierarchical index (bounded cell)**~~ — **done** for `--cell` ingest; see [v2-pyramid-pipeline.md](v2-pyramid-pipeline.md).
+2. **Frontend v2 catalog** — lazy manifest descent + pyramid level selection ([terrain-catalog-and-lod.md](terrain-catalog-and-lod.md#frontend-rendering-v2-datasets)).
+3. **Slim v1 shard schema** — quick win on disk size for existing datasets; no flag day.
+4. **`source=psychogeo-v1`** mode — reindex national data without re-downloading DEFRA.
+5. **National multi-cell ingest** — extend tree to 100 km tier; same manifest contract.
+6. **`pack-segments` + Range fetch** — concatenate payloads; wire proxy and channel loader.
+7. **Zarr export** — optional publish step from v2 layout for CDN/static hosting.
 
 ## Open questions
 
