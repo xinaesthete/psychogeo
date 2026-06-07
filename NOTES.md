@@ -82,6 +82,16 @@ I want to have somewhat serviceable means of using this as a somewhat useful too
 
 I'd like to be able to generally have other experimental graphics and music computer-art type things embedded in this kind of geographic context... so thinking about how we make that work. Things I might publish as webpages vs things I run locally (do I want to further develop Electron app that lets me manage local data etc?).
 
+## Pyramid rendering and debug UI
+
+May want to re-arrange some of what's in PyramidTileTree.
+
+LOD logic is not aligned with my intentions. The procedural geometry resolution vs raster resolution thing needs to be properly embedded, and trying to determine a LOD for entire viewport based on overall viewport extent in metres is flat-out wrong.
+
+We never had the right logic for baking in viewshed light with one version of LOD and going back to viewing scene with another.
+
+At some point we might have more effort in fragment shader to understand world-position according to raster at that UV vs interpolated verts. Could try to use this for shading/shadow sampling. Will probably look a bit weird.
+
 ## Other environmental datasets etc, FOI request considerations...
 
 [CASI Multispectral Imagery](https://environment.data.gov.uk/dataset/18713fc4-c040-4b79-9c46-4738ffbe3c3d)

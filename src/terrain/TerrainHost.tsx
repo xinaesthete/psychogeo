@@ -33,6 +33,16 @@ function trackSelectionKey(tracks: TerrainOptions['tracks']): string {
   return tracks?.map((t) => t.url).join('|') ?? '';
 }
 
+function pyramidInspectionKey(inspection: TerrainOptions['pyramidInspection']): string {
+  if (!inspection) return '';
+  return [
+    inspection.enabled,
+    inspection.showBounds,
+    inspection.showLabels,
+    inspection.selectedKey ?? '',
+  ].join('|');
+}
+
 function terrainDatasetKey(dataset: TerrainOptions['terrainDataset']): string {
   if (!dataset) return '';
   return `${dataset.manifestUrl}|${dataset.channelId}`;
@@ -46,6 +56,7 @@ function useTerrainRenderer(coord: EastNorth, options: TerrainOptions) {
   const locationKey = `${coord.east},${coord.north}`;
   const tracksKey = trackSelectionKey(options.tracks);
   const datasetKey = terrainDatasetKey(options.terrainDataset);
+  const inspectionKey = pyramidInspectionKey(options.pyramidInspection);
 
   useEffect(() => {
     renderer.updateOptions(options);
@@ -65,6 +76,7 @@ function useTerrainRenderer(coord: EastNorth, options: TerrainOptions) {
     options.externalControls,
     datasetKey,
     tracksKey,
+    inspectionKey,
   ]);
 
   return { renderer, locationKey };
@@ -128,6 +140,7 @@ function TerrainR3FScene({
   }, [renderer]);
   const tracksKey = trackSelectionKey(options.tracks);
   const datasetKey = terrainDatasetKey(options.terrainDataset);
+  const inspectionKey = pyramidInspectionKey(options.pyramidInspection);
   useEffect(() => {
     renderer.updateOptions({ ...options, externalControls: true, camZ });
   }, [
@@ -145,6 +158,7 @@ function TerrainR3FScene({
     camZ,
     datasetKey,
     tracksKey,
+    inspectionKey,
   ]);
   useFrame(() => {
     renderer.update();

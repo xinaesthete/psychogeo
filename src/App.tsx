@@ -9,7 +9,8 @@ import { DEFAULT_PAN_INERTIA, setPanInertiaTuning } from './camera/panInertia';
 import { DEFAULT_SMOOTH_ZOOM, setSmoothZoomTuning } from './camera/smoothZoom';
 import { convertWgsToOSGB, EastNorth } from './geo/Coordinates';
 import { CompressionAnalysisPanel } from './geo/CompressionAnalysisPanel';
-import { newGLContext, TerrainOptions, Track } from './geo/TileLoaderUK';
+import { newGLContext, TerrainOptions, Track, type PyramidInspectionOptions } from './geo/TileLoaderUK';
+import { PyramidInspectionPanel } from './geo/PyramidInspectionPanel';
 import {
   DEFAULT_VIEWSHED_SHADOW_MAP_SIZE,
   DEFAULT_VIEWSHED_SHADOW_NEAR_SCALE,
@@ -167,10 +168,24 @@ function App() {
 
   const [selectedTrackIds, setSelectedTrackIds] = useState<Set<string>>(() => new Set());
   const [overlayTracks, setOverlayTracks] = useState<Track[]>([]);
+  const [pyramidInspection, setPyramidInspection] = useState<PyramidInspectionOptions>({
+    enabled: false,
+    showBounds: true,
+    showLabels: false,
+    selectedKey: null,
+  });
 
   const onTrackSelectionChange = useCallback((ids: Set<string>, tracks: Track[]) => {
     setSelectedTrackIds(ids);
     setOverlayTracks(tracks);
+  }, []);
+
+  const onPyramidInspectionChange = useCallback((patch: Partial<PyramidInspectionOptions>) => {
+    setPyramidInspection((prev) => ({ ...prev, ...patch }));
+  }, []);
+
+  const onPyramidTileSelected = useCallback((key: string | null) => {
+    setPyramidInspection((prev) => ({ ...prev, selectedKey: key }));
   }, []);
 
   const terrainOptions: TerrainOptions = useMemo(
@@ -194,8 +209,12 @@ function App() {
         : undefined,
       camZ: terrainDatasetV2 ? 8000 : 3000,
       tracks: overlayTracks,
+      pyramidInspection: {
+        ...pyramidInspection,
+        onSelectedKeyChange: onPyramidTileSelected,
+      },
     }),
-    [defra10mDTMLayer, defraDSMLayer, osTerr50Layer, compressionExperimentEnabled, inspectionLight, viewshedSourceHeight, viewshedShadowRadius, viewshedShadowMapSize, viewshedShadowNearScale, viewshedDoubleSidedShadows, terrainDatasetActive, terrainDatasetV2, terrainDatasetManifestUrl, overlayTracks],
+    [defra10mDTMLayer, defraDSMLayer, osTerr50Layer, compressionExperimentEnabled, inspectionLight, viewshedSourceHeight, viewshedShadowRadius, viewshedShadowMapSize, viewshedShadowNearScale, viewshedDoubleSidedShadows, terrainDatasetActive, terrainDatasetV2, terrainDatasetManifestUrl, overlayTracks, pyramidInspection, onPyramidTileSelected],
   );
 
   const renderMode: TerrainRenderMode = r3f ? 'r3f' : 'threact';
@@ -214,6 +233,12 @@ function App() {
       <TrackCatalogPanel
         selectedIds={selectedTrackIds}
         onSelectionChange={onTrackSelectionChange}
+      />
+      <PyramidInspectionPanel
+        coord={terrainCoord}
+        active={terrainDatasetV2}
+        inspection={pyramidInspection}
+        onInspectionChange={onPyramidInspectionChange}
       />
       <CameraViewControls />
       <TileShaderControls />

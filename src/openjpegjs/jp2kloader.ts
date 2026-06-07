@@ -223,12 +223,34 @@ export function clampLossyQuality(quality: number): number {
 const textureCache = new Map<string, TextureTile>();
 const inflight = new Map<string, Promise<TextureTile>>();
 
-export async function jp2Texture(
+function awaitWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) {
+    return Promise.reject(new DOMException('Aborted', 'AbortError'));
+  }
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(new DOMException('Aborted', 'AbortError'));
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
+async function jp2TextureLoad(
   url: string,
   simplerDecodeHack: boolean,
-  compressionRatio = 1,
-  heightRangeMetres?: HeightRange,
-  signal?: AbortSignal,
+  compressionRatio: number,
+  heightRangeMetres: HeightRange | undefined,
+  signal: AbortSignal | undefined,
+  allowStaleRetry: boolean,
 ): Promise<TextureTile> {
   if (signal?.aborted) {
     throw new DOMException('Aborted', 'AbortError');
@@ -237,9 +259,27 @@ export async function jp2Texture(
   const cached = textureCache.get(key);
   if (cached) return cached;
 
-  let pending = inflight.get(key);
-  if (!pending) {
-    pending = getTexData(url, simplerDecodeHack, compressionRatio, heightRangeMetres, signal).then((result) => {
+  const pending = inflight.get(key);
+  if (pending) {
+    try {
+      return await awaitWithAbort(pending, signal);
+    } catch (error) {
+      inflight.delete(key);
+      if (signal?.aborted) throw error;
+      if (!allowStaleRetry) throw error;
+      return jp2TextureLoad(
+        url,
+        simplerDecodeHack,
+        compressionRatio,
+        heightRangeMetres,
+        signal,
+        false,
+      );
+    }
+  }
+
+  const created = getTexData(url, simplerDecodeHack, compressionRatio, heightRangeMetres, signal)
+    .then((result) => {
       if (signal?.aborted) {
         throw new DOMException('Aborted', 'AbortError');
       }
@@ -247,13 +287,37 @@ export async function jp2Texture(
       textureCache.set(key, tile);
       inflight.delete(key);
       return tile;
-    }).catch((err) => {
+    })
+    .catch((err) => {
       inflight.delete(key);
       throw err;
     });
-    inflight.set(key, pending);
-  }
-  return pending;
+  inflight.set(key, created);
+  signal?.addEventListener(
+    'abort',
+    () => {
+      inflight.delete(key);
+    },
+    { once: true },
+  );
+  return awaitWithAbort(created, signal);
+}
+
+export async function jp2Texture(
+  url: string,
+  simplerDecodeHack: boolean,
+  compressionRatio = 1,
+  heightRangeMetres?: HeightRange,
+  signal?: AbortSignal,
+): Promise<TextureTile> {
+  return jp2TextureLoad(
+    url,
+    simplerDecodeHack,
+    compressionRatio,
+    heightRangeMetres,
+    signal,
+    true,
+  );
 }
 
 /** Parallel full + lossy decode (eager path). Terrain uses staged full-then-lossy via {@link jp2Texture}. */

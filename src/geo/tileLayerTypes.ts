@@ -78,6 +78,15 @@ export interface TileLayerManager {
     params: Params,
   ): ChannelReconciliation;
   invalidateChannel(channelId: string): ChannelReconciliation;
+  refetchChannel(tile: TileNode, channelId: string): boolean;
   observeVisibility(camera: THREE.Camera): void;
   dispose(): void;
 }
+
+export type TileLayerManagerDebugStats = {
+  readonly registeredTiles: number;
+  readonly inFrustumTiles: number;
+  readonly activeLoads: number;
+  readonly queuedLoads: number;
+  readonly channelIds: readonly string[];
+};

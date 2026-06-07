@@ -167,6 +167,8 @@ export class PyramidHeightChannel implements RasterChannel<PyramidHeightChannelP
     }
     tile.add(mesh);
     tile.userData.geoLod = mesh;
+    const sync = tile.userData.syncDebugLabel;
+    if (typeof sync === 'function') sync();
   }
 
   detachFromTile(tile: TileNode): void {

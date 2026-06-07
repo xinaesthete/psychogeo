@@ -5,6 +5,7 @@ import type {
   RasterChannel,
   RasterChannelState,
   TileLayerManager,
+  TileLayerManagerDebugStats,
   TileNode,
   TileVisibility,
 } from './tileLayerTypes';
@@ -23,6 +24,8 @@ const frustum = new THREE.Frustum();
 const projScreenMatrix = new THREE.Matrix4();
 const HORIZONTAL_CULL_PADDING_METRES = 250;
 const VERTICAL_CULL_PADDING_METRES = 500;
+/** Brief gap after unload before re-queueing so refetch reads visually (mesh gone → loading). */
+const REFETCH_RELOAD_DELAY_MS = 200;
 
 function defaultVisibility(): TileVisibility {
   return {
@@ -31,6 +34,40 @@ function defaultVisibility(): TileVisibility {
     lodLevel: 0,
     working: false,
   };
+}
+
+function syncTileDebugLabel(tile: TileNode): void {
+  const sync = tile.userData.syncDebugLabel;
+  if (typeof sync === 'function') sync();
+}
+
+function clearLoadingIfOwned(
+  managed: ManagedTile,
+  channelId: string,
+  generation: number,
+  abortController: AbortController,
+): void {
+  const current = managed.channelStates.get(channelId);
+  if (
+    current?.status !== 'loading' ||
+    current.generation !== generation ||
+    managed.abortController !== abortController
+  ) {
+    return;
+  }
+  managed.channelStates.set(channelId, {
+    channelId,
+    status: 'idle',
+    generation: managed.generation,
+  });
+  syncTileDebugLabel(managed.tile);
+}
+
+function currentGeoLodLevel(tile: TileNode, camera: THREE.Camera, inFrustum: boolean): number {
+  const geoLod = tile.userData.geoLod;
+  if (!(geoLod instanceof GeoLOD) || !inFrustum) return 0;
+  geoLod.update(camera);
+  return geoLod.getCurrentLevel();
 }
 
 function tileWorldBox(tile: TileNode, target: THREE.Box3): THREE.Box3 {
@@ -94,6 +131,31 @@ export class TileLayerManagerImpl implements TileLayerManager {
     };
   }
 
+  refetchChannel(tile: TileNode, channelId: string): boolean {
+    const managed = this.tiles.get(tile);
+    if (!managed) return false;
+    this.cancelLoads(managed);
+    this.unloadChannel(managed, channelId);
+    syncTileDebugLabel(tile);
+    if (managed.inFrustum) {
+      setTimeout(() => {
+        if (!this.tiles.has(managed.tile)) return;
+        this.enqueueLoad(managed, channelId);
+      }, REFETCH_RELOAD_DELAY_MS);
+    }
+    return true;
+  }
+
+  debugStats(): TileLayerManagerDebugStats {
+    return {
+      registeredTiles: this.tiles.size,
+      inFrustumTiles: [...this.tiles.values()].filter((m) => m.inFrustum).length,
+      activeLoads: this.activeLoads,
+      queuedLoads: this.loadQueue.length,
+      channelIds: [...this.channels.keys()],
+    };
+  }
+
   registerTile(tile: TileNode): void {
     if (this.tiles.has(tile)) return;
     tile.visibility = defaultVisibility();
@@ -118,6 +180,8 @@ export class TileLayerManagerImpl implements TileLayerManager {
     this.tiles.delete(tile);
   }
 
+  // not sure I'm convinced we needed this; could we have hooked into three object render?
+  // also currently not convinced of correctness.
   observeVisibility(camera: THREE.Camera): void {
     camera.updateMatrixWorld(true);
     projScreenMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
@@ -129,12 +193,14 @@ export class TileLayerManagerImpl implements TileLayerManager {
       const inFrustum = frustum.intersectsBox(scratchBox);
       const wasVisible = managed.inFrustum;
       managed.inFrustum = inFrustum;
+      const lodLevel = currentGeoLodLevel(tile, camera, inFrustum);
       tile.visibility = {
         inFrustum,
         screenPixelsApprox: 0,
-        lodLevel: 0,
+        lodLevel,
         working: managed.abortController !== null,
       };
+      syncTileDebugLabel(tile);
 
       if (inFrustum && !wasVisible) {
         for (const channelId of this.channels.keys()) {
@@ -145,11 +211,6 @@ export class TileLayerManagerImpl implements TileLayerManager {
         for (const channelId of this.channels.keys()) {
           this.unloadChannel(managed, channelId);
         }
-      }
-
-      const geoLod = tile.userData.geoLod;
-      if (geoLod instanceof GeoLOD && inFrustum) {
-        geoLod.update(camera);
       }
     }
   }
@@ -176,6 +237,9 @@ export class TileLayerManagerImpl implements TileLayerManager {
     const channel = this.channels.get(channelId);
     if (!channel) return false;
     const state = managed.channelStates.get(channelId);
+    if (state?.status === 'loading') {
+      this.cancelLoads(managed);
+    }
     if (state?.payload) {
       channel.detachFromTile(managed.tile);
       channel.unload(state.payload);
@@ -230,6 +294,7 @@ export class TileLayerManagerImpl implements TileLayerManager {
       status: 'loading',
       generation,
     });
+    syncTileDebugLabel(managed.tile);
 
     const encoding = managed.tile.userData.encoding;
     const ctx = {
@@ -250,6 +315,7 @@ export class TileLayerManagerImpl implements TileLayerManager {
         generation !== managed.generation ||
         !managed.inFrustum
       ) {
+        clearLoadingIfOwned(managed, channelId, generation, abortController);
         return;
       }
       channel.applyToTile(managed.tile, payload);
@@ -259,14 +325,19 @@ export class TileLayerManagerImpl implements TileLayerManager {
         generation,
         payload,
       });
+      syncTileDebugLabel(managed.tile);
     } catch (error) {
-      if (abortController.signal.aborted || generation !== managed.generation) return;
+      if (abortController.signal.aborted || generation !== managed.generation) {
+        clearLoadingIfOwned(managed, channelId, generation, abortController);
+        return;
+      }
       managed.channelStates.set(channelId, {
         channelId,
         status: 'error',
         generation,
         error: error instanceof Error ? error : new Error(String(error)),
       });
+      syncTileDebugLabel(managed.tile);
     } finally {
       if (managed.abortController === abortController) {
         managed.abortController = null;

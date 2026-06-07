@@ -47,6 +47,7 @@ import {
 import {
     PyramidTileTree,
     type PyramidDebugSnapshot,
+    type PyramidTileNode,
 } from './PyramidTileTree';
 import {
     loadPyramidDataset,
@@ -133,7 +134,7 @@ class LazyTile {
     get lastRender(): number {
         return this.object3D.userData.lastRender as number;
     }
-    constructor(info: DsmCatItem, parent: THREE.Object3D) {
+    constructor(info: DsmCatItem, parent: THREE.Object3D, context?: TerrainRenderer) {
         let obj = this.object3D = new THREE.Mesh(LazyTile.loaderGeometry, LazyTile.loaderMat);
         const dx = info.xllcorner;
         const dy = info.yllcorner;
@@ -156,6 +157,8 @@ class LazyTile {
             loadingMesh.position.z = info.min_ele??0;
             loadingMesh.scale.set(s, s, eleScale);
             parent.add(loadingMesh);
+            // not relevant to pyramid, and also, we should have a corresponding disposal
+            // context?.overlay.add(loadingMesh.clone());
     
             //TODO: add intermediate 'loading' graphic & 'error' debug info.
             //potentially pass something with the ability to cancel loading.
@@ -249,12 +252,22 @@ export interface TerrainOptions {
     camZ: number;
     /** R3F / external OrbitControls own the camera; skip internal map controls. */
     externalControls?: boolean;
+    /** Pyramid v2 tile inspection overlays (wireframes, labels, selection). */
+    pyramidInspection?: PyramidInspectionOptions;
 }
 export interface Track {
     url: string;
     heightOffset?: number;
     colour?: number;
 }
+
+export type PyramidInspectionOptions = {
+    enabled?: boolean;
+    showBounds?: boolean;
+    showLabels?: boolean;
+    selectedKey?: string | null;
+    onSelectedKeyChange?: (key: string | null) => void;
+};
 const defaultTerrainOptions: TerrainOptions = {
     osTerr50Layer: false,
     defraDSMLayer: false,
@@ -363,6 +376,15 @@ export type TerrainDebugSnapshot = {
 
 type TerrainDebugGlobal = {
     snapshot: () => TerrainDebugSnapshot;
+    findTile: (query: string) => PyramidTileNode[];
+    refetchTile: (key: string, channelId?: string) => boolean;
+    previewTileTexture: (key: string, channelId?: string) => boolean;
+    setInspectBounds: (visible: boolean) => void;
+    forcePyramidReconcile: () => void;
+    clearPyramidCatalogCache: () => void;
+    renderer: TerrainRenderer;
+    pyramidTree?: PyramidTileTree;
+    tileLayerManager?: TileLayerManagerImpl;
 };
 
 const terrainDebugElementId = "terracognita-terrain-debug";
@@ -533,6 +555,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
     private pyramidResolver?: PyramidCatalogResolver;
     private pyramidTree?: PyramidTileTree;
     private tileLayerManager?: TileLayerManagerImpl;
+    private inspectTexturePreview?: THREE.Object3D;
 
     isTerrainInited(): boolean {
         return this.terrainInited;
@@ -562,6 +585,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
             referenceDistance: this.options.camZ,
         };
         syncCompressionExperiment(!!this.options.compressionExperimentEnabled);
+        this.syncPyramidInspection();
         if (this.terrainInited) {
             this.applyTerrainOptions();
         }
@@ -590,6 +614,8 @@ export class TerrainRenderer extends ThreactTrackballBase {
         console.table(this.options);
         this.coord = {...coord};
         this.tileProp = getTileProperties(coord);
+        this.scene.name = `TerrainRenderer ${options.terrainDataset?.manifestUrl}`;
+        this.overlay.name = `TerrainRenderer overlay ${options.terrainDataset?.manifestUrl}`;
         this.scene.add(this.dsmLayer);
         this.scene.add(this.dtmLayer);
         this.scene.add(this.osTerr50Layer);
@@ -759,7 +785,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
             : lowRes ? cat10m : cat;
         Object.entries(catalog).forEach((k) => {
             const info = k[1];
-            this.tiles.push(new LazyTile(info, parent));
+            this.tiles.push(new LazyTile(info, parent, this));
         });
     }
 
@@ -785,8 +811,12 @@ export class TerrainRenderer extends ThreactTrackballBase {
             this.dsmLayer,
             this.pyramidResolver,
             this.tileLayerManager,
+            {
+                previewTexture: (texture, label) => this.previewInspectTexture(texture, label),
+            },
         );
         this.pyramidTree.reconcile(this.camera);
+        this.syncPyramidInspection();
         this.tileLayerManager.observeVisibility(this.camera);
     }
 
@@ -1033,11 +1063,71 @@ export class TerrainRenderer extends ThreactTrackballBase {
         return snapshot;
     }
 
+    previewInspectTexture(texture: THREE.Texture, label: string): void {
+        if (this.inspectTexturePreview) {
+            this.overlay.remove(this.inspectTexturePreview);
+            this.inspectTexturePreview.traverse((child) => {
+                if (child instanceof THREE.Mesh) {
+                    child.geometry.dispose();
+                    const { material } = child;
+                    if (Array.isArray(material)) {
+                        material.forEach((entry) => entry.dispose());
+                    } else {
+                        material.dispose();
+                    }
+                }
+            });
+            this.inspectTexturePreview = undefined;
+        }
+        const mat = new THREE.MeshBasicMaterial({ map: texture });
+        const geo = new THREE.PlaneGeometry(0.28, 0.28, 1, 1);
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.name = `inspect-texture ${label}`;
+        mesh.position.set(0.16, 0.84, 0);
+        this.overlay.add(mesh);
+        this.inspectTexturePreview = mesh;
+    }
+
+    refetchPyramidTile(key: string): boolean {
+        return this.pyramidTree?.refetchNode(key) ?? false;
+    }
+
+    previewPyramidTileTexture(key: string): boolean {
+        return this.pyramidTree?.previewNodeTexture(key) ?? false;
+    }
+
+    private syncPyramidInspection(): void {
+        const config = this.options.pyramidInspection;
+        if (!this.pyramidTree) return;
+        this.pyramidTree.configureInspection({
+            enabled: !!config?.enabled,
+            showBounds: config?.showBounds ?? true,
+            showLabels: config?.showLabels ?? false,
+            selectedKey: config?.selectedKey ?? null,
+        });
+        this.pyramidTree.configureInspectionPointer(
+            this.dom ?? null,
+            this.camera,
+            !!config?.enabled,
+            (key) => this.options.pyramidInspection?.onSelectedKeyChange?.(key),
+        );
+    }
+
     private syncTerrainDebugGlobal(): void {
         if (typeof window === "undefined") return;
         const snapshot = this.getTerrainDebugSnapshot();
         window.terracognitaTerrainDebug = {
-            snapshot: () => snapshot,
+            snapshot: () => this.getTerrainDebugSnapshot(),
+            findTile: (query) => this.pyramidTree?.findNodes(query) ?? [],
+            refetchTile: (key, channelId) => this.pyramidTree?.refetchNode(key, channelId) ?? false,
+            previewTileTexture: (key, channelId) =>
+                this.pyramidTree?.previewNodeTexture(key, channelId) ?? false,
+            setInspectBounds: (visible) => this.pyramidTree?.setInspectBoundsVisible(visible),
+            forcePyramidReconcile: () => this.pyramidTree?.forceReconcile(),
+            clearPyramidCatalogCache: () => this.pyramidTree?.clearCatalogCache(),
+            renderer: this,
+            pyramidTree: this.pyramidTree,
+            tileLayerManager: this.tileLayerManager,
         };
         const existing = document.getElementById(terrainDebugElementId);
         let debugElement: HTMLScriptElement;
@@ -1064,6 +1154,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
         if (this.pyramidTree && this.tileLayerManager) {
             this.pyramidTree.reconcile(this.camera);
             this.tileLayerManager.observeVisibility(this.camera);
+            this.pyramidTree.onVisibilityUpdated();
         }
     }
 
