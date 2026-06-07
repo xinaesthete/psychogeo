@@ -155,6 +155,73 @@ describe('pyramidCatalog', () => {
     }
   });
 
+  it('resolves leaf chunks across a multi-cell region summary', async () => {
+    const baseUrl = 'https://example.test/region-dataset/';
+    const handlers = {
+      [`${baseUrl}metadata.json`]: {
+        schemaVersion: 'psychogeo.terrain.v2',
+        format: 'tc-dsm-pyramid',
+        datasetId: 'test-sp5',
+        channelId: 'height.dsm.fz',
+        ingestCell: 'SP5',
+        crs: { horizontal: 'EPSG:27700', verticalDatum: 'ODN' },
+        spatialIndex: defaultSpatialIndex(),
+        naming: defaultNamingConvention(),
+        tileMatrixSet: { levels: CELL_PYRAMID_LEVELS },
+        encoding: {
+          codec: 'htj2k',
+          sampleType: 'uint16',
+          normalisation: 'perChunkScaleOffset',
+          nodata: 0,
+        },
+        indexRoot: indexRootForCell('SP50'),
+        regionSummary: 'index/region-summary.json',
+      },
+      [`${baseUrl}index/region-summary.json`]: {
+        region: { kind: 'grid-ref', gridRef: 'SP5' },
+        regionLabel: 'SP5',
+        cells: [
+          { cell: 'SP50', indexRoot: indexRootForCell('SP50'), groupCount: 4, leafChunks: 100, outputBytes: 1 },
+          { cell: 'SP51', indexRoot: indexRootForCell('SP51'), groupCount: 4, leafChunks: 100, outputBytes: 1 },
+        ],
+      },
+      [`${baseUrl}pyramid/SP51/manifest.json`]: {
+        gridRef: 'SP51',
+        children: ['SP51ne'],
+        coverage: 'partial',
+      },
+      [`${baseUrl}pyramid/SP51/SP51ne/manifest.json`]: {
+        gridRef: 'SP51ne',
+        leaf: {
+          stepMetres: 1000,
+          cols: 5,
+          rows: 5,
+          missing: Array.from({ length: 24 }, (_, index) => index + 1),
+          enc: {
+            min: Array.from({ length: 25 }, (_, index) => (index === 0 ? 42.1 : 0)),
+            max: Array.from({ length: 25 }, (_, index) => (index === 0 ? 88.2 : 0)),
+            scale: Array.from({ length: 25 }, (_, index) => (index === 0 ? 0.001 : 0)),
+            offset: Array.from({ length: 25 }, (_, index) => (index === 0 ? 42.1 : 0)),
+          },
+        },
+      },
+    };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockFetch(handlers);
+    try {
+      const catalog = await loadPyramidDataset(`${baseUrl}metadata.json`);
+      const resolver = new PyramidCatalogResolver(catalog);
+      const chunks = await resolver.resolveChunksInBounds(
+        { eastMin: 455100, eastMax: 455900, northMin: 215100, northMax: 215900 },
+        0,
+      );
+      expect(chunks).toHaveLength(1);
+      expect(chunks[0]?.eastMin).toBe(455000);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it('parses node manifest schema', () => {
     const enc25 = Array.from({ length: 25 }, () => 1);
     const node = parseNodeManifestJson({

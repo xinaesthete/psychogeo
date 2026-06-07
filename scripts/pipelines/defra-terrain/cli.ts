@@ -11,8 +11,11 @@ import { CHANNELS } from './manifest.ts';
 import type { TerrainChannelId } from './types.ts';
 import { ingestDefraTerrainV2, type IngestV2ProgressEvent } from './v2/ingest.ts';
 import { inspectDatasetV2 } from './v2/inspect.ts';
+import { formatBytes, formatDuration, formatMetricsSummary, readIngestMetrics } from './v2/metrics.ts';
+import { formatRegionPlan, planRegionIngest } from './v2/plan.ts';
+import { parseRegionArg } from './v2/region.ts';
 
-const startTime = Date.now(); //Temporal.Now.instant();
+const startTime = Date.now();
 
 interface CliArgs {
   readonly command: string;
@@ -21,6 +24,9 @@ interface CliArgs {
   readonly dataset?: string;
   readonly datasetId?: string;
   readonly cell?: string;
+  readonly region?: string;
+  readonly bounds?: string;
+  readonly baseline?: string;
   readonly channel?: string;
   readonly pyramidPreset?: string;
   readonly pyramidLevels?: string;
@@ -37,11 +43,20 @@ function usage(): string {
     '  pnpm pipeline:defra -- ingest --input <dir> --out <dataset-dir> [--dataset-id <id>]',
     '      [--tile-concurrency <n>] [--group-concurrency <n>] [--progress]',
     '  pnpm pipeline:defra -- inspect --dataset <dataset-dir>',
-    '  pnpm pipeline:defra -- ingest-v2 --input <dir> --out <dataset-dir> --cell <gridRef>',
+    '  pnpm pipeline:defra -- plan-v2 --input <dir> [--region <gridRef> | --cell <gridRef> | --bounds <csv>]',
+    '      [--baseline <prior-dataset-dir>]',
+    '  pnpm pipeline:defra -- ingest-v2 --input <dir> --out <dataset-dir>',
+    '      [--region <gridRef> | --cell <gridRef> | --bounds eastMin,northMin,eastMax,northMax]',
     '      [--channel height.dsm.fz] [--dataset-id <id>]',
     '      [--pyramid-preset cell|regional|national] [--pyramid-levels <path.json>]',
     '      [--tile-concurrency <n>] [--no-merge] [--progress]',
     '  pnpm pipeline:defra -- inspect-v2 --dataset <dataset-dir>',
+    '',
+    'Region examples:',
+    '  --region SP51     one 10 km cell',
+    '  --region SP       100 km square (batch all cells with data)',
+    '  --region S        500 km band (all cells whose 100 km pair starts with S)',
+    '  --bounds 450000,210000,460000,220000   explicit easting/northing box',
   ].join('\n');
 }
 
@@ -68,6 +83,9 @@ function parseArgs(argv: string[]): CliArgs {
     dataset: values.get('dataset'),
     datasetId: values.get('dataset-id'),
     cell: values.get('cell'),
+    region: values.get('region'),
+    bounds: values.get('bounds'),
+    baseline: values.get('baseline'),
     channel: values.get('channel'),
     pyramidPreset: values.get('pyramid-preset'),
     pyramidLevels: values.get('pyramid-levels'),
@@ -78,7 +96,7 @@ function parseArgs(argv: string[]): CliArgs {
   };
 }
 
-function formatBytes(bytes: number): string {
+function formatBytesLegacy(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   const kib = bytes / 1024;
   if (kib < 1024) return `${kib.toFixed(1)} KiB`;
@@ -86,9 +104,6 @@ function formatBytes(bytes: number): string {
 }
 
 function formatProgress(event: IngestProgressEvent): string {
-  // node24 doesn't have Temporal
-  // const dt = Temporal.Now.instant().since(startTime);
-  // const pre = `[defra] (${dt.minutes}:${dt.seconds})`
   const dt = Date.now() - startTime;
   const totalSeconds = Math.floor(dt / 1000);
   const mins = Math.floor(totalSeconds / 60);
@@ -106,15 +121,15 @@ function formatProgress(event: IngestProgressEvent): string {
     case 'group-skip':
       return `${pre} skip ${event.groupIndex}/${event.groupCount}: ${event.tileRef} ${event.year} (existing shard ${event.shardId})`;
     case 'tile':
-      return `${pre} tile ${event.tileIndex}/${event.tileCount}: ${event.tileId}, ${event.channels} channels, ${formatBytes(event.bytes)}`;
+      return `${pre} tile ${event.tileIndex}/${event.tileCount}: ${event.tileId}, ${event.channels} channels, ${formatBytesLegacy(event.bytes)}`;
     case 'channel-failed':
       return `${pre} ${event.tileRef} ${event.tileId} ${event.channelId}: ${event.message}`;
     case 'tile-skip':
       return `${pre} skip tile ${event.tileRef} ${event.tileId}: ${event.message}`;
     case 'group-complete':
-      return `${pre} complete ${event.tileRef}: ${event.tiles} tiles, ${event.channels} channels, ${formatBytes(event.bytes)}`;
+      return `${pre} complete ${event.tileRef}: ${event.tiles} tiles, ${event.channels} channels, ${formatBytesLegacy(event.bytes)}`;
     case 'complete':
-      return `${pre} wrote ${event.tileCount} tiles, ${event.channelCount} channel payloads, ${event.shardCount} shards, ${formatBytes(event.totalPayloadBytes)} payload`;
+      return `${pre} wrote ${event.tileCount} tiles, ${event.channelCount} channel payloads, ${event.shardCount} shards, ${formatBytesLegacy(event.totalPayloadBytes)} payload`;
   }
 }
 
@@ -133,21 +148,27 @@ function formatV2Progress(event: IngestV2ProgressEvent): string {
   const pre = `[defra-v2] (${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')})`;
   switch (event.phase) {
     case 'scan':
-      return `${pre} scanned ${event.groups} source groups for cell ingest`;
+      return `${pre} scanned ${event.groups} source groups across ${event.cells} cells`;
+    case 'resume':
+      return `${pre} resuming: ${event.completedGroups} groups and ${event.completedCells} cells done, ${event.remainingGroups} groups and ${event.remainingCells} cells remaining`;
+    case 'cell-start':
+      return `${pre} cell ${event.cellIndex}/${event.cellCount}: ${event.cell}`;
+    case 'cell-skip':
+      return `${pre} skip cell ${event.cellIndex}/${event.cellCount}: ${event.cell} (already complete)`;
     case 'group-start':
       return `${pre} group ${event.groupIndex}/${event.groupCount}: ${event.tileRef}`;
     case 'group-skip':
       return `${pre} skip ${event.groupIndex}/${event.groupCount}: ${event.tileRef}`;
     case 'tile':
-      return `${pre} leaf ${event.tileRef} ${event.eastMin}_${event.northMin}`;
+      return `${pre} leaf ${event.tileRef} ${event.eastMin}_${event.northMin} (${formatBytes(event.bytes)})`;
     case 'group-complete':
-      return `${pre} complete ${event.tileRef}: ${event.presentSlots} leaf slots`;
+      return `${pre} complete ${event.tileRef}: ${event.presentSlots} leaf slots (${formatBytes(event.bytes)})`;
     case 'merge-level':
       return `${pre} merge L${event.level} ${event.gridRef}`;
     case 'merge-complete':
       return `${pre} merged ${event.levels} pyramid levels`;
     case 'complete':
-      return `${pre} wrote ${event.leafChunks} leaf chunks across ${event.groups} groups`;
+      return `${pre} wrote ${event.leafChunks} leaf chunks across ${event.groups} groups, ${formatBytes(event.outputBytes)}, ${formatDuration(event.elapsedMs)}`;
   }
 }
 
@@ -201,15 +222,34 @@ async function main(): Promise<void> {
     console.log(await inspectDataset(args.dataset));
     return;
   }
+  if (args.command === 'plan-v2') {
+    if (!args.input) throw new Error('--input is required for plan-v2');
+    const region = parseRegionArg({
+      region: args.region,
+      cell: args.cell,
+      bounds: args.bounds,
+    });
+    const plan = await planRegionIngest({
+      inputDir: args.input,
+      region,
+      baselineMetricsDir: args.baseline,
+    });
+    console.log(formatRegionPlan(plan));
+    return;
+  }
   if (args.command === 'ingest-v2') {
     if (!args.input) throw new Error('--input is required for ingest-v2');
     if (!args.out) throw new Error('--out is required for ingest-v2');
-    if (!args.cell) throw new Error('--cell is required for ingest-v2');
+    const region = parseRegionArg({
+      region: args.region,
+      cell: args.cell,
+      bounds: args.bounds,
+    });
     const tileConcurrency = parseConcurrencyFlag(args.tileConcurrency, defaultTileConcurrency());
     const result = await ingestDefraTerrainV2({
       inputDir: args.input,
       outDir: args.out,
-      cell: args.cell,
+      region,
       datasetId: args.datasetId,
       channelId: parseChannelId(args.channel),
       pyramidPreset: parsePyramidPreset(args.pyramidPreset),
@@ -218,9 +258,28 @@ async function main(): Promise<void> {
       runMerge: !args.noMerge,
       onProgress: progressLoggerV2(args.progress),
     });
-    console.log(
-      `wrote ${result.metadataPath} (${result.groupCount} groups, ${result.leafChunkCount} leaf chunks)`,
-    );
+    const metrics = await readIngestMetrics(args.out);
+    const lines = [
+      `wrote ${result.metricsPath} (${result.cellCount} cells, ${result.groupCount} groups, ${result.leafChunkCount} leaf chunks)`,
+      formatMetricsSummary(metrics ?? {
+        region,
+        regionLabel: '',
+        startedAt: '',
+        finishedAt: '',
+        elapsedMs: result.elapsedMs,
+        cellCount: result.cellCount,
+        groupCount: result.groupCount,
+        leafChunks: result.leafChunkCount,
+        sourceZipBytes: 0,
+        outputBytes: result.outputBytes,
+        encodeMs: 0,
+        mergeMs: 0,
+        cells: [],
+      }),
+    ];
+    if (result.metadataPath) lines.unshift(`wrote ${result.metadataPath}`);
+    if (result.regionSummaryPath) lines.unshift(`wrote ${result.regionSummaryPath}`);
+    console.log(lines.join('\n'));
     return;
   }
   if (args.command === 'inspect-v2') {

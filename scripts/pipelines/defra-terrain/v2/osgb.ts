@@ -130,6 +130,14 @@ export function gridRefsInBounds(bounds: TileExtent, tierMetres: number, candida
   });
 }
 
+export function safeGridRefToBounds(gridRef: string): TileExtent | undefined {
+  try {
+    return gridRefToBounds(gridRef);
+  } catch {
+    return undefined;
+  }
+}
+
 export function filterGroupsByCellPrefix(tileRef: string, cellPrefix: string): boolean {
   const normalized = normalizeGridRef(tileRef).toUpperCase();
   const prefix = cellPrefix.toUpperCase();

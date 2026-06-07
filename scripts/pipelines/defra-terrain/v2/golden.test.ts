@@ -27,7 +27,7 @@ describe('DEFRA v2 golden ingest', () => {
     const result = await ingestDefraTerrainV2({
       inputDir: sampleDir,
       outDir,
-      cell: 'SP50',
+      region: { kind: 'grid-ref', gridRef: 'SP50' },
       datasetId: 'defra-v2-golden-test',
     });
     expect(result.leafChunkCount).toBe(100);

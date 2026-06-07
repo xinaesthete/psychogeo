@@ -18,14 +18,17 @@ import {
   normalizeGridRef,
   type TileExtent,
 } from './osgb.ts';
+import type { IngestMetricsCollector } from './metrics.ts';
 import type { IngestV2ProgressEvent } from './ingest.ts';
-import type { EncodingScalars, PyramidNodeManifest } from './types.ts';
+import type { EncodingScalars, PyramidNodeManifest, TerrainManifestV2 } from './types.ts';
 
 export interface MergeOptions {
   readonly outDir: string;
   readonly ingestCell: string;
+  readonly metadata?: TerrainManifestV2;
   readonly inputDir?: string;
   readonly onProgress?: (event: IngestV2ProgressEvent) => void;
+  readonly metrics?: IngestMetricsCollector;
 }
 
 function channelById(channelId: TerrainChannelId) {
@@ -128,6 +131,7 @@ async function encodeMergedChunk(
   level: number,
   raster: { pixels: Float32Array; width: number; height: number },
   channelId: TerrainChannelId,
+  metrics?: IngestMetricsCollector,
 ): Promise<EncodingScalars> {
   const channel = channelById(channelId);
   const encoded = encodeUint16Normalized(raster.pixels);
@@ -142,6 +146,7 @@ async function encodeMergedChunk(
   const filePath = path.join(outDir, href);
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(filePath, Buffer.from(bytes));
+  metrics?.addOutputBytes(bytes.byteLength);
   return encodingScalarsFromRaster(encoded);
 }
 
@@ -160,7 +165,7 @@ async function patchNodeManifest(
 }
 
 export async function mergePyramidLevels(options: MergeOptions): Promise<void> {
-  const metadata = await readMetadata(options.outDir);
+  const metadata = options.metadata ?? (await readMetadata(options.outDir));
   const ingestCell = metadata.ingestCell;
   const parent = await readNodeManifest(options.outDir, metadata.indexRoot);
   const children = parent.children ?? [];
@@ -180,6 +185,7 @@ export async function mergePyramidLevels(options: MergeOptions): Promise<void> {
           levelEntry.level,
           downsampled,
           metadata.channelId,
+          options.metrics,
         );
         await patchNodeManifest(options.outDir, ingestCell, childRef, levelEntry.level, encoding);
       }
@@ -212,6 +218,7 @@ export async function mergePyramidLevels(options: MergeOptions): Promise<void> {
           height: raster.height > 0 ? raster.height : height,
         },
         metadata.channelId,
+        options.metrics,
       );
       await patchNodeManifest(options.outDir, ingestCell, ingestCell, levelEntry.level, encoding);
       continue;
@@ -236,6 +243,7 @@ export async function mergePyramidLevels(options: MergeOptions): Promise<void> {
         levelEntry.level,
         downsampled,
         metadata.channelId,
+        options.metrics,
       );
       await patchNodeManifest(options.outDir, ingestCell, ingestCell, levelEntry.level, encoding);
     }

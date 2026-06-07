@@ -92,6 +92,7 @@ export const terrainManifestV2Schema = z
       nodata: z.number().int(),
     }),
     indexRoot: z.string().min(1),
+    regionSummary: z.string().min(1).optional(),
     createdAt: z.string().optional(),
   })
   .superRefine((value, ctx) => {
