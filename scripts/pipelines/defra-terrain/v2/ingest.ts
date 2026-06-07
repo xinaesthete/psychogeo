@@ -1,13 +1,17 @@
-import { availableParallelism } from 'node:os';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { mapPool } from '../concurrency.ts';
+import { mapPool, createWriteLock } from '../concurrency.ts';
+import { defaultTileConcurrency } from '../ingest.ts';
 import { encodeUint16Normalized, type EncodedRaster } from '../encoding.ts';
 import { encodeHtj2k } from '../htj2k.ts';
 import { CHANNELS } from '../manifest.ts';
 import { readRasterSource, windowRaster } from '../raster.ts';
 import { scanDefraZips, type DefraTileGroup } from '../scan.ts';
 import type { TerrainChannelId, TileExtent } from '../types.ts';
+import {
+  assertMinFreeSpace,
+  DEFAULT_MIN_FREE_BYTES,
+} from './diskSpace.ts';
 import {
   defaultNamingConvention,
   defaultSpatialIndex,
@@ -22,6 +26,14 @@ import {
   writeIngestMetrics,
   type CellIngestMetrics,
 } from './metrics.ts';
+import {
+  ensureDatasetManifest,
+  ensureRegionSummary,
+  REGION_SUMMARY_FILE,
+  upsertRegionSummaryCell,
+  writeIncrementalParentManifest,
+  writeRegionSummary,
+} from './progressManifest.ts';
 import { filterGroupsByCellPrefix, gridRefToBounds, normalizeGridRef } from './osgb.ts';
 import { pyramidLevelsForPreset, type PyramidPresetName } from './presets.ts';
 import {
@@ -47,9 +59,10 @@ import {
   type CompletedGroupEntry,
 } from './resume.ts';
 import { parseMetadataJson, pyramidLevelSchema } from './schema.ts';
+import { validateAndAssertDatasetV2 } from './validate.ts';
+import { syncCheckpointsFromDisk } from './syncCheckpoints.ts';
 import type { EncodingScalars, LeafEncodingTable, PyramidNodeManifest, TerrainManifestV2 } from './types.ts';
 
-const REGION_SUMMARY_FILE = 'index/region-summary.json';
 const MIN_HTJ2K_DIMENSION = 2;
 const LEAF_COLS = 5;
 const LEAF_ROWS = 5;
@@ -63,6 +76,15 @@ export type IngestV2ProgressEvent =
       readonly completedCells: number;
       readonly remainingGroups: number;
       readonly remainingCells: number;
+    }
+  | {
+      readonly phase: 'sync-checkpoints';
+      readonly pyramidCells: number;
+      readonly completedGroups: number;
+      readonly completedCells: number;
+      readonly addedGroups: number;
+      readonly addedCells: number;
+      readonly regionSummaryCells: number;
     }
   | { readonly phase: 'cell-start'; readonly cell: string; readonly cellIndex: number; readonly cellCount: number }
   | { readonly phase: 'cell-skip'; readonly cell: string; readonly cellIndex: number; readonly cellCount: number }
@@ -84,8 +106,13 @@ export interface IngestV2Options {
   readonly pyramidPreset?: PyramidPresetName;
   readonly pyramidLevelsPath?: string;
   readonly tileConcurrency?: number;
+  /** Parallel 5 km source groups per 10 km cell. Merge runs once after all groups in the cell finish. */
+  readonly groupConcurrency?: number;
   readonly onProgress?: (event: IngestV2ProgressEvent) => void;
   readonly runMerge?: boolean;
+  /** Abort when free space on the output volume falls below this threshold. */
+  readonly minFreeBytes?: number;
+  readonly skipValidation?: boolean;
 }
 
 export interface IngestV2Result {
@@ -98,6 +125,7 @@ export interface IngestV2Result {
   readonly outputBytes: number;
   readonly elapsedMs: number;
   readonly resumed: boolean;
+  readonly validationErrors: readonly string[];
 }
 
 function makeOneKmNominalExtents(extent: TileExtent): TileExtent[] {
@@ -222,8 +250,7 @@ async function ingestOneGroup(
   ingestCell: string,
   metadata: TerrainManifestV2,
   group: DefraTileGroup,
-  metrics: IngestMetricsCollector,
-): Promise<{ readonly manifest: PyramidNodeManifest; readonly presentSlots: number; readonly bytes: number }> {
+): Promise<{ readonly manifest: PyramidNodeManifest; readonly presentSlots: number; readonly bytes: number; readonly encodeMs: number }> {
   const encodeStarted = Date.now();
   const fzSource = group.sources.FZ;
   if (!fzSource) throw new Error(`Skipping ${group.tileRef}: no DSM source.`);
@@ -235,7 +262,7 @@ async function ingestOneGroup(
   const channelId = channelById(metadata.channelId).id;
 
   const nominalExtents = makeOneKmNominalExtents(raster.extent);
-  const tileConcurrency = options.tileConcurrency ?? Math.min(8, availableParallelism());
+  const tileConcurrency = options.tileConcurrency ?? defaultTileConcurrency();
   const present = new Set<number>();
   let groupBytes = 0;
   const results = await mapPool(nominalExtents, tileConcurrency, async (nominalExtent) => {
@@ -274,7 +301,6 @@ async function ingestOneGroup(
       leaf.enc.offset[index] = entry.result.encoding.offset;
       present.add(index);
       groupBytes += entry.result.bytes;
-      metrics.addOutputBytes(entry.result.bytes);
     }
   }
 
@@ -282,7 +308,6 @@ async function ingestOneGroup(
     if (!present.has(index)) missing.add(index);
   }
 
-  metrics.addEncodeMs(Date.now() - encodeStarted);
   const presentSlots = LEAF_COLS * LEAF_ROWS - missing.size;
   const manifest: PyramidNodeManifest = {
     gridRef: tileRef,
@@ -291,7 +316,7 @@ async function ingestOneGroup(
       missing: missing.size > 0 ? [...missing].sort((a, b) => a - b) : undefined,
     },
   };
-  return { manifest, presentSlots, bytes: groupBytes };
+  return { manifest, presentSlots, bytes: groupBytes, encodeMs: Date.now() - encodeStarted };
 }
 
 interface TenKmCellResult {
@@ -323,6 +348,7 @@ async function ingestTenKmCell(
   metrics: IngestMetricsCollector,
   completedGroups: CompletedGroupEntry[],
   completedCells: Set<string>,
+  multiCellRegion: boolean,
 ): Promise<TenKmCellResult> {
   const cellStarted = Date.now();
   let encodeMs = 0;
@@ -380,9 +406,33 @@ async function ingestTenKmCell(
         groupCount: groups.length,
       });
       ingestedChildren.push(normalizeGridRef(group.tileRef));
-      continue;
     }
+  }
 
+  if (ingestedChildren.length > 0) {
+    await writeIncrementalParentManifest(
+      options.outDir,
+      ingestCell,
+      ingestedChildren,
+      groups.length,
+    );
+    if (multiCellRegion) {
+      await upsertRegionSummaryCell(options.outDir, options.region, {
+        cell: ingestCell,
+        groupCount: ingestedChildren.length,
+        leafChunks: leafChunkCount,
+        outputBytes,
+      });
+    }
+  }
+
+  const serializeWrites = createWriteLock();
+  const groupConcurrency = options.groupConcurrency ?? 1;
+  const pendingGroups = groups
+    .map((group, groupIndex) => ({ group, groupIndex }))
+    .filter(({ group }) => !completedKeys.has(groupKey(group.tileRef, group.year)));
+
+  await mapPool(pendingGroups, groupConcurrency, async ({ group, groupIndex }) => {
     options.onProgress?.({
       phase: 'group-start',
       tileRef: group.tileRef,
@@ -390,44 +440,66 @@ async function ingestTenKmCell(
       groupCount: groups.length,
     });
 
-    const encodeBefore = Date.now();
-    const { manifest, presentSlots, bytes } = await ingestOneGroup(
+    const { manifest, presentSlots, bytes, encodeMs: groupEncodeMs } = await ingestOneGroup(
       options,
       ingestCell,
       metadata,
       group,
-      metrics,
     );
-    encodeMs += Date.now() - encodeBefore;
-    const manifestPath = nodeManifestPath(ingestCell, manifest.gridRef);
-    await writeNodeManifest(options.outDir, manifestPath, manifest);
-    ingestedChildren.push(manifest.gridRef);
-    leafChunkCount += presentSlots;
-    outputBytes += bytes;
 
-    mutableCompletedGroups = [
-      ...mutableCompletedGroups.filter((entry) => groupKey(entry.tileRef, entry.year) !== key),
-      { tileRef: group.tileRef, year: group.year },
-    ];
-    await writeCompletedGroups(options.outDir, mutableCompletedGroups);
-    completedKeys.add(key);
-    completedGroups.splice(0, completedGroups.length, ...mutableCompletedGroups);
+    await serializeWrites(async () => {
+      const manifestPath = nodeManifestPath(ingestCell, manifest.gridRef);
+      await writeNodeManifest(options.outDir, manifestPath, manifest);
 
-    options.onProgress?.({
-      phase: 'group-complete',
-      tileRef: group.tileRef,
-      presentSlots,
-      bytes,
+      const key = groupKey(group.tileRef, group.year);
+      mutableCompletedGroups = [
+        ...mutableCompletedGroups.filter((entry) => groupKey(entry.tileRef, entry.year) !== key),
+        { tileRef: group.tileRef, year: group.year },
+      ];
+      await writeCompletedGroups(options.outDir, mutableCompletedGroups);
+      completedKeys.add(key);
+      completedGroups.splice(0, completedGroups.length, ...mutableCompletedGroups);
+
+      metrics.addOutputBytes(bytes);
+      metrics.addEncodeMs(groupEncodeMs);
+      ingestedChildren.push(manifest.gridRef);
+      leafChunkCount += presentSlots;
+      outputBytes += bytes;
+      encodeMs += groupEncodeMs;
+
+      await writeIncrementalParentManifest(
+        options.outDir,
+        ingestCell,
+        ingestedChildren,
+        groups.length,
+      );
+      if (multiCellRegion) {
+        await upsertRegionSummaryCell(options.outDir, options.region, {
+          cell: ingestCell,
+          groupCount: ingestedChildren.length,
+          leafChunks: leafChunkCount,
+          outputBytes,
+        });
+      }
+
+      options.onProgress?.({
+        phase: 'group-complete',
+        tileRef: group.tileRef,
+        presentSlots,
+        bytes,
+      });
     });
-  }
+  });
 
   const uniqueChildren = [...new Set(ingestedChildren)].sort((a, b) => a.localeCompare(b));
-  const parentManifest: PyramidNodeManifest = {
-    gridRef: ingestCell,
-    children: uniqueChildren,
-    coverage: uniqueChildren.length === 4 ? 'complete' : 'partial',
-  };
-  await writeNodeManifest(options.outDir, metadata.indexRoot, parentManifest);
+  if (uniqueChildren.length > 0) {
+    await writeIncrementalParentManifest(
+      options.outDir,
+      ingestCell,
+      uniqueChildren,
+      groups.length,
+    );
+  }
 
   const needsMerge =
     runMerge && cellAllGroupsComplete(groups, completedKeys) && !completedCells.has(ingestCell);
@@ -467,32 +539,12 @@ async function ingestTenKmCell(
   };
 }
 
-async function writeRegionSummary(
-  outDir: string,
-  region: RegionSpec,
-  cells: readonly CellIngestMetrics[],
-): Promise<string> {
-  const filePath = path.join(outDir, REGION_SUMMARY_FILE);
-  await mkdir(path.dirname(filePath), { recursive: true });
-  const payload = {
-    region,
-    regionLabel: regionLabel(region),
-    cells: cells.map((cell) => ({
-      cell: cell.cell,
-      indexRoot: indexRootForCell(cell.cell),
-      groupCount: cell.groupCount,
-      leafChunks: cell.leafChunks,
-      outputBytes: cell.outputBytes,
-    })),
-  };
-  await writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
-  return filePath;
-}
-
 export async function ingestDefraTerrainV2(options: IngestV2Options): Promise<IngestV2Result> {
   const started = Date.now();
   const runMerge = options.runMerge !== false;
+  const minFreeBytes = options.minFreeBytes ?? DEFAULT_MIN_FREE_BYTES;
   await mkdir(options.outDir, { recursive: true });
+  await assertMinFreeSpace(options.outDir, minFreeBytes, 'before ingest');
   const levels = await loadPyramidLevels(options);
   const metrics = new IngestMetricsCollector(options.region);
   const allGroups = await scanDefraZips(options.inputDir);
@@ -502,6 +554,39 @@ export async function ingestDefraTerrainV2(options: IngestV2Options): Promise<In
   options.onProgress?.({ phase: 'scan', groups: regionGroups.length, cells: cells.length });
   if (regionGroups.length === 0) {
     throw new Error(`No DEFRA groups found for region ${regionLabel(options.region)} in ${options.inputDir}`);
+  }
+
+  const multiCellRegion = !isSingleTenKmCell(options.region);
+  const primaryCell = multiCellRegion ? cells[0] : singleTenKmCell(options.region);
+  if (!primaryCell) throw new Error('expected primary 10 km cell for ingest');
+  await ensureDatasetManifest(options.outDir, () =>
+    buildMetadata(
+      options,
+      primaryCell,
+      levels,
+      multiCellRegion ? REGION_SUMMARY_FILE : undefined,
+    ),
+  );
+  if (multiCellRegion) {
+    await ensureRegionSummary(options.outDir, options.region);
+  }
+
+  const sync = await syncCheckpointsFromDisk({
+    outDir: options.outDir,
+    inputGroups: allGroups,
+    region: options.region,
+    pyramidPreset: options.pyramidPreset,
+  });
+  if (sync.pyramidCells > 0) {
+    options.onProgress?.({
+      phase: 'sync-checkpoints',
+      pyramidCells: sync.pyramidCells,
+      completedGroups: sync.completedGroups,
+      completedCells: sync.completedCells,
+      addedGroups: sync.addedGroups,
+      addedCells: sync.addedCells,
+      regionSummaryCells: sync.regionSummaryCells,
+    });
   }
 
   const completedGroups = await readCompletedGroups(options.outDir);
@@ -533,6 +618,7 @@ export async function ingestDefraTerrainV2(options: IngestV2Options): Promise<In
   let totalSourceZipBytes = 0;
 
   for (const [cellIndex, cell] of cells.entries()) {
+    await assertMinFreeSpace(options.outDir, minFreeBytes, `before cell ${cell}`);
     const cellGroups = groupsByCell.get(cell) ?? [];
     const completedKeys = new Set(completedGroups.map((entry) => groupKey(entry.tileRef, entry.year)));
     if (cellFullyComplete(cell, cellGroups, completedKeys, completedCells, runMerge)) {
@@ -561,6 +647,9 @@ export async function ingestDefraTerrainV2(options: IngestV2Options): Promise<In
         mergeMs: 0,
       });
       metrics.recordCell(cellMetrics[cellMetrics.length - 1]);
+      if (multiCellRegion && (existing?.groupCount ?? 0) > 0) {
+        await upsertRegionSummaryCell(options.outDir, options.region, cellMetrics[cellMetrics.length - 1]);
+      }
       continue;
     }
 
@@ -578,6 +667,7 @@ export async function ingestDefraTerrainV2(options: IngestV2Options): Promise<In
       metrics,
       completedGroups,
       completedCells,
+      multiCellRegion,
     );
     totalLeafChunks += result.leafChunkCount;
     totalGroups += result.groupCount;
@@ -593,6 +683,9 @@ export async function ingestDefraTerrainV2(options: IngestV2Options): Promise<In
       mergeMs: result.mergeMs,
     });
     metrics.recordCell(cellMetrics[cellMetrics.length - 1]);
+    if (multiCellRegion) {
+      await upsertRegionSummaryCell(options.outDir, options.region, cellMetrics[cellMetrics.length - 1]);
+    }
   }
 
   let metadataPath: string | undefined;
@@ -623,6 +716,10 @@ export async function ingestDefraTerrainV2(options: IngestV2Options): Promise<In
   const metricsPath = await writeIngestMetrics(options.outDir, finalized);
   const elapsedMs = Date.now() - started;
 
+  if (!options.skipValidation) {
+    await validateAndAssertDatasetV2(options.outDir);
+  }
+
   options.onProgress?.({
     phase: 'complete',
     leafChunks: totalLeafChunks,
@@ -641,6 +738,7 @@ export async function ingestDefraTerrainV2(options: IngestV2Options): Promise<In
     outputBytes: finalized.outputBytes,
     elapsedMs,
     resumed,
+    validationErrors: [],
   };
 }
 

@@ -126,6 +126,11 @@ export function defaultTileConcurrency(): number {
   return Math.min(8, Math.max(1, availableParallelism()));
 }
 
+/** Parallel 5 km source groups in flight. Default scales with CPU but caps at 4 (memory: one full ZIP raster per group). */
+export function defaultGroupConcurrency(): number {
+  return Math.min(4, Math.max(1, Math.floor(availableParallelism() / 2)));
+}
+
 export function parseConcurrencyFlag(value: string | undefined, fallback: number): number {
   if (value === undefined) return fallback;
   const parsed = Number.parseInt(value, 10);

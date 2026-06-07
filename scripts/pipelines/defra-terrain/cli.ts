@@ -2,6 +2,7 @@
 import { inspectDataset } from './inspect.ts';
 import {
   defaultTileConcurrency,
+  defaultGroupConcurrency,
   ingestDefraTerrain,
   parseConcurrencyFlag,
   type IngestProgressEvent,
@@ -9,11 +10,14 @@ import {
 import { scanDefraZips, summarizeScan } from './scan.ts';
 import { CHANNELS } from './manifest.ts';
 import type { TerrainChannelId } from './types.ts';
+import { DEFAULT_MIN_FREE_BYTES } from './v2/diskSpace.ts';
 import { ingestDefraTerrainV2, type IngestV2ProgressEvent } from './v2/ingest.ts';
 import { inspectDatasetV2 } from './v2/inspect.ts';
 import { formatBytes, formatDuration, formatMetricsSummary, readIngestMetrics } from './v2/metrics.ts';
 import { formatRegionPlan, planRegionIngest } from './v2/plan.ts';
 import { parseRegionArg } from './v2/region.ts';
+import { validateDatasetV2 } from './v2/validate.ts';
+import { syncCheckpointsFromDisk } from './v2/syncCheckpoints.ts';
 
 const startTime = Date.now();
 
@@ -32,8 +36,10 @@ interface CliArgs {
   readonly pyramidLevels?: string;
   readonly tileConcurrency?: string;
   readonly groupConcurrency?: string;
+  readonly minFreeGb?: string;
   readonly progress: boolean;
   readonly noMerge: boolean;
+  readonly skipValidation: boolean;
 }
 
 function usage(): string {
@@ -49,7 +55,10 @@ function usage(): string {
     '      [--region <gridRef> | --cell <gridRef> | --bounds eastMin,northMin,eastMax,northMax]',
     '      [--channel height.dsm.fz] [--dataset-id <id>]',
     '      [--pyramid-preset cell|regional|national] [--pyramid-levels <path.json>]',
-    '      [--tile-concurrency <n>] [--no-merge] [--progress]',
+    '      [--tile-concurrency <n>] [--group-concurrency <n>] [--min-free-gb <n>] [--no-merge] [--skip-validation] [--progress]',
+    '  pnpm pipeline:defra -- validate-v2 --dataset <dataset-dir>',
+    '  pnpm pipeline:defra -- sync-checkpoints-v2 --input <dir> --out <dataset-dir>',
+    '      [--region <gridRef> | --cell <gridRef> | --bounds eastMin,northMin,eastMax,northMax]',
     '  pnpm pipeline:defra -- inspect-v2 --dataset <dataset-dir>',
     '',
     'Region examples:',
@@ -91,9 +100,20 @@ function parseArgs(argv: string[]): CliArgs {
     pyramidLevels: values.get('pyramid-levels'),
     tileConcurrency: values.get('tile-concurrency'),
     groupConcurrency: values.get('group-concurrency'),
+    minFreeGb: values.get('min-free-gb'),
     progress: flags.has('progress'),
     noMerge: flags.has('no-merge'),
+    skipValidation: flags.has('skip-validation'),
   };
+}
+
+function parseMinFreeBytes(value: string | undefined): number {
+  if (!value) return DEFAULT_MIN_FREE_BYTES;
+  const gib = Number.parseFloat(value);
+  if (!Number.isFinite(gib) || gib <= 0) {
+    throw new Error('--min-free-gb must be a positive number');
+  }
+  return Math.round(gib * 1024 * 1024 * 1024);
 }
 
 function formatBytesLegacy(bytes: number): string {
@@ -151,6 +171,8 @@ function formatV2Progress(event: IngestV2ProgressEvent): string {
       return `${pre} scanned ${event.groups} source groups across ${event.cells} cells`;
     case 'resume':
       return `${pre} resuming: ${event.completedGroups} groups and ${event.completedCells} cells done, ${event.remainingGroups} groups and ${event.remainingCells} cells remaining`;
+    case 'sync-checkpoints':
+      return `${pre} synced checkpoints from disk: ${event.pyramidCells} pyramid cells, ${event.completedGroups} groups, ${event.completedCells} merged cells (+${event.addedGroups} groups, +${event.addedCells} cells), region summary ${event.regionSummaryCells} cells`;
     case 'cell-start':
       return `${pre} cell ${event.cellIndex}/${event.cellCount}: ${event.cell}`;
     case 'cell-skip':
@@ -246,6 +268,7 @@ async function main(): Promise<void> {
       bounds: args.bounds,
     });
     const tileConcurrency = parseConcurrencyFlag(args.tileConcurrency, defaultTileConcurrency());
+    const groupConcurrency = parseConcurrencyFlag(args.groupConcurrency, defaultGroupConcurrency());
     const result = await ingestDefraTerrainV2({
       inputDir: args.input,
       outDir: args.out,
@@ -255,11 +278,15 @@ async function main(): Promise<void> {
       pyramidPreset: parsePyramidPreset(args.pyramidPreset),
       pyramidLevelsPath: args.pyramidLevels,
       tileConcurrency,
+      groupConcurrency,
       runMerge: !args.noMerge,
+      minFreeBytes: parseMinFreeBytes(args.minFreeGb),
+      skipValidation: args.skipValidation,
       onProgress: progressLoggerV2(args.progress),
     });
     const metrics = await readIngestMetrics(args.out);
     const lines = [
+      'dataset validation: ok',
       `wrote ${result.metricsPath} (${result.cellCount} cells, ${result.groupCount} groups, ${result.leafChunkCount} leaf chunks)`,
       formatMetricsSummary(metrics ?? {
         region,
@@ -280,6 +307,40 @@ async function main(): Promise<void> {
     if (result.metadataPath) lines.unshift(`wrote ${result.metadataPath}`);
     if (result.regionSummaryPath) lines.unshift(`wrote ${result.regionSummaryPath}`);
     console.log(lines.join('\n'));
+    return;
+  }
+  if (args.command === 'validate-v2') {
+    if (!args.dataset) throw new Error('--dataset is required for validate-v2');
+    const errors = await validateDatasetV2(args.dataset);
+    if (errors.length > 0) {
+      throw new Error(`dataset validation failed:\n${errors.map((entry) => `- ${entry}`).join('\n')}`);
+    }
+    console.log('dataset validation: ok');
+    return;
+  }
+  if (args.command === 'sync-checkpoints-v2') {
+    if (!args.input) throw new Error('--input is required for sync-checkpoints-v2');
+    if (!args.out) throw new Error('--out is required for sync-checkpoints-v2');
+    const region = parseRegionArg({
+      region: args.region,
+      cell: args.cell,
+      bounds: args.bounds,
+    });
+    const allGroups = await scanDefraZips(args.input);
+    const result = await syncCheckpointsFromDisk({
+      outDir: args.out,
+      inputGroups: allGroups,
+      region,
+      pyramidPreset: parsePyramidPreset(args.pyramidPreset),
+    });
+    console.log(
+      [
+        `synced checkpoints from ${result.pyramidCells} pyramid cells`,
+        `${result.completedGroups} completed groups (+${result.addedGroups})`,
+        `${result.completedCells} merged cells (+${result.addedCells})`,
+        `region summary lists ${result.regionSummaryCells} cells`,
+      ].join('\n'),
+    );
     return;
   }
   if (args.command === 'inspect-v2') {

@@ -11,6 +11,10 @@ async function writeJson(filePath: string, value: unknown): Promise<void> {
   await rename(tempPath, filePath);
 }
 
+export async function writeJsonFile(outDir: string, relPath: string, value: unknown): Promise<void> {
+  await writeJson(path.join(outDir, relPath), value);
+}
+
 export async function writeMetadata(outDir: string, metadata: TerrainManifestV2): Promise<string> {
   parseMetadataJson(metadata);
   const filePath = path.join(outDir, 'metadata.json');

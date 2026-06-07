@@ -1,3 +1,5 @@
+import { mkdir, rm } from 'node:fs/promises';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { DefraTileGroup } from '../scan.ts';
 import {
@@ -5,7 +7,11 @@ import {
   cellFullyComplete,
   countRemainingGroups,
   groupKey,
+  readCompletedCells,
+  readCompletedGroups,
   resumeStateForRegion,
+  writeCompletedCells,
+  writeCompletedGroups,
 } from './resume.ts';
 
 function group(tileRef: string, year = 2022): DefraTileGroup {
@@ -60,5 +66,25 @@ describe('resume', () => {
       remainingGroups: 4,
       remainingCells: 1,
     });
+  });
+
+  it('persists and reloads completed groups and cells from disk', async () => {
+    const outDir = path.join('/tmp', `terracognita-resume-${Date.now()}`);
+    await mkdir(outDir, { recursive: true });
+    try {
+      await writeCompletedGroups(outDir, [
+        { tileRef: 'SU00ne', year: 2022 },
+        { tileRef: 'SU00nw', year: 2022 },
+      ]);
+      await writeCompletedCells(outDir, ['SU00']);
+
+      expect(await readCompletedGroups(outDir)).toEqual([
+        { tileRef: 'SU00ne', year: 2022 },
+        { tileRef: 'SU00nw', year: 2022 },
+      ]);
+      expect([...(await readCompletedCells(outDir))]).toEqual(['SU00']);
+    } finally {
+      await rm(outDir, { recursive: true, force: true });
+    }
   });
 });

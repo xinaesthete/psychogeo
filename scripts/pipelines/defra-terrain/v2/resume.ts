@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { DefraTileGroup } from '../scan.ts';
 import { indexRootForCell, nodeManifestPath } from './derive.ts';
