@@ -136,6 +136,10 @@ export class TileLayerManagerImpl implements TileLayerManager {
     if (!managed) return false;
     this.cancelLoads(managed);
     this.unloadChannel(managed, channelId);
+    const payloadUrl = tile.userData.payloadUrl;
+    if (typeof payloadUrl === 'string') {
+      this.channels.get(channelId)?.evictCachedPayload?.(payloadUrl);
+    }
     syncTileDebugLabel(tile);
     if (managed.inFrustum) {
       setTimeout(() => {
@@ -297,13 +301,14 @@ export class TileLayerManagerImpl implements TileLayerManager {
     syncTileDebugLabel(managed.tile);
 
     const encoding = managed.tile.userData.encoding;
+    const payloadUrl = managed.tile.userData.payloadUrl as string;
     const ctx = {
       tile: managed.tile,
       lodLevel: 0,
       pyramidLevel: managed.tile.userData.pyramidLevel as number,
       encoding,
       extentMetres: managed.tile.userData.extentMetres as number,
-      payloadUrl: managed.tile.userData.payloadUrl as string,
+      payloadUrl,
       signal: abortController.signal,
       generation,
     };
@@ -313,7 +318,8 @@ export class TileLayerManagerImpl implements TileLayerManager {
       if (
         abortController.signal.aborted ||
         generation !== managed.generation ||
-        !managed.inFrustum
+        !managed.inFrustum ||
+        managed.tile.userData.payloadUrl !== payloadUrl
       ) {
         clearLoadingIfOwned(managed, channelId, generation, abortController);
         return;

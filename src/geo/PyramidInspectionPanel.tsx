@@ -235,6 +235,15 @@ export function PyramidInspectionPanel({
                         <dt>Texture</dt>
                         <dd>
                           {selectedTile.texture.width}×{selectedTile.texture.height}
+                          {selectedTile.texture.sourceUrl &&
+                            selectedTile.texture.sourceUrl !== selectedTile.payloadUrl && (
+                              <>
+                                <br />
+                                <span className="PyramidInspectionPanel-warning">
+                                  cached source mismatch
+                                </span>
+                              </>
+                            )}
                         </dd>
                       </div>
                     )}

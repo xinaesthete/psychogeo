@@ -57,6 +57,7 @@ export type PyramidTileDebugRecord = {
   readonly texture?: {
     readonly width: number;
     readonly height: number;
+    readonly sourceUrl?: string;
   };
   readonly encoding: {
     readonly min: number;
@@ -108,14 +109,19 @@ function finiteNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
-function textureDimensions(texture: THREE.Texture): { width: number; height: number } | undefined {
+function textureDebugInfo(texture: THREE.Texture): { width: number; height: number; sourceUrl?: string } | undefined {
   const image = texture.image;
   if (!image || typeof image !== 'object') return undefined;
   if (!('width' in image) || !('height' in image)) return undefined;
   const width = finiteNumber(image.width);
   const height = finiteNumber(image.height);
   if (width === undefined || height === undefined) return undefined;
-  return { width, height };
+  const sourceUrl = texture.userData.sourceUrl;
+  return {
+    width,
+    height,
+    sourceUrl: typeof sourceUrl === 'string' ? sourceUrl : undefined,
+  };
 }
 
 export class PyramidTileNode extends THREE.Group implements TileNode {
@@ -482,7 +488,7 @@ export class PyramidTileTree {
         working: node.visibility.working,
         geoLodLevel: node.visibility.lodLevel,
         channelStatus: channelState?.status ?? 'missing',
-        texture: channelState?.payload ? textureDimensions(channelState.payload.texture) : undefined,
+        texture: channelState?.payload ? textureDebugInfo(channelState.payload.texture) : undefined,
         encoding: {
           min: descriptor.encoding.min,
           max: descriptor.encoding.max,

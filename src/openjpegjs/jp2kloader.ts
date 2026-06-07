@@ -154,6 +154,7 @@ async function getTexData(
     throw new Error('failed to get worker');
   }
   const t = Date.now();
+  let cancelled = false;
   const promise = new Promise<TexFrame>((resolve, reject) => {
     if (signal?.aborted) {
       workers.releaseWorker(worker);
@@ -161,26 +162,29 @@ async function getTexData(
       return;
     }
     const onAbort = () => {
-      workers.releaseWorker(worker);
+      cancelled = true;
       reject(new DOMException('Aborted', 'AbortError'));
+      // Do not release the worker here — it may still be decoding this URL.
+      // The onmessage handler releases once the in-flight job completes.
     };
     signal?.addEventListener('abort', onAbort, { once: true });
-    worker.onmessage = m => {
+    worker.onmessage = (m) => {
       signal?.removeEventListener('abort', onAbort);
       workers.releaseWorker(worker);
+      if (cancelled) return;
       const dt = Date.now() - t;
-      // seems problematic letting this grow indefinitely; we'll end up doing reduce on significant numbers at some point
-      // we could keep a running average instead.
       times.push(dt);
-      const avg = times.reduce((a, b) => a + b, 0) / times.length;;
+      const avg = times.reduce((a, b) => a + b, 0) / times.length;
       console.log(`t: ${dt}, min: ${Math.min(...times)}, max: ${Math.max(...times)} avg: ${avg}`);
-      if (typeof m.data === "string") reject(m.data);
-      const frame = m.data as TexFrame;
-      resolve(frame);
-    }
+      if (typeof m.data === 'string') {
+        reject(m.data);
+        return;
+      }
+      resolve(m.data as TexFrame);
+    };
     const workerUrl = workerHeightUrl(url);
-    if (compressionRatio === 1) worker.postMessage({cmd: "tex", url: workerUrl, fullFloat});
-    else worker.postMessage({cmd: "recode", url: workerUrl, compressionRatio, fullFloat, heightRangeMetres});
+    if (compressionRatio === 1) worker.postMessage({ cmd: 'tex', url: workerUrl, fullFloat });
+    else worker.postMessage({ cmd: 'recode', url: workerUrl, compressionRatio, fullFloat, heightRangeMetres });
   });
   return promise;
 }
@@ -284,6 +288,7 @@ async function jp2TextureLoad(
         throw new DOMException('Aborted', 'AbortError');
       }
       const tile = texFrameToTexture(result);
+      tile.texture.userData.sourceUrl = url;
       textureCache.set(key, tile);
       inflight.delete(key);
       return tile;
@@ -318,6 +323,15 @@ export async function jp2Texture(
     signal,
     true,
   );
+}
+
+/** Drop a cached decode so the next fetch re-reads from disk/worker. */
+export function evictTextureCacheEntry(url: string, compressionRatio = 1): void {
+  const key = cacheKey(url, compressionRatio);
+  const entry = textureCache.get(key);
+  entry?.texture.dispose();
+  textureCache.delete(key);
+  inflight.delete(key);
 }
 
 /** Parallel full + lossy decode (eager path). Terrain uses staged full-then-lossy via {@link jp2Texture}. */

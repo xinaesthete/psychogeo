@@ -113,9 +113,14 @@ export class PyramidHeightChannel implements RasterChannel<PyramidHeightChannelP
   }
 
   async load(ctx: TileLoadContext): Promise<RasterPayload> {
-    const { texture } = await JP2.jp2Texture(ctx.payloadUrl, false, 1, undefined, ctx.signal);
+    const payloadUrl = ctx.payloadUrl;
+    const { texture } = await JP2.jp2Texture(payloadUrl, false, 1, undefined, ctx.signal);
     if (ctx.signal.aborted || ctx.generation !== ctx.tile.userData.generation) {
       throw new DOMException('Aborted', 'AbortError');
+    }
+    const textureSourceUrl = texture.userData.sourceUrl;
+    if (typeof textureSourceUrl === 'string' && textureSourceUrl !== payloadUrl) {
+      throw new Error(`texture source mismatch: expected ${payloadUrl}, got ${textureSourceUrl}`);
     }
     const bytes =
       texture.image &&
@@ -136,6 +141,10 @@ export class PyramidHeightChannel implements RasterChannel<PyramidHeightChannelP
 
   unload(_payload: RasterPayload): void {
     // HTJ2K textures are owned by the jp2Texture module cache.
+  }
+
+  evictCachedPayload(payloadUrl: string): void {
+    JP2.evictTextureCacheEntry(payloadUrl);
   }
 
   applyToTile(tile: TileNode, payload: RasterPayload): void {

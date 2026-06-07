@@ -61,6 +61,7 @@ export interface RasterChannel<Params = unknown> {
   unload(payload: RasterPayload): void;
   applyToTile(tile: TileNode, payload: RasterPayload): void;
   detachFromTile(tile: TileNode): void;
+  evictCachedPayload?(payloadUrl: string): void;
 }
 
 export interface ChannelReconciliation {
