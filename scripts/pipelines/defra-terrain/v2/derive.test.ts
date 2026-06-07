@@ -8,6 +8,7 @@ import {
   levelsForNode,
   mergedChunkDatasetPath,
   nodeManifestPath,
+  pickPyramidLevel,
   pixelDimensions,
 } from './derive.ts';
 import { gridRefToBounds } from './osgb.ts';
@@ -50,5 +51,14 @@ describe('derive', () => {
   it('derives pixel dimensions from tier and resolution', () => {
     expect(pixelDimensions(5000, 8)).toEqual({ width: 625, height: 625 });
     expect(pixelDimensions(10000, 32)).toEqual({ width: 313, height: 313 });
+  });
+
+  it('picks coarse merged levels from viewport span', () => {
+    const meta = {
+      tileMatrixSet: { levels: CELL_PYRAMID_LEVELS },
+    };
+    expect(pickPyramidLevel(meta, 15000)).toBe(2);
+    expect(pickPyramidLevel(meta, 8000)).toBe(1);
+    expect(pickPyramidLevel(meta, 3000)).toBe(0);
   });
 });

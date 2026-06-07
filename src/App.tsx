@@ -40,6 +40,7 @@ if (!import.meta.hot?.data.glInited) {
 const DEV_LOCATIONS = {
   winchester: () => convertWgsToOSGB({ lat: 51.064, lon: -1.3098227 }),
   terracognitaDefraV1: (): EastNorth => ({ east: 455000, north: 205000 }),
+  terracognitaDefraV2: (): EastNorth => ({ east: 455000, north: 215000 }),
   beinnSgrithael: (): EastNorth => ({ east: 183786, north: 812828 }),
   cornwall: (): EastNorth => ({ east: 201582, north: 43954 }),
   branscombe: (): EastNorth => ({ east: 320709, north: 88243 }),
@@ -51,10 +52,11 @@ function App() {
   const {defra10mDTMLayer, terrainHeightSource, osTerr50Layer, inspectionLight, r3f} = useControls({
     defra10mDTMLayer: false,
     terrainHeightSource: {
-      value: 'legacy',
+      value: 'v2',
       options: {
         'legacy DEFRA DSM prototype': 'legacy',
         'v1 dataset FZ DSM': 'v1',
+        'v2 pyramid DSM': 'v2',
         off: 'off',
       },
       label: 'DSM source',
@@ -65,10 +67,8 @@ function App() {
   });
   const { terrainDatasetManifestUrl } = useControls('Terrain dataset', {
     terrainDatasetManifestUrl: {
-      value: '/terrain-datasets/terracognita-defra-v1/manifest.json',
-      // value: '/terrain-datasets/National-LIDAR-Programme-DSM-2022-terracognita-defra-v1/manifest.json',
-      // value: '/terrain-datasets/LIDAR-DSM-DZ-2022-terracognita-defra-v1/manifest.json',
-      label: 'manifest URL',
+      value: '/terrain-datasets/terra-v2-SP51/metadata.json',
+      label: 'dataset URL (manifest.json or metadata.json)',
     },
   });
   const {zoomSpeed, zoomSmoothMs, panGain, zoomGain, panDamping} = useControls('Camera', {
@@ -156,8 +156,14 @@ function App() {
 
   const winchester = useMemo(() => DEV_LOCATIONS.winchester(), []);
   const terrainDatasetV1 = terrainHeightSource === 'v1';
+  const terrainDatasetV2 = terrainHeightSource === 'v2';
+  const terrainDatasetActive = terrainDatasetV1 || terrainDatasetV2;
   const defraDSMLayer = terrainHeightSource !== 'off';
-  const terrainCoord = terrainDatasetV1 ? DEV_LOCATIONS.terracognitaDefraV1() : winchester;
+  const terrainCoord = terrainDatasetV2
+    ? DEV_LOCATIONS.terracognitaDefraV2()
+    : terrainDatasetV1
+      ? DEV_LOCATIONS.terracognitaDefraV1()
+      : winchester;
 
   const [selectedTrackIds, setSelectedTrackIds] = useState<Set<string>>(() => new Set());
   const [overlayTracks, setOverlayTracks] = useState<Track[]>([]);
@@ -179,16 +185,17 @@ function App() {
       viewshedShadowMapSize,
       viewshedShadowNearScale,
       viewshedDoubleSidedShadows,
-      terrainDataset: terrainDatasetV1
+      terrainDataset: terrainDatasetActive
         ? {
             manifestUrl: terrainDatasetManifestUrl,
             channelId: 'height.dsm.fz',
+            schemaVersion: terrainDatasetV2 ? 'v2' : 'v1',
           }
         : undefined,
-      camZ: 3000,
+      camZ: terrainDatasetV2 ? 8000 : 3000,
       tracks: overlayTracks,
     }),
-    [defra10mDTMLayer, defraDSMLayer, osTerr50Layer, compressionExperimentEnabled, inspectionLight, viewshedSourceHeight, viewshedShadowRadius, viewshedShadowMapSize, viewshedShadowNearScale, viewshedDoubleSidedShadows, terrainDatasetV1, terrainDatasetManifestUrl, overlayTracks],
+    [defra10mDTMLayer, defraDSMLayer, osTerr50Layer, compressionExperimentEnabled, inspectionLight, viewshedSourceHeight, viewshedShadowRadius, viewshedShadowMapSize, viewshedShadowNearScale, viewshedDoubleSidedShadows, terrainDatasetActive, terrainDatasetV2, terrainDatasetManifestUrl, overlayTracks],
   );
 
   const renderMode: TerrainRenderMode = r3f ? 'r3f' : 'threact';

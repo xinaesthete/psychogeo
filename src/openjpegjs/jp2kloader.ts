@@ -134,9 +134,13 @@ async function getTexData(
   fullFloat: boolean,
   compressionRatio = 1,
   heightRangeMetres?: HeightRange,
+  signal?: AbortSignal,
 ) : Promise<TexFrame> {
+  if (signal?.aborted) {
+    throw new DOMException('Aborted', 'AbortError');
+  }
   if (url.startsWith('/ttile')) {
-    const r = await fetch(url);
+    const r = await fetch(url, { signal });
     const frameInfo:FrameInfo = {width: 4096, height: 4096, isSigned: true, bitsPerSample: 16, componentCount: 1};
     const buf = await r.arrayBuffer();
     const texData = new Uint16Array(buf);
@@ -146,15 +150,27 @@ async function getTexData(
     return {frameInfo, texData};
   }
   const worker = await workers.getWorker();
+  if (!worker) {
+    throw new Error('failed to get worker');
+  }
   const t = Date.now();
   const promise = new Promise<TexFrame>((resolve, reject) => {
-    if (!worker) {
-      reject('failed to get worker');
+    if (signal?.aborted) {
+      workers.releaseWorker(worker);
+      reject(new DOMException('Aborted', 'AbortError'));
       return;
     }
+    const onAbort = () => {
+      workers.releaseWorker(worker);
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
     worker.onmessage = m => {
+      signal?.removeEventListener('abort', onAbort);
       workers.releaseWorker(worker);
       const dt = Date.now() - t;
+      // seems problematic letting this grow indefinitely; we'll end up doing reduce on significant numbers at some point
+      // we could keep a running average instead.
       times.push(dt);
       const avg = times.reduce((a, b) => a + b, 0) / times.length;;
       console.log(`t: ${dt}, min: ${Math.min(...times)}, max: ${Math.max(...times)} avg: ${avg}`);
@@ -212,14 +228,21 @@ export async function jp2Texture(
   simplerDecodeHack: boolean,
   compressionRatio = 1,
   heightRangeMetres?: HeightRange,
+  signal?: AbortSignal,
 ): Promise<TextureTile> {
+  if (signal?.aborted) {
+    throw new DOMException('Aborted', 'AbortError');
+  }
   const key = cacheKey(url, compressionRatio);
   const cached = textureCache.get(key);
   if (cached) return cached;
 
   let pending = inflight.get(key);
   if (!pending) {
-    pending = getTexData(url, simplerDecodeHack, compressionRatio, heightRangeMetres).then((result) => {
+    pending = getTexData(url, simplerDecodeHack, compressionRatio, heightRangeMetres, signal).then((result) => {
+      if (signal?.aborted) {
+        throw new DOMException('Aborted', 'AbortError');
+      }
       const tile = texFrameToTexture(result);
       textureCache.set(key, tile);
       inflight.delete(key);

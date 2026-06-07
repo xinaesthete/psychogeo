@@ -3,8 +3,8 @@ import {
   normalizeGridRef,
   tierMetresForGridRef,
   type TileExtent,
-} from './osgb.ts';
-import type { EncodingScalars, NamingConvention, PyramidLevel, TerrainManifestV2 } from './types.ts';
+} from './pyramidOsgb';
+import type { EncodingScalars, NamingConvention, PyramidLevel, TerrainManifestV2 } from './pyramidTypes';
 
 export function applyTemplate(
   template: string,
@@ -128,7 +128,8 @@ export function pickPyramidLevel(
   const levels = [...meta.tileMatrixSet.levels].sort((a, b) => b.level - a.level);
   for (const entry of levels) {
     if (entry.level === 0) continue;
-    if (viewportMetres >= entry.tierMetres) {
+    const threshold = entry.level > 1 ? entry.tierMetres * 2.5 : entry.tierMetres;
+    if (viewportMetres >= threshold) {
       return entry.level;
     }
   }
@@ -212,4 +213,10 @@ export function indexRootForCell(ingestCell: string): string {
 
 export function boundsForGridRef(gridRef: string): TileExtent {
   return gridRefToBounds(gridRef);
+}
+
+export function tierMetresForLevel(meta: TerrainManifestV2, level: number): number {
+  const entry = meta.tileMatrixSet.levels.find((l) => l.level === level);
+  if (!entry) throw new Error(`unknown pyramid level ${level}`);
+  return entry.tierMetres;
 }

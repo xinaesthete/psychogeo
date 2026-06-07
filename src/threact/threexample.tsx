@@ -28,6 +28,8 @@ export abstract class ThreactTrackballBase implements IThree {
     private detachViewState?: () => void;
 
     initThree(dom: HTMLElement) {
+        this.scene.name = `ThreactScene`;
+        this.overlay.name = `ThreactOverlayScene`
         this.camera.position.set(0, 1, -3);
         this.camera.lookAt(0, 0, 0);
         this.dom = dom;

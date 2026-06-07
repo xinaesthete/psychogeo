@@ -62,7 +62,7 @@ async function loadSourceRasterForFiveKm(
   return readRasterSource(fz);
 }
 
-function mosaicRasters(
+export function mosaicRasters(
   tiles: Array<{ extent: TileExtent; pixels: Float32Array; width: number; height: number }>,
   bounds: TileExtent,
   resolutionMetres: number,
@@ -76,9 +76,9 @@ function mosaicRasters(
     for (let row = 0; row < tile.height; row += 1) {
       for (let col = 0; col < tile.width; col += 1) {
         const east = tile.extent.eastMin + col * resolutionMetres;
-        const north = tile.extent.northMin + row * resolutionMetres;
+        const north = tile.extent.northMax - row * resolutionMetres;
         const destCol = Math.round((east - bounds.eastMin) / resolutionMetres);
-        const destRow = Math.round((north - bounds.northMin) / resolutionMetres);
+        const destRow = Math.round((bounds.northMax - north) / resolutionMetres);
         if (destCol < 0 || destRow < 0 || destCol >= width || destRow >= height) continue;
         const value = tile.pixels[row * tile.width + col];
         pixels[destRow * width + destCol] = value;

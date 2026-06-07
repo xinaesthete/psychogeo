@@ -64,7 +64,7 @@ export async function getTileMesh(
 
   const { texture } = await JP2.jp2Texture(displayUrl, lowRes);
   const lodObj = new GeoLOD();
-  const s = lowRes ? 40960 : 1000;
+  const s = info.extentMetres ?? (lowRes ? 40960 : 1000);
   const heightMin = lowRes ? 0 : (info.min_ele ?? 0);
   const heightMax = lowRes ? 1 : (info.max_ele ?? 1);
   const eleScale = lowRes ? 1 : info.max_ele! - info.min_ele!;
@@ -232,6 +232,7 @@ export class GeoLOD extends THREE.Object3D {
     super();
     this.levels = [];
     this.frustumCulled = false;
+    // this.name = "GeoLOD"
   }
   copy(source: this)  {
     super.copy(source, false);

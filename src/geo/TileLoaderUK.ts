@@ -44,6 +44,16 @@ import {
     loadTerrainDatasetCatalog,
     type TerrainDatasetConfig,
 } from './terrainDatasetCatalog';
+import {
+    PyramidTileTree,
+    type PyramidDebugSnapshot,
+} from './PyramidTileTree';
+import {
+    loadPyramidDataset,
+    PyramidCatalogResolver,
+} from './pyramidCatalog';
+import { PyramidHeightChannel } from './pyramidHeightChannel';
+import { TileLayerManagerImpl } from './tileLayerManager';
 
 
 type DsmSources = Partial<Record<"500" | "1000" | "2000", string>>;
@@ -55,6 +65,8 @@ export interface DsmCatItem {
     yllcorner: number,
     nrows: number,
     ncols: number,
+    /** Ground extent in metres (default 1000 for legacy 1 km DSM tiles). */
+    extentMetres?: number;
     source_filename: string,
     sources?: DsmSources,
     mesh?: THREE.Object3D //nb, one caveat is that having a given Object3D expects to appear once in one scenegraph
@@ -128,7 +140,7 @@ class LazyTile {
         //info should really have grid size, hacking in on the basis of what is true right now
         //but future Pete / anyone else attempting to maintain code will not be happy if not fixed
         const lowRes = info.max_ele === undefined;
-        const s = lowRes ? 40960 : 1000;
+        const s = info.extentMetres ?? (lowRes ? 40960 : 1000);
         obj.position.x = dx + s/2;
         obj.position.y = dy + s/2;
         obj.position.z = info.min_ele??0;
@@ -258,7 +270,12 @@ const defaultTerrainOptions: TerrainOptions = {
 
 function terrainDatasetKey(config: TerrainDatasetConfig | undefined): string {
     if (!config) return "";
-    return `${config.manifestUrl}|${config.channelId}`;
+    const schema = config.schemaVersion ?? 'v1';
+    return `${schema}|${config.manifestUrl}|${config.channelId}`;
+}
+
+function isPyramidV2Dataset(config: TerrainDatasetConfig | undefined): boolean {
+    return config?.schemaVersion === 'v2';
 }
 
 type PivotMarkerParts = {
@@ -332,6 +349,7 @@ export type TerrainDebugSnapshot = {
         visible: boolean;
     };
     lod: ReturnType<typeof collectGeoLodDebugSnapshot>;
+    pyramid?: PyramidDebugSnapshot;
     lastPick: ReturnType<typeof getLastTerrainPickDebug>;
     layers: {
         dsmVisible: boolean;
@@ -512,6 +530,9 @@ export class TerrainRenderer extends ThreactTrackballBase {
     private lastViewshedLodStateKey = "";
     private lastSyncedDoubleSidedShadows: boolean | undefined;
     private terrainDatasetKey = "";
+    private pyramidResolver?: PyramidCatalogResolver;
+    private pyramidTree?: PyramidTileTree;
+    private tileLayerManager?: TileLayerManagerImpl;
 
     isTerrainInited(): boolean {
         return this.terrainInited;
@@ -529,6 +550,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
         };
         if (terrainDatasetChanged) {
             this.terrainDatasetKey = nextTerrainDatasetKey;
+            this.disposePyramid();
             this.clearLayer(this.dsmLayer);
             this.dsmTilesLoaded = false;
         }
@@ -674,7 +696,11 @@ export class TerrainRenderer extends ThreactTrackballBase {
         }
         if (this.options.defraDSMLayer && !this.dsmTilesLoaded) {
             this.dsmTilesLoaded = true;
-            void this.makeTiles().then(() => console.log('finished making tiles'));
+            if (isPyramidV2Dataset(this.options.terrainDataset)) {
+                void this.initPyramidDataset().then(() => console.log('finished pyramid v2 init'));
+            } else {
+                void this.makeTiles().then(() => console.log('finished making tiles'));
+            }
         }
         if (this.options.defra10mDTMLayer && !this.dtmTilesLoaded) {
             this.dtmTilesLoaded = true;
@@ -735,6 +761,33 @@ export class TerrainRenderer extends ThreactTrackballBase {
             const info = k[1];
             this.tiles.push(new LazyTile(info, parent));
         });
+    }
+
+    private disposePyramid(): void {
+        this.pyramidTree?.dispose();
+        this.pyramidTree = undefined;
+        this.tileLayerManager?.dispose();
+        this.tileLayerManager = undefined;
+        this.pyramidResolver?.clearCache();
+        this.pyramidResolver = undefined;
+    }
+
+    private async initPyramidDataset(): Promise<void> {
+        const config = this.options.terrainDataset;
+        if (!config) return;
+        this.disposePyramid();
+        const catalog = await loadPyramidDataset(config.manifestUrl);
+        this.pyramidResolver = new PyramidCatalogResolver(catalog);
+        this.tileLayerManager = new TileLayerManagerImpl();
+        this.tileLayerManager.attachChannel(new PyramidHeightChannel({ fixedLodLevel: 4 }));
+        this.dsmLayer.name = `DSM PyramidTileTree '${config.manifestUrl}'`
+        this.pyramidTree = new PyramidTileTree(
+            this.dsmLayer,
+            this.pyramidResolver,
+            this.tileLayerManager,
+        );
+        this.pyramidTree.reconcile(this.camera);
+        this.tileLayerManager.observeVisibility(this.camera);
     }
 
     private ensurePivotMarker(): PivotMarkerParts {
@@ -934,6 +987,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
                 this.dtmLayer,
                 this.osTerr50Layer,
             ]),
+            pyramid: this.pyramidTree?.debugSnapshot(),
             lastPick: getLastTerrainPickDebug(),
         };
         if (this.mapCtrl) {
@@ -1000,15 +1054,17 @@ export class TerrainRenderer extends ThreactTrackballBase {
     }
 
     update() {
+        super.update();
         tickTileShader();
-        //LOD is now done with THREE.LOD, although we may benefit from a different distance function.
-        //if so, we won't have a separate updateLOD() pass here.
         this.syncLightRig();
         this.syncViewshedShadowSide();
         this.markViewshedShadowIfLodStateChanged();
         this.updatePivotMarkerScale();
         this.updateViewshedMarkerScale();
-        super.update();
+        if (this.pyramidTree && this.tileLayerManager) {
+            this.pyramidTree.reconcile(this.camera);
+            this.tileLayerManager.observeVisibility(this.camera);
+        }
     }
 
     pickTerrainWorldAtClient(

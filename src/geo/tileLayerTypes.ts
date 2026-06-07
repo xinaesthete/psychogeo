@@ -33,12 +33,23 @@ export interface RasterChannelState {
 export interface TileNode extends THREE.Object3D {
   readonly extent: TileExtent;
   readonly channels: ReadonlyMap<string, RasterChannelState>;
-  readonly visibility: TileVisibility;
+  visibility: TileVisibility;
+}
+
+export interface EncodingScalars {
+  readonly min: number;
+  readonly max: number;
+  readonly scale: number;
+  readonly offset: number;
 }
 
 export interface TileLoadContext {
   readonly tile: TileNode;
   readonly lodLevel: number;
+  readonly pyramidLevel: number;
+  readonly encoding: EncodingScalars;
+  readonly extentMetres: number;
+  readonly payloadUrl: string;
   readonly signal: AbortSignal;
   readonly generation: number;
 }

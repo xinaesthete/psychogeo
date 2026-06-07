@@ -18,6 +18,8 @@ console.log('using ' + path.join(__dirname, '../dist'));
 const terrainDatasetsRoot = process.env.TERRACOGNITA_TERRAIN_DATASETS_ROOT
   || process.env.PSYCHOGEO_TERRAIN_DATASETS_ROOT
   || path.join(gisRoot, 'DEFRA');
+// v2 pyramid datasets (metadata.json): set TERRACOGNITA_TERRAIN_DATASETS_ROOT to the parent
+// directory, e.g. ~/data/GIS, then use /terrain-datasets/terra-v2-SP51/metadata.json in the app.
 // const terrainDatasetsRoot = "/Volumes/CrucialOx9/data/GIS/DEFRA/";
 console.log('serving terrain datasets from ' + terrainDatasetsRoot);
 app.use('/terrain-datasets', express.static(terrainDatasetsRoot));

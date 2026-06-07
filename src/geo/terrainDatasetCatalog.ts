@@ -7,9 +7,13 @@ export type TerrainDatasetChannelId =
   | 'height.aux.dz'
   | 'height.dtm';
 
+export type TerrainDatasetSchemaVersion = 'v1' | 'v2';
+
 export interface TerrainDatasetConfig {
   manifestUrl: string;
   channelId: TerrainDatasetChannelId;
+  /** Defaults to v1 when omitted. Use v2 for `metadata.json` pyramid datasets. */
+  schemaVersion?: TerrainDatasetSchemaVersion;
 }
 
 interface TileExtent {
