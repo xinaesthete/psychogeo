@@ -21,7 +21,7 @@ export function TrackCatalogPanel({
     const [catalog, setCatalog] = useState<TrackCatalogItem[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [collapsed, setCollapsed] = useState(false);
+    const [collapsed, setCollapsed] = useState(true);
 
     useEffect(() => {
         let cancelled = false;

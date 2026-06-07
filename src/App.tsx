@@ -1,5 +1,5 @@
-import { useControls } from 'leva';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useControls, Leva } from 'leva';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import './App.css';
 import {
   DEFAULT_SENSITIVITY,
@@ -217,6 +217,7 @@ function App() {
       />
       <CameraViewControls />
       <TileShaderControls />
+      <Leva collapsed />
     </div>
   );
 }
