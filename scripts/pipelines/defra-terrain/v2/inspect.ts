@@ -36,6 +36,13 @@ export async function inspectDatasetV2(datasetDir: string): Promise<string> {
     `coverage: ${root.coverage ?? 'unknown'}`,
   ];
 
+  if (meta.skippedGroups && meta.skippedGroups.length > 0) {
+    lines.push(`skipped groups: ${meta.skippedGroups.length}`);
+    for (const entry of meta.skippedGroups) {
+      lines.push(`  ${entry.tileRef} ${entry.year}: ${entry.reason}`);
+    }
+  }
+
   let leafSlots = 0;
   let missingSlots = 0;
   for (const childRef of root.children ?? []) {

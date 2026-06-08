@@ -38,6 +38,14 @@ describe('schema', () => {
     expect(parsed.ingestCell).toBe('SP51');
   });
 
+  it('parses skipped group entries', () => {
+    const parsed = parseMetadataJson({
+      ...sampleMetadata(),
+      skippedGroups: [{ tileRef: 'SZ69se', year: 2022, reason: 'no DSM source (found DTM only)' }],
+    });
+    expect(parsed.skippedGroups).toHaveLength(1);
+  });
+
   it('rejects non-increasing pyramid resolutions', () => {
     const result = safeParseMetadataJson({
       ...sampleMetadata(),

@@ -12,6 +12,20 @@ export interface DefraTileGroup {
   readonly sources: Partial<Record<DefraReturnKind, DefraZipSource>>;
 }
 
+/** True when the group has a first-return DSM zip (FZ) suitable for height.dsm.fz ingest. */
+export function hasDsmSource(group: DefraTileGroup): boolean {
+  return group.sources.FZ !== undefined;
+}
+
+/** Human-readable skip reason, or undefined when the group is ingestable. */
+export function skipReasonForGroup(group: DefraTileGroup): string | undefined {
+  if (hasDsmSource(group)) return undefined;
+  const kinds: DefraReturnKind[] = ['FZ', 'LZ', 'DTM'];
+  const present = kinds.filter((kind) => group.sources[kind] !== undefined);
+  if (present.length === 0) return 'no recognised product zips';
+  return `no DSM source (found ${present.join(', ')} only)`;
+}
+
 const LEGACY_ZIP_PATTERN = /^LIDAR-(?:(FZ|LZ)_DSM|DTM)-1m-(\d{4})-([A-Z]{2}\d{2}(?:ne|nw|se|sw))\.zip$/i;
 const NLP_ZIP_PATTERN =
   /^National-LIDAR-Programme-(DSM|DTM)-(\d{4})-([A-Z]{2}\d{2}(?:ne|nw|se|sw))\.zip$/i;

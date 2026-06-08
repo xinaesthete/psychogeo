@@ -55,6 +55,7 @@ function usage(): string {
     '      [--region <gridRef> | --cell <gridRef> | --bounds eastMin,northMin,eastMax,northMax]',
     '      [--channel height.dsm.fz] [--dataset-id <id>]',
     '      [--pyramid-preset cell|regional|national] [--pyramid-levels <path.json>]',
+    '        Pyramid: preset selects overview depths (default cell). --pyramid-levels overrides preset.',
     '      [--tile-concurrency <n>] [--group-concurrency <n>] [--min-free-gb <n>] [--no-merge] [--skip-validation] [--progress]',
     '  pnpm pipeline:defra -- validate-v2 --dataset <dataset-dir>',
     '  pnpm pipeline:defra -- sync-checkpoints-v2 --input <dir> --out <dataset-dir>',
@@ -168,7 +169,7 @@ function formatV2Progress(event: IngestV2ProgressEvent): string {
   const pre = `[defra-v2] (${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')})`;
   switch (event.phase) {
     case 'scan':
-      return `${pre} scanned ${event.groups} source groups across ${event.cells} cells`;
+      return `${pre} scanned ${event.groups} source groups across ${event.cells} cells${event.skippedGroups > 0 ? ` (${event.skippedGroups} skipped)` : ''}`;
     case 'resume':
       return `${pre} resuming: ${event.completedGroups} groups and ${event.completedCells} cells done, ${event.remainingGroups} groups and ${event.remainingCells} cells remaining`;
     case 'sync-checkpoints':
@@ -180,7 +181,10 @@ function formatV2Progress(event: IngestV2ProgressEvent): string {
     case 'group-start':
       return `${pre} group ${event.groupIndex}/${event.groupCount}: ${event.tileRef}`;
     case 'group-skip':
-      return `${pre} skip ${event.groupIndex}/${event.groupCount}: ${event.tileRef}`;
+      if (event.reason) {
+        return `${pre} skip ${event.tileRef}: ${event.reason}`;
+      }
+      return `${pre} skip ${event.groupIndex}/${event.groupCount}: ${event.tileRef} (already complete)`;
     case 'tile':
       return `${pre} leaf ${event.tileRef} ${event.eastMin}_${event.northMin} (${formatBytes(event.bytes)})`;
     case 'group-complete':

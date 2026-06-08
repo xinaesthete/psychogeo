@@ -1,4 +1,4 @@
-import type { DefraTileGroup } from '../scan.ts';
+import { hasDsmSource, type DefraTileGroup } from '../scan.ts';
 import {
   extentsIntersect,
   normalizeGridRef,
@@ -139,6 +139,7 @@ export function filterGroupsByRegion(groups: readonly DefraTileGroup[], region: 
 export function discoverTenKmCells(groups: readonly DefraTileGroup[], region: RegionSpec): string[] {
   const cells = new Set<string>();
   for (const group of filterGroupsByRegion(groups, region)) {
+    if (!hasDsmSource(group)) continue;
     cells.add(tenKmCellFromTileRef(group.tileRef));
   }
   return [...cells].sort((a, b) => a.localeCompare(b));

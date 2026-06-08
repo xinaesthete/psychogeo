@@ -83,6 +83,7 @@ Paths nest under `pyramid/{ingestCell}/` for bounded cell ingests. National inge
 | `tileMatrixSet.levels[]` | Configurable pyramid: `level`, `resolutionMetres`, `tierMetres` |
 | `encoding` | HTJ2K + `perChunkScaleOffset` defaults |
 | `indexRoot` | Href to cell root manifest (e.g. `pyramid/SP51/manifest.json`) |
+| `skippedGroups` | Optional — 5 km groups not ingested, with `{ tileRef, year, reason }` |
 
 Validated by `terrainManifestV2Schema` in [schema.ts](../../scripts/pipelines/defra-terrain/v2/schema.ts).
 
@@ -131,13 +132,11 @@ Depth is **not hardcoded**. Presets in [presets.ts](../../scripts/pipelines/defr
 
 | Preset | Levels | Use |
 |--------|--------|-----|
-| `cell` (default) | 1 m / 8 m / 32 m @ 1 km / 5 km / 10 km | Bounded `--cell` ingest |
-| `regional` | + 128 m @ 100 km | Multi-cell datasets |
-| `national` | + 512 m @ 100 km (second pass on same tier) | Full extent overview |
+| `cell` (default) | 1 m / 8 m / 32 m @ 1 km / 5 km / 10 km | Bounded cell or `--bounds` ingest |
+| `regional` | + 128 m @ 100 km | Coarse overview (merged per 10 km cell until national tree exists) |
+| `national` | + 512 m @ 100 km | Second coarse level on 100 km tier |
 
-Override with `--pyramid-levels path.json` (array of `{ level, resolutionMetres, tierMetres }`). Merge, reader, and zod all iterate `levels[]`.
-
-Large resolution gaps (1 → 8 → 32 m) suit zoom-band transitions; L1 matches v1 `height.dsm.base` (8 m).
+Use `--pyramid-preset cell|regional|national` (default `cell`). Override with `--pyramid-levels path.json` — a JSON array of `{ level, resolutionMetres, tierMetres }` that replaces the preset. Level 0 is leaf data in `leaf.enc`; levels with `level > 0` produce merged `{level}/{gridRef}.j2c` on nodes whose OSGB tier matches `tierMetres`.
 
 ## CLI
 
@@ -148,8 +147,7 @@ pnpm pipeline:defra -- ingest-v2 \
   --out <dataset-dir> \
   --cell SP51 \
   [--channel height.dsm.fz] \
-  [--pyramid-preset cell|regional|national] \
-  [--pyramid-levels <levels.json>] \
+  [--pyramid-preset cell|regional|national] [--pyramid-levels <levels.json>] \
   [--tile-concurrency N] \
   [--no-merge] \
   [--progress]
@@ -161,6 +159,8 @@ pnpm pipeline:defra -- inspect-v2 --dataset <dataset-dir>
 Pipeline modules: `v2/{schema,osgb,derive,layout,presets,ingest,merge,reader,inspect}.ts`.
 
 Resume: `index/completed-groups.json` keyed by `year:tileRef` (same pattern as v1).
+
+Source groups that cannot be ingested (e.g. DTM-only zips with no FZ) are recorded in `metadata.json` as `skippedGroups: [{ tileRef, year, reason }]`, mirrored incrementally in `index/skipped-groups.json`.
 
 ## Implemented vs planned
 

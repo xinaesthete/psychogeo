@@ -6,7 +6,7 @@ import { encodeUint16Normalized, type EncodedRaster } from '../encoding.ts';
 import { encodeHtj2k } from '../htj2k.ts';
 import { CHANNELS } from '../manifest.ts';
 import { readRasterSource, windowRaster } from '../raster.ts';
-import { scanDefraZips, type DefraTileGroup } from '../scan.ts';
+import { scanDefraZips, hasDsmSource, type DefraTileGroup } from '../scan.ts';
 import type { TerrainChannelId, TileExtent } from '../types.ts';
 import {
   assertMinFreeSpace,
@@ -61,7 +61,8 @@ import {
 import { parseMetadataJson, pyramidLevelSchema } from './schema.ts';
 import { validateAndAssertDatasetV2 } from './validate.ts';
 import { syncCheckpointsFromDisk } from './syncCheckpoints.ts';
-import type { EncodingScalars, LeafEncodingTable, PyramidNodeManifest, TerrainManifestV2 } from './types.ts';
+import { readSkippedGroups, syncSkippedGroups } from './skippedGroups.ts';
+import type { EncodingScalars, LeafEncodingTable, PyramidNodeManifest, SkippedGroupEntry, TerrainManifestV2 } from './types.ts';
 
 const MIN_HTJ2K_DIMENSION = 2;
 const LEAF_COLS = 5;
@@ -69,7 +70,7 @@ const LEAF_ROWS = 5;
 const LEAF_STEP_METRES = 1000;
 
 export type IngestV2ProgressEvent =
-  | { readonly phase: 'scan'; readonly groups: number; readonly cells: number }
+  | { readonly phase: 'scan'; readonly groups: number; readonly cells: number; readonly skippedGroups: number }
   | {
       readonly phase: 'resume';
       readonly completedGroups: number;
@@ -89,7 +90,13 @@ export type IngestV2ProgressEvent =
   | { readonly phase: 'cell-start'; readonly cell: string; readonly cellIndex: number; readonly cellCount: number }
   | { readonly phase: 'cell-skip'; readonly cell: string; readonly cellIndex: number; readonly cellCount: number }
   | { readonly phase: 'group-start'; readonly tileRef: string; readonly groupIndex: number; readonly groupCount: number }
-  | { readonly phase: 'group-skip'; readonly tileRef: string; readonly groupIndex: number; readonly groupCount: number }
+  | {
+      readonly phase: 'group-skip';
+      readonly tileRef: string;
+      readonly groupIndex: number;
+      readonly groupCount: number;
+      readonly reason?: string;
+    }
   | { readonly phase: 'tile'; readonly tileRef: string; readonly eastMin: number; readonly northMin: number; readonly bytes: number }
   | { readonly phase: 'group-complete'; readonly tileRef: string; readonly presentSlots: number; readonly bytes: number }
   | { readonly phase: 'merge-level'; readonly level: number; readonly gridRef: string }
@@ -189,6 +196,7 @@ function buildMetadata(
   ingestCell: string,
   levels: TerrainManifestV2['tileMatrixSet']['levels'],
   regionSummary?: string,
+  skippedGroups?: readonly SkippedGroupEntry[],
 ): TerrainManifestV2 {
   const channelId = options.channelId ?? 'height.dsm.fz';
   const root = regionIngestRoot(options.region);
@@ -214,6 +222,7 @@ function buildMetadata(
     },
     indexRoot: indexRootForCell(ingestCell),
     regionSummary,
+    ...(skippedGroups && skippedGroups.length > 0 ? { skippedGroups: [...skippedGroups] } : {}),
   });
 }
 
@@ -253,7 +262,9 @@ async function ingestOneGroup(
 ): Promise<{ readonly manifest: PyramidNodeManifest; readonly presentSlots: number; readonly bytes: number; readonly encodeMs: number }> {
   const encodeStarted = Date.now();
   const fzSource = group.sources.FZ;
-  if (!fzSource) throw new Error(`Skipping ${group.tileRef}: no DSM source.`);
+  if (!fzSource) {
+    throw new Error(`Internal error: ${group.tileRef} has no DSM source (should have been filtered)`);
+  }
   const raster = await readRasterSource(fzSource);
   const tileRef = normalizeGridRef(group.tileRef);
   const cellBounds = gridRefToBounds(tileRef);
@@ -357,6 +368,7 @@ async function ingestTenKmCell(
   const metadata = buildMetadata(options, ingestCell, levels);
   const groups = allGroups
     .filter((group) => filterGroupsByCellPrefix(group.tileRef, ingestCell))
+    .filter(hasDsmSource)
     .sort((a, b) => a.tileRef.localeCompare(b.tileRef) || a.year - b.year);
 
   if (groups.length === 0) {
@@ -548,10 +560,25 @@ export async function ingestDefraTerrainV2(options: IngestV2Options): Promise<In
   const levels = await loadPyramidLevels(options);
   const metrics = new IngestMetricsCollector(options.region);
   const allGroups = await scanDefraZips(options.inputDir);
-  const regionGroups = filterGroupsByRegion(allGroups, options.region);
+  const allRegionGroups = filterGroupsByRegion(allGroups, options.region);
+  const skippedGroups = await syncSkippedGroups(options.outDir, allRegionGroups, (entry) => {
+    options.onProgress?.({
+      phase: 'group-skip',
+      tileRef: entry.tileRef,
+      groupIndex: 0,
+      groupCount: 0,
+      reason: entry.reason,
+    });
+  });
+  const regionGroups = allRegionGroups.filter(hasDsmSource);
   const cells = discoverTenKmCells(allGroups, options.region);
 
-  options.onProgress?.({ phase: 'scan', groups: regionGroups.length, cells: cells.length });
+  options.onProgress?.({
+    phase: 'scan',
+    groups: regionGroups.length,
+    cells: cells.length,
+    skippedGroups: skippedGroups.length,
+  });
   if (regionGroups.length === 0) {
     throw new Error(`No DEFRA groups found for region ${regionLabel(options.region)} in ${options.inputDir}`);
   }
@@ -690,13 +717,14 @@ export async function ingestDefraTerrainV2(options: IngestV2Options): Promise<In
 
   let metadataPath: string | undefined;
   let regionSummaryPath: string | undefined;
+  const finalSkippedGroups = await readSkippedGroups(options.outDir);
 
   if (isSingleTenKmCell(options.region)) {
     const ingestCell = singleTenKmCell(options.region);
     if (!ingestCell) throw new Error('expected single 10 km cell');
     metadataPath = await writeMetadata(
       options.outDir,
-      buildMetadata(options, ingestCell, levels),
+      buildMetadata(options, ingestCell, levels, undefined, finalSkippedGroups),
     );
   } else {
     regionSummaryPath = await writeRegionSummary(options.outDir, options.region, cellMetrics);
@@ -704,7 +732,7 @@ export async function ingestDefraTerrainV2(options: IngestV2Options): Promise<In
     if (!primaryCell) throw new Error('expected at least one 10 km cell in region ingest');
     metadataPath = await writeMetadata(
       options.outDir,
-      buildMetadata(options, primaryCell, levels, REGION_SUMMARY_FILE),
+      buildMetadata(options, primaryCell, levels, REGION_SUMMARY_FILE, finalSkippedGroups),
     );
   }
 

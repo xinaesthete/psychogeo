@@ -9,8 +9,23 @@ import {
   tileRefMatchesRegion,
 } from './region.ts';
 
-function group(tileRef: string): DefraTileGroup {
-  return { tileRef, year: 2022, sources: {} };
+function group(tileRef: string, withDsm = true): DefraTileGroup {
+  return {
+    tileRef,
+    year: 2022,
+    sources: withDsm
+      ? {
+          FZ: {
+            product: 'FZ_DSM',
+            returnKind: 'FZ',
+            year: 2022,
+            tileRef,
+            zipPath: `/tmp/${tileRef}.zip`,
+            zipBasename: `${tileRef}.zip`,
+          },
+        }
+      : {},
+  };
 }
 
 describe('region', () => {
@@ -63,5 +78,11 @@ describe('region', () => {
       'SP52ne',
     ]);
     expect(discoverTenKmCells(groups, sp)).toEqual(['SP51', 'SP52']);
+  });
+
+  it('ignores groups without a DSM (FZ) source when discovering cells', () => {
+    const groups = [group('SP51ne'), group('SP51se', false)];
+    const sp51 = { kind: 'grid-ref' as const, gridRef: 'SP51' };
+    expect(discoverTenKmCells(groups, sp51)).toEqual(['SP51']);
   });
 });

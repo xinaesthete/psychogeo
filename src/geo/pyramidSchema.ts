@@ -24,6 +24,12 @@ export const pyramidLevelSchema = z.object({
   tierMetres: z.number().positive(),
 });
 
+export const skippedGroupSchema = z.object({
+  tileRef: z.string().min(2),
+  year: z.number().int(),
+  reason: z.string().min(1),
+});
+
 export const spatialTierSchema = z.object({
   suffix: z.string(),
   cellMetres: z.number().positive(),
@@ -93,6 +99,7 @@ export const terrainManifestV2Schema = z
     }),
     indexRoot: z.string().min(1),
     regionSummary: z.string().min(1).optional(),
+    skippedGroups: z.array(skippedGroupSchema).optional(),
     createdAt: z.string().optional(),
   })
   .superRefine((value, ctx) => {
