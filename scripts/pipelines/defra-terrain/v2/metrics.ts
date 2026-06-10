@@ -3,6 +3,36 @@ import path from 'node:path';
 import type { RegionSpec } from './region.ts';
 import { regionLabel } from './region.ts';
 
+export interface MergeStepMetrics {
+  readonly level: number;
+  readonly tierMetres: number;
+  readonly gridRef: string;
+  readonly loadMs: number;
+  readonly downsampleMs: number;
+  readonly downsampleUploadMs: number;
+  readonly downsampleKernelMs: number;
+  readonly downsampleReadbackMs: number;
+  readonly mosaicMs: number;
+  readonly encodeMs: number;
+  readonly totalMs: number;
+  readonly sourceWidth: number;
+  readonly sourceHeight: number;
+  readonly outputWidth: number;
+  readonly outputHeight: number;
+}
+
+export interface MergeMetricsSummary {
+  readonly stepCount: number;
+  readonly loadMs: number;
+  readonly downsampleMs: number;
+  readonly downsampleUploadMs: number;
+  readonly downsampleKernelMs: number;
+  readonly downsampleReadbackMs: number;
+  readonly mosaicMs: number;
+  readonly encodeMs: number;
+  readonly totalMs: number;
+}
+
 export interface CellIngestMetrics {
   readonly cell: string;
   readonly groupCount: number;
@@ -12,6 +42,7 @@ export interface CellIngestMetrics {
   readonly elapsedMs: number;
   readonly encodeMs: number;
   readonly mergeMs: number;
+  readonly mergeSteps?: readonly MergeStepMetrics[];
 }
 
 export interface IngestMetrics {
@@ -27,6 +58,8 @@ export interface IngestMetrics {
   readonly outputBytes: number;
   readonly encodeMs: number;
   readonly mergeMs: number;
+  readonly mergeSteps: readonly MergeStepMetrics[];
+  readonly mergeSummary: MergeMetricsSummary;
   readonly cells: readonly CellIngestMetrics[];
 }
 
@@ -39,12 +72,40 @@ export interface IngestMetricsRates {
 
 const METRICS_FILE = 'index/ingest-metrics.json';
 
+function summarizeMergeSteps(steps: readonly MergeStepMetrics[]): MergeMetricsSummary {
+  return steps.reduce<MergeMetricsSummary>(
+    (summary, step) => ({
+      stepCount: summary.stepCount + 1,
+      loadMs: summary.loadMs + step.loadMs,
+      downsampleMs: summary.downsampleMs + step.downsampleMs,
+      downsampleUploadMs: summary.downsampleUploadMs + step.downsampleUploadMs,
+      downsampleKernelMs: summary.downsampleKernelMs + step.downsampleKernelMs,
+      downsampleReadbackMs: summary.downsampleReadbackMs + step.downsampleReadbackMs,
+      mosaicMs: summary.mosaicMs + step.mosaicMs,
+      encodeMs: summary.encodeMs + step.encodeMs,
+      totalMs: summary.totalMs + step.totalMs,
+    }),
+    {
+      stepCount: 0,
+      loadMs: 0,
+      downsampleMs: 0,
+      downsampleUploadMs: 0,
+      downsampleKernelMs: 0,
+      downsampleReadbackMs: 0,
+      mosaicMs: 0,
+      encodeMs: 0,
+      totalMs: 0,
+    },
+  );
+}
+
 export class IngestMetricsCollector {
   private readonly startedAt = Date.now();
   private encodeMs = 0;
   private mergeMs = 0;
   private outputBytes = 0;
   private readonly cells: CellIngestMetrics[] = [];
+  private readonly mergeSteps: MergeStepMetrics[] = [];
   private readonly region: RegionSpec;
 
   constructor(region: RegionSpec) {
@@ -67,6 +128,10 @@ export class IngestMetricsCollector {
     this.cells.push(entry);
   }
 
+  recordMergeStep(step: MergeStepMetrics): void {
+    this.mergeSteps.push(step);
+  }
+
   finalize(totals: {
     readonly groupCount: number;
     readonly leafChunks: number;
@@ -86,6 +151,8 @@ export class IngestMetricsCollector {
       outputBytes: this.outputBytes,
       encodeMs: this.encodeMs,
       mergeMs: this.mergeMs,
+      mergeSteps: this.mergeSteps,
+      mergeSummary: summarizeMergeSteps(this.mergeSteps),
       cells: this.cells,
     };
   }
@@ -139,6 +206,32 @@ export function formatBytes(bytes: number): string {
   return `${(mib / 1024).toFixed(2)} GiB`;
 }
 
+export function formatMergeStepSummary(step: MergeStepMetrics): string {
+  const parts = [
+    `load ${formatDuration(step.loadMs)}`,
+    `down ${formatDuration(step.downsampleMs)}`,
+    `enc ${formatDuration(step.encodeMs)}`,
+    `total ${formatDuration(step.totalMs)}`,
+  ];
+  if (step.mosaicMs > 0) parts.splice(2, 0, `mosaic ${formatDuration(step.mosaicMs)}`);
+  if (step.downsampleMs > 0) {
+    parts[1] = `down ${formatDuration(step.downsampleMs)} (up ${formatDuration(step.downsampleUploadMs)}, kernel ${formatDuration(step.downsampleKernelMs)}, read ${formatDuration(step.downsampleReadbackMs)})`;
+  }
+  return parts.join(', ');
+}
+
+export function formatMergeSummary(summary: MergeMetricsSummary): string {
+  if (summary.stepCount === 0) return 'no merge steps recorded';
+  return [
+    `${summary.stepCount} steps`,
+    `load ${formatDuration(summary.loadMs)}`,
+    `down ${formatDuration(summary.downsampleMs)} (up ${formatDuration(summary.downsampleUploadMs)}, kernel ${formatDuration(summary.downsampleKernelMs)}, read ${formatDuration(summary.downsampleReadbackMs)})`,
+    `mosaic ${formatDuration(summary.mosaicMs)}`,
+    `encode ${formatDuration(summary.encodeMs)}`,
+    `total ${formatDuration(summary.totalMs)}`,
+  ].join(', ');
+}
+
 export function formatMetricsSummary(metrics: IngestMetrics): string {
   const lines = [
     `region: ${metrics.regionLabel}`,
@@ -147,6 +240,9 @@ export function formatMetricsSummary(metrics: IngestMetrics): string {
     `source zips: ${formatBytes(metrics.sourceZipBytes)}`,
     `output: ${formatBytes(metrics.outputBytes)}`,
   ];
+  if (metrics.mergeSummary.stepCount > 0) {
+    lines.push(`merge detail: ${formatMergeSummary(metrics.mergeSummary)}`);
+  }
   const rates = ingestMetricsRates(metrics);
   lines.push(
     `rates: ${formatDuration(rates.msPerGroup)}/group, ${formatBytes(rates.outputBytesPerLeafChunk)}/leaf chunk`,

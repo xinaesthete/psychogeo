@@ -142,13 +142,63 @@ export function windowRaster(
   };
 }
 
-export function downsampleNearest(
+export interface RasterWindow {
+  readonly pixels: Float32Array;
+  readonly width: number;
+  readonly height: number;
+  readonly extent: TileExtent;
+}
+
+export function downsampleExtent(
+  source: RasterSource,
+  width: number,
+  height: number,
+  resolutionMetres: number,
+): TileExtent {
+  return {
+    eastMin: source.extent.eastMin,
+    eastMax: source.extent.eastMin + width * resolutionMetres,
+    northMin: source.extent.northMax - height * resolutionMetres,
+    northMax: source.extent.northMax,
+  };
+}
+
+export function downsampleDimensions(
   source: RasterSource,
   resolutionMetres: number,
-): { readonly pixels: Float32Array; readonly width: number; readonly height: number; readonly extent: TileExtent } {
+): { readonly factor: number; readonly width: number; readonly height: number } {
   const factor = Math.max(1, Math.round(resolutionMetres / source.resolutionMetres));
-  const width = Math.floor(source.width / factor);
-  const height = Math.floor(source.height / factor);
+  return {
+    factor,
+    width: Math.floor(source.width / factor),
+    height: Math.floor(source.height / factor),
+  };
+}
+
+function sampleBilinear(
+  pixels: Float32Array,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+): number {
+  const x0 = Math.max(0, Math.min(width - 1, Math.floor(x)));
+  const y0 = Math.max(0, Math.min(height - 1, Math.floor(y)));
+  const x1 = Math.min(width - 1, x0 + 1);
+  const y1 = Math.min(height - 1, y0 + 1);
+  const tx = x - x0;
+  const ty = y - y0;
+  const v00 = pixels[y0 * width + x0];
+  const v10 = pixels[y0 * width + x1];
+  const v01 = pixels[y1 * width + x0];
+  const v11 = pixels[y1 * width + x1];
+  const top = v00 + tx * (v10 - v00);
+  const bottom = v01 + tx * (v11 - v01);
+  return top + ty * (bottom - top);
+}
+
+export function downsampleNearest(source: RasterSource, resolutionMetres: number): RasterWindow {
+  const { factor, width, height } = downsampleDimensions(source, resolutionMetres);
   const pixels = new Float32Array(width * height);
   for (let y = 0; y < height; y += 1) {
     const sourceY = y * factor;
@@ -160,11 +210,24 @@ export function downsampleNearest(
     pixels,
     width,
     height,
-    extent: {
-      eastMin: source.extent.eastMin,
-      eastMax: source.extent.eastMin + width * resolutionMetres,
-      northMin: source.extent.northMax - height * resolutionMetres,
-      northMax: source.extent.northMax,
-    },
+    extent: downsampleExtent(source, width, height, resolutionMetres),
+  };
+}
+
+export function downsampleBilinear(source: RasterSource, resolutionMetres: number): RasterWindow {
+  const { factor, width, height } = downsampleDimensions(source, resolutionMetres);
+  const pixels = new Float32Array(width * height);
+  for (let y = 0; y < height; y += 1) {
+    const srcY = (y + 0.5) * factor - 0.5;
+    for (let x = 0; x < width; x += 1) {
+      const srcX = (x + 0.5) * factor - 0.5;
+      pixels[y * width + x] = sampleBilinear(source.pixels, source.width, source.height, srcX, srcY);
+    }
+  }
+  return {
+    pixels,
+    width,
+    height,
+    extent: downsampleExtent(source, width, height, resolutionMetres),
   };
 }

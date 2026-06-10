@@ -25,6 +25,7 @@ import {
   IngestMetricsCollector,
   writeIngestMetrics,
   type CellIngestMetrics,
+  type MergeStepMetrics,
 } from './metrics.ts';
 import {
   ensureDatasetManifest,
@@ -99,8 +100,25 @@ export type IngestV2ProgressEvent =
     }
   | { readonly phase: 'tile'; readonly tileRef: string; readonly eastMin: number; readonly northMin: number; readonly bytes: number }
   | { readonly phase: 'group-complete'; readonly tileRef: string; readonly presentSlots: number; readonly bytes: number }
-  | { readonly phase: 'merge-level'; readonly level: number; readonly gridRef: string }
-  | { readonly phase: 'merge-complete'; readonly levels: number }
+  | {
+      readonly phase: 'merge-level';
+      readonly level: number;
+      readonly tierMetres: number;
+      readonly gridRef: string;
+      readonly loadMs: number;
+      readonly downsampleMs: number;
+      readonly downsampleUploadMs: number;
+      readonly downsampleKernelMs: number;
+      readonly downsampleReadbackMs: number;
+      readonly mosaicMs: number;
+      readonly encodeMs: number;
+      readonly totalMs: number;
+      readonly sourceWidth: number;
+      readonly sourceHeight: number;
+      readonly outputWidth: number;
+      readonly outputHeight: number;
+    }
+  | { readonly phase: 'merge-complete'; readonly levels: number; readonly elapsedMs: number; readonly stepCount: number }
   | { readonly phase: 'complete'; readonly leafChunks: number; readonly groups: number; readonly outputBytes: number; readonly elapsedMs: number };
 
 export interface IngestV2Options {
@@ -337,6 +355,7 @@ interface TenKmCellResult {
   readonly sourceZipBytes: number;
   readonly encodeMs: number;
   readonly mergeMs: number;
+  readonly mergeSteps: readonly MergeStepMetrics[];
   readonly elapsedMs: number;
 }
 
@@ -364,6 +383,7 @@ async function ingestTenKmCell(
   const cellStarted = Date.now();
   let encodeMs = 0;
   let mergeMs = 0;
+  let mergeSteps: readonly MergeStepMetrics[] = [];
   const runMerge = options.runMerge !== false;
   const metadata = buildMetadata(options, ingestCell, levels);
   const groups = allGroups
@@ -379,6 +399,7 @@ async function ingestTenKmCell(
       sourceZipBytes: 0,
       encodeMs: 0,
       mergeMs: 0,
+      mergeSteps: [],
       elapsedMs: Date.now() - cellStarted,
     };
   }
@@ -398,6 +419,7 @@ async function ingestTenKmCell(
       sourceZipBytes,
       encodeMs: 0,
       mergeMs: 0,
+      mergeSteps: [],
       elapsedMs: Date.now() - cellStarted,
     };
   }
@@ -518,7 +540,7 @@ async function ingestTenKmCell(
   if (needsMerge) {
     const mergeStarted = Date.now();
     const { mergePyramidLevels } = await import('./merge.ts');
-    await mergePyramidLevels({
+    const mergeResult = await mergePyramidLevels({
       outDir: options.outDir,
       ingestCell,
       metadata,
@@ -526,6 +548,7 @@ async function ingestTenKmCell(
       onProgress: options.onProgress,
       metrics,
     });
+    mergeSteps = mergeResult.steps;
     mergeMs = Date.now() - mergeStarted;
     metrics.addMergeMs(mergeMs);
     await markCellCompleted(options.outDir, ingestCell);
@@ -547,6 +570,7 @@ async function ingestTenKmCell(
     sourceZipBytes,
     encodeMs,
     mergeMs,
+    mergeSteps,
     elapsedMs: Date.now() - cellStarted,
   };
 }
@@ -708,6 +732,7 @@ export async function ingestDefraTerrainV2(options: IngestV2Options): Promise<In
       elapsedMs: result.elapsedMs,
       encodeMs: result.encodeMs,
       mergeMs: result.mergeMs,
+      mergeSteps: result.mergeSteps,
     });
     metrics.recordCell(cellMetrics[cellMetrics.length - 1]);
     if (multiCellRegion) {

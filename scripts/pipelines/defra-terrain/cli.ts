@@ -13,7 +13,13 @@ import type { TerrainChannelId } from './types.ts';
 import { DEFAULT_MIN_FREE_BYTES } from './v2/diskSpace.ts';
 import { ingestDefraTerrainV2, type IngestV2ProgressEvent } from './v2/ingest.ts';
 import { inspectDatasetV2 } from './v2/inspect.ts';
-import { formatBytes, formatDuration, formatMetricsSummary, readIngestMetrics } from './v2/metrics.ts';
+import {
+  formatBytes,
+  formatDuration,
+  formatMergeStepSummary,
+  formatMetricsSummary,
+  readIngestMetrics,
+} from './v2/metrics.ts';
 import { formatRegionPlan, planRegionIngest } from './v2/plan.ts';
 import { parseRegionArg } from './v2/region.ts';
 import { validateDatasetV2 } from './v2/validate.ts';
@@ -190,9 +196,9 @@ function formatV2Progress(event: IngestV2ProgressEvent): string {
     case 'group-complete':
       return `${pre} complete ${event.tileRef}: ${event.presentSlots} leaf slots (${formatBytes(event.bytes)})`;
     case 'merge-level':
-      return `${pre} merge L${event.level} ${event.gridRef}`;
+      return `${pre} merge L${event.level} ${event.gridRef} ${formatMergeStepSummary(event)} (${event.sourceWidth}x${event.sourceHeight} -> ${event.outputWidth}x${event.outputHeight})`;
     case 'merge-complete':
-      return `${pre} merged ${event.levels} pyramid levels`;
+      return `${pre} merged ${event.levels} pyramid levels in ${formatDuration(event.elapsedMs)} (${event.stepCount} steps)`;
     case 'complete':
       return `${pre} wrote ${event.leafChunks} leaf chunks across ${event.groups} groups, ${formatBytes(event.outputBytes)}, ${formatDuration(event.elapsedMs)}`;
   }
@@ -305,6 +311,18 @@ async function main(): Promise<void> {
         outputBytes: result.outputBytes,
         encodeMs: 0,
         mergeMs: 0,
+        mergeSteps: [],
+        mergeSummary: {
+          stepCount: 0,
+          loadMs: 0,
+          downsampleMs: 0,
+          downsampleUploadMs: 0,
+          downsampleKernelMs: 0,
+          downsampleReadbackMs: 0,
+          mosaicMs: 0,
+          encodeMs: 0,
+          totalMs: 0,
+        },
         cells: [],
       }),
     ];

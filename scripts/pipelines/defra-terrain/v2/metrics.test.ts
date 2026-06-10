@@ -29,6 +29,18 @@ describe('metrics', () => {
       outputBytes: 8_000_000,
       encodeMs: 500_000,
       mergeMs: 100_000,
+      mergeSteps: [],
+      mergeSummary: {
+        stepCount: 0,
+        loadMs: 0,
+        downsampleMs: 0,
+        downsampleUploadMs: 0,
+        downsampleKernelMs: 0,
+        downsampleReadbackMs: 0,
+        mosaicMs: 0,
+        encodeMs: 0,
+        totalMs: 0,
+      },
       cells: [],
     };
     const rates = ingestMetricsRates(metrics);
