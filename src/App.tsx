@@ -68,7 +68,7 @@ function App() {
   });
   const { terrainDatasetManifestUrl } = useControls('Terrain dataset', {
     terrainDatasetManifestUrl: {
-      value: '/terrain-datasets/terra-v2-SP5/metadata.json',
+      value: '/terrain-datasets/terra-v2-SU/metadata.json',
       label: 'dataset URL (manifest.json or metadata.json)',
     },
   });

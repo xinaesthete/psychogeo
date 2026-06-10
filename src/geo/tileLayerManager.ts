@@ -1,6 +1,7 @@
 import * as THREE from 'three';
-import { GeoLOD } from './LodUtils';
+import { GeoLOD } from './GeoLod';
 import type {
+  ChannelReadyListener,
   ChannelReconciliation,
   RasterChannel,
   RasterChannelState,
@@ -66,8 +67,7 @@ function clearLoadingIfOwned(
 function currentGeoLodLevel(tile: TileNode, camera: THREE.Camera, inFrustum: boolean): number {
   const geoLod = tile.userData.geoLod;
   if (!(geoLod instanceof GeoLOD) || !inFrustum) return 0;
-  geoLod.update(camera);
-  return geoLod.getCurrentLevel();
+  return geoLod.getLevelForCamera(camera);
 }
 
 function tileWorldBox(tile: TileNode, target: THREE.Box3): THREE.Box3 {
@@ -93,6 +93,11 @@ export class TileLayerManagerImpl implements TileLayerManager {
   private activeLoads = 0;
   private readonly maxConcurrentLoads = 3;
   private readonly loadQueue: Array<{ managed: ManagedTile; channelId: string }> = [];
+  private channelReadyListener: ChannelReadyListener | null = null;
+
+  setChannelReadyListener(listener: ChannelReadyListener | null): void {
+    this.channelReadyListener = listener;
+  }
 
   attachChannel(channel: RasterChannel): void {
     this.channels.set(channel.id, channel);
@@ -332,6 +337,7 @@ export class TileLayerManagerImpl implements TileLayerManager {
         payload,
       });
       syncTileDebugLabel(managed.tile);
+      this.channelReadyListener?.(managed.tile, channelId);
     } catch (error) {
       if (abortController.signal.aborted || generation !== managed.generation) {
         clearLoadingIfOwned(managed, channelId, generation, abortController);

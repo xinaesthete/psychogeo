@@ -71,6 +71,8 @@ export interface ChannelReconciliation {
   readonly queued: number;
 }
 
+export type ChannelReadyListener = (tile: TileNode, channelId: string) => void;
+
 export interface TileLayerManager {
   attachChannel(channel: RasterChannel): void;
   detachChannel(channelId: string): void;
@@ -81,6 +83,7 @@ export interface TileLayerManager {
   invalidateChannel(channelId: string): ChannelReconciliation;
   refetchChannel(tile: TileNode, channelId: string): boolean;
   observeVisibility(camera: THREE.Camera): void;
+  setChannelReadyListener(listener: ChannelReadyListener | null): void;
   dispose(): void;
 }
 

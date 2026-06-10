@@ -7,13 +7,24 @@ import {
   registerCompressionTile,
 } from './compressionExperiment';
 import { DsmCatItem, getImageFilename } from './TileLoaderUK';
-import { viewshedAwareLodDistance } from './viewshedConfig';
 import {
   applyCustomDepth,
   getTileMaterial,
   getTilePickMaterial,
   type TileUniformBag,
 } from './tileShaderRuntime';
+
+export {
+  collectGeoLodDebugSnapshot,
+  GeoLOD,
+  geoLodShadowStateKey,
+  geoLodStateKey,
+  setViewshedLodObserver,
+  type GeoLodDebugSnapshot,
+  type GeoLodDebugTile,
+  type ViewshedLodObserver,
+} from './GeoLod';
+import { GeoLOD } from './GeoLod';
 
 const tileBBox = new THREE.Box3(new THREE.Vector3(-0.5, -0.5, 0), new THREE.Vector3(0.5, 0.5, 1));
 const tileBSphere = new THREE.Sphere();
@@ -126,226 +137,3 @@ export async function getTileMesh(
   return info;
 }
 
-////////////////
-////////////////
-////////////////
-////////////////
-
-const _v1 = new THREE.Vector3();
-const _bbox = new THREE.Box3();
-
-export type ViewshedLodObserver = {
-  position: THREE.Vector3;
-  radius: number;
-};
-
-export type GeoLodDebugTile = {
-  uuid: string;
-  currentLevel: number;
-  renderCameraDistance: number;
-  lodDistance: number;
-  viewshedDistance?: number;
-};
-
-export type GeoLodDebugSnapshot = {
-  observer: {
-    position: { x: number; y: number; z: number };
-    radius: number;
-  } | null;
-  visibleTileCount: number;
-  visibleLevelCounts: Record<string, number>;
-  sampleTiles: GeoLodDebugTile[];
-};
-
-let viewshedLodObserver: ViewshedLodObserver | null = null;
-
-export function setViewshedLodObserver(observer: ViewshedLodObserver | null): void {
-  viewshedLodObserver = observer
-    ? { position: observer.position.clone(), radius: observer.radius }
-    : null;
-}
-
-function vectorDebug(v: THREE.Vector3): { x: number; y: number; z: number } {
-  return { x: v.x, y: v.y, z: v.z };
-}
-
-export function collectGeoLodDebugSnapshot(
-  roots: THREE.Object3D[],
-  maxSamples = 64,
-): GeoLodDebugSnapshot {
-  const sampleTiles: GeoLodDebugTile[] = [];
-  const visibleLevelCounts: Record<string, number> = {};
-  let visibleTileCount = 0;
-
-  for (const root of roots) {
-    root.traverse((object) => {
-      if (!(object instanceof GeoLOD) || !object.visible) return;
-      visibleTileCount += 1;
-      const level = object.getCurrentLevel();
-      const levelKey = String(level);
-      visibleLevelCounts[levelKey] = (visibleLevelCounts[levelKey] ?? 0) + 1;
-      if (sampleTiles.length < maxSamples) {
-        sampleTiles.push(object.getDebugTile());
-      }
-    });
-  }
-
-  return {
-    observer: viewshedLodObserver
-      ? {
-          position: vectorDebug(viewshedLodObserver.position),
-          radius: viewshedLodObserver.radius,
-        }
-      : null,
-    visibleTileCount,
-    visibleLevelCounts,
-    sampleTiles,
-  };
-}
-
-export function geoLodStateKey(roots: THREE.Object3D[]): string {
-  const parts: string[] = [];
-  for (const root of roots) {
-    root.traverse((object) => {
-      if (object instanceof GeoLOD) {
-        parts.push(`${object.uuid}:${object.getCurrentLevel()}`);
-      }
-    });
-  }
-  return parts.join('|');
-}
-/**
- * Starting out as fairly much of a direct copy of `THREE.LOD`.
- * Want to behave differently in terms of how `distanceTo` is computed (to BoundingBox).
- * May want to reduce matrix operations, adding / removing children rather than setting visible?
- * May want to do some 
- */
-export class GeoLOD extends THREE.Object3D {
-  _currentLevel = 0;
-  autoUpdate = true;
-  levels: {object: THREE.Object3D, distance: number}[];
-  private lastRenderCameraDistance = 0;
-  private lastLodDistance = 0;
-  private lastViewshedDistance: number | undefined;
-  get isLOD() { return true; }
-  constructor() {
-    super();
-    this.levels = [];
-    this.frustumCulled = false;
-    // this.name = "GeoLOD"
-  }
-  copy(source: this)  {
-    super.copy(source, false);
-    const levels = source.levels;
-    for (let i = 0, l = levels.length; i<l; i++) {
-      const level = levels[i];
-      this.addLevel(level.object.clone(), level.distance);
-    }
-    this.autoUpdate = source.autoUpdate;
-    return this;
-  }
-  addLevel(object: THREE.Object3D, distance = 0) {
-    distance = Math.abs(distance);
-    const levels = this.levels;
-    let l: number;
-    for (l=0; l<levels.length; l++) {
-      if (distance < levels[l].distance) {
-        break;
-      }
-    }
-    levels.splice(l, 0, {distance, object});
-    this.add(object);
-    return this;
-  }
-  getCurrentLevel() {
-    return this._currentLevel;
-  }
-  getObjectForDistance( distance: number ) {
-    const levels = this.levels;
-    if (levels.length > 0) {
-      let i = 1, l = levels.length;
-      for (; i<l; i++) {
-        if (distance < levels[i].distance) {
-          break;
-        }
-      }
-      return levels[i-1].object;
-    }
-    return null;
-  }
-  getDebugTile(): GeoLodDebugTile {
-    return {
-      uuid: this.uuid,
-      currentLevel: this._currentLevel,
-      renderCameraDistance: this.lastRenderCameraDistance,
-      lodDistance: this.lastLodDistance,
-      viewshedDistance: this.lastViewshedDistance,
-    };
-  }
-  /** Not clever enough to cast into procedural geometry etc. Will require async with special render pass. */
-  raycast(raycaster: THREE.Raycaster, intersects: THREE.Intersection[]) {
-    const levels = this.levels;
-    if (levels.length > 0) {
-      //distance to bbox, properly transformed (UNTESTED)
-      _bbox.copy(tileBBox);
-      _bbox.applyMatrix4(this.matrixWorld); //may not be needed every time.
-      //_v1.setFromMatrixPosition(this.matrixWorld);
-      const distance = _bbox.distanceToPoint(raycaster.ray.origin);// raycaster.ray.origin.distanceTo(_v1);
-      this.getObjectForDistance(distance)?.raycast(raycaster, intersects);
-    }
-  }
-  update(camera: THREE.Camera) {
-    const levels = this.levels;
-    _bbox.copy(tileBBox);
-    _bbox.applyMatrix4(this.matrixWorld); //may not be needed every time.
-    if (levels.length > 1) {
-      _v1.setFromMatrixPosition(camera.matrixWorld);
-      //_v2.setFromMatrixPosition(this.matrixWorld);
-      const zoom = camera instanceof THREE.PerspectiveCamera ? camera.zoom : 1;
-      const renderCameraDistance = _bbox.distanceToPoint(_v1) / zoom;
-      const viewshedDistance = viewshedLodObserver
-        ? _bbox.distanceToPoint(viewshedLodObserver.position)
-        : undefined;
-      const distance = viewshedDistance === undefined
-        ? renderCameraDistance
-        : viewshedAwareLodDistance(
-            renderCameraDistance,
-            viewshedDistance,
-            viewshedLodObserver?.radius ?? 0,
-          );
-      this.lastRenderCameraDistance = renderCameraDistance;
-      this.lastLodDistance = distance;
-      this.lastViewshedDistance = viewshedDistance;
-      levels[0].object.visible = true;
-      let i = 1, l = levels.length;
-      for (; i<l; i++) {
-        if (distance >= levels[i].distance) {
-          levels[i-1].object.visible = false;
-          levels[i].object.visible = true;
-        } else {
-          break;
-        }
-      }
-      this._currentLevel = i-1;
-      for (; i<l; i++) {
-        levels[i].object.visible = false;
-      }
-    }
-  }
-  toJSON( meta?: THREE.JSONMeta ) {
-    const data = super.toJSON(meta);
-    const objectData = data.object as THREE.Object3DJSONObject & {
-      levels: { object: string; distance: number }[];
-    };
-    objectData.levels = [];
-    const levels = this.levels;
-    for (let i=0, l=levels.length; i<l; i++) {
-      const level = levels[i];
-      objectData.levels.push({
-        object: level.object.uuid,
-        distance: level.distance
-      });
-    }
-    return data;
-  }
-}

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import * as JP2 from '../openjpegjs/jp2kloader';
 import { globalUniforms } from '../threact/threact';
 import { computeTriangleGridIndices } from '../threact/threexample';
-import { GeoLOD } from './LodUtils';
+import { GeoLOD } from './GeoLod';
 import type { EncodingScalars } from './pyramidTypes';
 import {
   applyCustomDepth,
@@ -161,18 +161,7 @@ export class PyramidHeightChannel implements RasterChannel<PyramidHeightChannelP
     mesh.name = `GeoLodMesh ${tile.name}`;
     const placeholder = tile.userData.placeholder as THREE.Object3D | undefined;
     if (placeholder) {
-      tile.remove(placeholder);
-      placeholder.traverse((child) => {
-        if (child instanceof THREE.Mesh) {
-          child.geometry.dispose();
-          if (Array.isArray(child.material)) {
-            child.material.forEach((m) => m.dispose());
-          } else {
-            child.material.dispose();
-          }
-        }
-      });
-      tile.userData.placeholder = undefined;
+      placeholder.visible = false;
     }
     tile.add(mesh);
     tile.userData.geoLod = mesh;
@@ -196,5 +185,11 @@ export class PyramidHeightChannel implements RasterChannel<PyramidHeightChannelP
       });
       tile.userData.geoLod = undefined;
     }
+    const placeholder = tile.userData.placeholder as THREE.Object3D | undefined;
+    if (placeholder) {
+      placeholder.visible = true;
+    }
+    const sync = tile.userData.syncDebugLabel;
+    if (typeof sync === 'function') sync();
   }
 }

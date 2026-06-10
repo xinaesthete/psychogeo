@@ -54,4 +54,34 @@ describe('groundViewport', () => {
     expect(bounds.northMin).toBeLessThan(215000);
     expect(bounds.northMax).toBeGreaterThan(215000);
   });
+
+  it('extends bounds toward the horizon when the camera is pitched low', () => {
+    const camera = new THREE.PerspectiveCamera(60, 1.6, 1, 100000);
+    camera.position.set(455000, 215000, 500);
+    camera.up.set(0, 0, 1);
+    camera.lookAt(455000, 225000, 0);
+    camera.updateMatrixWorld(true);
+
+    const bounds = groundViewportBounds(camera);
+    expect(bounds.northMax).toBeGreaterThan(camera.position.y);
+    expect(viewportSpanMetres(bounds)).toBeGreaterThan(1000);
+  });
+
+  it('keeps a wider span for oblique views than a nearby nadir strip', () => {
+    const oblique = new THREE.PerspectiveCamera(60, 1.6, 1, 100000);
+    oblique.position.set(455000, 215000, 500);
+    oblique.up.set(0, 0, 1);
+    oblique.lookAt(455000, 225000, 0);
+    oblique.updateMatrixWorld(true);
+
+    const nadir = new THREE.PerspectiveCamera(60, 1.6, 1, 100000);
+    nadir.position.set(455000, 215000, 500);
+    nadir.up.set(0, 0, 1);
+    nadir.lookAt(455000, 215000, 0);
+    nadir.updateMatrixWorld(true);
+
+    const obliqueSpan = viewportSpanMetres(groundViewportBounds(oblique));
+    const nadirSpan = viewportSpanMetres(groundViewportBounds(nadir));
+    expect(obliqueSpan).toBeGreaterThan(nadirSpan * 0.5);
+  });
 });

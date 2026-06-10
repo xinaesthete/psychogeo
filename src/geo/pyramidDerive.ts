@@ -1,3 +1,5 @@
+import * as THREE from 'three';
+import { viewportMetresFromCameraDistance } from './groundViewport';
 import {
   gridRefToBounds,
   normalizeGridRef,
@@ -5,6 +7,9 @@ import {
   type TileExtent,
 } from './pyramidOsgb';
 import type { EncodingScalars, NamingConvention, PyramidLevel, TerrainManifestV2 } from './pyramidTypes';
+
+const scratchCameraPos = new THREE.Vector3();
+const scratchClosest = new THREE.Vector3();
 
 export function applyTemplate(
   template: string,
@@ -119,6 +124,30 @@ export function finestLeafLevel(levels: readonly PyramidLevel[]): PyramidLevel {
   const leaf = levels.find((entry) => entry.level === 0);
   if (!leaf) throw new Error('tileMatrixSet must include level 0');
   return leaf;
+}
+
+export function cameraDistanceToExtent(camera: THREE.Camera, extent: TileExtent): number {
+  scratchCameraPos.setFromMatrixPosition(camera.matrixWorld);
+  const closestX = THREE.MathUtils.clamp(scratchCameraPos.x, extent.eastMin, extent.eastMax);
+  const closestY = THREE.MathUtils.clamp(scratchCameraPos.y, extent.northMin, extent.northMax);
+  const horizontal = Math.hypot(
+    scratchCameraPos.x - closestX,
+    scratchCameraPos.y - closestY,
+  );
+  return Math.hypot(horizontal, scratchCameraPos.z);
+}
+
+export function pickPyramidLevelForTileDistance(
+  meta: TerrainManifestV2,
+  camera: THREE.Camera,
+  extent: TileExtent,
+): number {
+  if (!(camera instanceof THREE.PerspectiveCamera)) {
+    return pickPyramidLevel(meta, extent.eastMax - extent.eastMin);
+  }
+  const distance = cameraDistanceToExtent(camera, extent);
+  const viewportMetres = viewportMetresFromCameraDistance(camera, distance);
+  return pickPyramidLevel(meta, viewportMetres);
 }
 
 export function pickPyramidLevel(

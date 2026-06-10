@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import {
   defaultNamingConvention,
@@ -60,9 +61,15 @@ function buildFixtureHandlers(baseUrl: string): Record<string, unknown> {
     gridRef: 'SP51',
     children: ['SP51ne'],
     coverage: 'partial',
+    levels: {
+      '2': { min: 30, max: 120, scale: 0.02, offset: 30 },
+    },
   };
   const leafManifest = {
     gridRef: 'SP51ne',
+    levels: {
+      '1': { min: 40, max: 90, scale: 0.01, offset: 40 },
+    },
     leaf: {
       stepMetres: 1000,
       cols: 5,
@@ -217,6 +224,70 @@ describe('pyramidCatalog', () => {
       );
       expect(chunks).toHaveLength(1);
       expect(chunks[0]?.eastMin).toBe(455000);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('resolves adaptive chunks near the camera at leaf level', async () => {
+    const baseUrl = 'https://example.test/dataset/';
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockFetch(buildFixtureHandlers(baseUrl));
+    try {
+      const catalog = await loadPyramidDataset(`${baseUrl}metadata.json`);
+      const resolver = new PyramidCatalogResolver(catalog);
+      const camera = new THREE.PerspectiveCamera(60, 1, 1, 100000);
+      camera.position.set(455500, 215500, 300);
+      camera.updateMatrixWorld(true);
+      const chunks = await resolver.resolveChunksInBoundsAdaptive(
+        { eastMin: 455100, eastMax: 455900, northMin: 215100, northMax: 215900 },
+        camera,
+      );
+      expect(chunks).toHaveLength(1);
+      expect(chunks[0]?.level).toBe(0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('resolves adaptive chunks far from the camera at merged level 1', async () => {
+    const baseUrl = 'https://example.test/dataset/';
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockFetch(buildFixtureHandlers(baseUrl));
+    try {
+      const catalog = await loadPyramidDataset(`${baseUrl}metadata.json`);
+      const resolver = new PyramidCatalogResolver(catalog);
+      const camera = new THREE.PerspectiveCamera(60, 1, 1, 100000);
+      camera.position.set(455500, 215500, 8000);
+      camera.updateMatrixWorld(true);
+      const chunks = await resolver.resolveChunksInBoundsAdaptive(
+        { eastMin: 455100, eastMax: 455900, northMin: 215100, northMax: 215900 },
+        camera,
+      );
+      expect(chunks).toHaveLength(1);
+      expect(chunks[0]?.level).toBe(1);
+      expect(chunks[0]?.extentMetres).toBe(5000);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('does not emit overlapping L2 and L1 chunks for the same ingest cell', async () => {
+    const baseUrl = 'https://example.test/dataset/';
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockFetch(buildFixtureHandlers(baseUrl));
+    try {
+      const catalog = await loadPyramidDataset(`${baseUrl}metadata.json`);
+      const resolver = new PyramidCatalogResolver(catalog);
+      const camera = new THREE.PerspectiveCamera(60, 1, 1, 100000);
+      camera.position.set(455500, 215500, 8000);
+      camera.updateMatrixWorld(true);
+      const chunks = await resolver.resolveChunksInBoundsAdaptive(
+        { eastMin: 450000, eastMax: 500000, northMin: 210000, northMax: 220000 },
+        camera,
+      );
+      const levels = new Set(chunks.map((chunk) => chunk.level));
+      expect(levels.has(2) && levels.has(1)).toBe(false);
     } finally {
       globalThis.fetch = originalFetch;
     }

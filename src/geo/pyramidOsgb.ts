@@ -123,6 +123,15 @@ export function extentsIntersect(a: TileExtent, b: TileExtent): boolean {
   return a.eastMin < b.eastMax && a.eastMax > b.eastMin && a.northMin < b.northMax && a.northMax > b.northMin;
 }
 
+export function extentCovers(outer: TileExtent, inner: TileExtent): boolean {
+  return (
+    outer.eastMin <= inner.eastMin &&
+    outer.eastMax >= inner.eastMax &&
+    outer.northMin <= inner.northMin &&
+    outer.northMax >= inner.northMax
+  );
+}
+
 export function gridRefsInBounds(bounds: TileExtent, tierMetres: number, candidates: string[]): string[] {
   return candidates.filter((gridRef) => {
     if (tierMetresForGridRef(gridRef) !== tierMetres) return false;

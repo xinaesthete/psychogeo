@@ -8,7 +8,6 @@ import {
 } from './groundViewport';
 import {
   chunkKey,
-  pickPyramidLevelForViewport,
   type PyramidCatalogResolver,
 } from './pyramidCatalog';
 import { finestLeafLevel } from './pyramidDerive';
@@ -240,11 +239,19 @@ export type PyramidTileTreeDebugHooks = {
   previewTexture?(texture: THREE.Texture, label: string): void;
 };
 
+function desiredChunkSetKey(desired: ChunkFetchDescriptor[]): string {
+  return desired
+    .map((chunk) => chunkKey(chunk))
+    .sort()
+    .join('|');
+}
+
 export class PyramidTileTree {
   private readonly active = new Map<string, PyramidTileNode>();
   private lastBounds: ReturnType<typeof groundViewportBounds> | null = null;
   private lastQueryBounds: ReturnType<typeof groundViewportBounds> | null = null;
-  private lastLevel: number | null = null;
+  private lastDesiredKey = '';
+  private lastCameraPosition = new THREE.Vector3();
   private lastLevelViewport = 0;
   private reconcileGeneration = 0;
   private reconcileScheduled = false;
@@ -425,7 +432,7 @@ export class PyramidTileTree {
 
   forceReconcile(): void {
     this.lastBounds = null;
-    this.lastLevel = null;
+    this.lastDesiredKey = '';
     if (this.pendingCamera) {
       this.reconcileNow(this.pendingCamera);
     }
@@ -455,7 +462,7 @@ export class PyramidTileTree {
     this.active.clear();
     this.lastBounds = null;
     this.lastQueryBounds = null;
-    this.lastLevel = null;
+    this.lastDesiredKey = '';
     this.lastLevelViewport = 0;
   }
 
@@ -509,7 +516,7 @@ export class PyramidTileTree {
       inspectBoundsVisible: this.inspectBoundsVisible,
       labelsVisible: this.labelsVisible,
       selectedKey: this.selectedKey,
-      lastLevel: this.lastLevel,
+      lastLevel: null,
       lastLevelViewportMetres: this.lastLevelViewport,
       lastBounds: this.lastBounds,
       lastQueryBounds: this.lastQueryBounds,
@@ -520,45 +527,41 @@ export class PyramidTileTree {
     };
   }
 
-  private pickStableLevel(levelViewportMetres: number): number {
-    return pickPyramidLevelForViewport(
-      this.resolver.catalogRef,
-      levelViewportMetres,
-    );
-  }
-
   private reconcileNow(camera: THREE.Camera): void {
     const bounds = groundViewportBounds(camera);
     const levelViewportMetres = viewportSpanMetres(bounds);
-    const level = this.pickStableLevel(levelViewportMetres);
-    const levelChanged = level !== this.lastLevel;
+    const leafStep = gridStepForLevel(0, this.resolver);
+    const queryBounds = snapBoundsToGrid(bounds, leafStep);
+
+    const cameraMoved =
+      this.lastDesiredKey.length === 0 ||
+      camera.position.distanceTo(this.lastCameraPosition) > 50;
+
     if (
-      !levelChanged &&
       !boundsChangedSignificantly(this.lastBounds, bounds) &&
-      level === this.lastLevel
+      !cameraMoved &&
+      this.lastDesiredKey.length > 0
     ) {
-      this.manager.observeVisibility(camera);
-      this.onVisibilityUpdated();
       return;
     }
 
+    this.lastCameraPosition.copy(camera.position);
     const generation = ++this.reconcileGeneration;
-    const gridStep = gridStepForLevel(level, this.resolver);
-    const queryBounds = snapBoundsToGrid(bounds, gridStep);
-    void this.reconcileAsync(camera, queryBounds, level, levelViewportMetres, generation);
+    void this.reconcileAsync(camera, queryBounds, bounds, levelViewportMetres, generation);
   }
 
   private async reconcileAsync(
     camera: THREE.Camera,
+    queryBounds: ReturnType<typeof groundViewportBounds>,
     bounds: ReturnType<typeof groundViewportBounds>,
-    level: number,
     levelViewportMetres: number,
     generation: number,
   ): Promise<void> {
-    const desired = await this.resolver.resolveChunksInBounds(bounds, level);
+    const desired = await this.resolver.resolveChunksInBoundsAdaptive(queryBounds, camera);
     if (generation !== this.reconcileGeneration) return;
 
     const desiredKeys = new Set(desired.map((chunk) => chunkKey(chunk)));
+    const desiredKey = desiredChunkSetKey(desired);
 
     for (const [key, node] of [...this.active.entries()]) {
       if (desiredKeys.has(key)) continue;
@@ -583,10 +586,9 @@ export class PyramidTileTree {
 
     this.applyInspectionVisuals();
     this.lastBounds = bounds;
-    this.lastQueryBounds = bounds;
-    this.lastLevel = level;
+    this.lastQueryBounds = queryBounds;
+    this.lastDesiredKey = desiredKey;
     this.lastLevelViewport = levelViewportMetres;
-    this.manager.observeVisibility(camera);
     this.refreshLabels();
     this.applyInspectionVisuals();
   }

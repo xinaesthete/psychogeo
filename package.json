@@ -44,7 +44,7 @@
     "bench:shp": "node scripts/benchmark-shp.mjs",
     "pretypecheck": "pnpm run build:shp-wasm:dev",
     "test": "pnpm run typecheck && pnpm run test:pipeline:typecheck && pnpm run test:unit && pnpm run test:viewshed",
-    "test:unit": "vitest run scripts/pipelines/defra-terrain src/geo/pyramidCatalog.test.ts src/geo/groundViewport.test.ts",
+    "test:unit": "vitest run scripts/pipelines/defra-terrain src/geo/pyramidCatalog.test.ts src/geo/pyramidDerive.test.ts src/geo/groundViewport.test.ts src/geo/LodUtils.test.ts",
     "test:pipeline:typecheck": "tsc -p scripts/pipelines/defra-terrain/tsconfig.json --noEmit",
     "test:viewshed": "tsc --ignoreConfig --ignoreDeprecations 6.0 --target ES2022 --module commonjs --moduleResolution node --strict true --types node --outDir /tmp/terracognita-viewshed-tests src/geo/viewshedConfig.ts src/geo/viewshedConfig.test.ts && node /tmp/terracognita-viewshed-tests/viewshedConfig.test.js",
     "pipeline:defra": "node --experimental-strip-types scripts/pipelines/defra-terrain/cli.ts",

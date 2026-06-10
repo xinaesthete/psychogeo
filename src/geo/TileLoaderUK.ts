@@ -29,9 +29,8 @@ import { loadGpxGeometry } from './TrackVis';
 import { syncCompressionExperiment } from './compressionExperiment';
 import {
     collectGeoLodDebugSnapshot,
-    geoLodStateKey,
+    geoLodShadowStateKey,
     getTileMesh,
-    setViewshedLodObserver,
 } from './LodUtils';
 import {
     DEFAULT_VIEWSHED_SHADOW_MAP_SIZE,
@@ -805,7 +804,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
         const catalog = await loadPyramidDataset(config.manifestUrl);
         this.pyramidResolver = new PyramidCatalogResolver(catalog);
         this.tileLayerManager = new TileLayerManagerImpl();
-        this.tileLayerManager.attachChannel(new PyramidHeightChannel({ fixedLodLevel: 4 }));
+        this.tileLayerManager.attachChannel(new PyramidHeightChannel());
         this.dsmLayer.name = `DSM PyramidTileTree '${config.manifestUrl}'`
         this.pyramidTree = new PyramidTileTree(
             this.dsmLayer,
@@ -817,7 +816,6 @@ export class TerrainRenderer extends ThreactTrackballBase {
         );
         this.pyramidTree.reconcile(this.camera);
         this.syncPyramidInspection();
-        this.tileLayerManager.observeVisibility(this.camera);
     }
 
     private ensurePivotMarker(): PivotMarkerParts {
@@ -921,24 +919,12 @@ export class TerrainRenderer extends ThreactTrackballBase {
         this.viewshedLightParts.light.shadow.needsUpdate = true;
     }
 
-    private syncViewshedLodObserver(): void {
-        if (!this.viewshedLightParts?.group.visible) {
-            setViewshedLodObserver(null);
-            return;
-        }
-        setViewshedLodObserver({
-            position: this.viewshedLightParts.group.position,
-            radius: this.viewshedShadowConfig().radius,
-        });
-    }
-
     private markViewshedShadowIfLodStateChanged(): void {
         if (!this.viewshedLightParts?.group.visible) return;
-        const key = geoLodStateKey([
-            this.dsmLayer,
-            this.dtmLayer,
-            this.osTerr50Layer,
-        ]);
+        const key = geoLodShadowStateKey(
+            [this.dsmLayer, this.dtmLayer, this.osTerr50Layer],
+            this.viewshedLightParts.group.position,
+        );
         if (key === this.lastViewshedLodStateKey) return;
         this.lastViewshedLodStateKey = key;
         this.lastSyncedDoubleSidedShadows = undefined;
@@ -957,7 +943,6 @@ export class TerrainRenderer extends ThreactTrackballBase {
 
     private syncViewshedLightSource(): void {
         if (!this.viewshedSurfacePoint) {
-            this.syncViewshedLodObserver();
             return;
         }
         const parts = this.ensureViewshedLight();
@@ -967,7 +952,6 @@ export class TerrainRenderer extends ThreactTrackballBase {
             .copy(this.viewshedSurfacePoint)
             .add(new THREE.Vector3(0, 0, this.viewshedSourceHeight()));
         parts.group.visible = true;
-        this.syncViewshedLodObserver();
         this.requestViewshedShadowUpdate();
         this.updateViewshedMarkerScale();
     }
