@@ -5,7 +5,7 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "allowImportingTsExtensions": true,
-    "types": ["node", "vitest/globals"],
+    "types": ["node", "vitest/globals", "@webgpu/types"],
     "noEmit": true
   },
   "include": ["*.ts", "v2/**/*.ts"]

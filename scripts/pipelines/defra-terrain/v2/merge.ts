@@ -21,6 +21,7 @@ import {
 import type { IngestMetricsCollector } from './metrics.ts';
 import type { IngestV2ProgressEvent } from './ingest.ts';
 import type { EncodingScalars, PyramidNodeManifest, TerrainManifestV2 } from './types.ts';
+import { downsampleNearestGpu } from '../rasterGpu.ts';
 
 export interface MergeOptions {
   readonly outDir: string;
@@ -177,7 +178,7 @@ export async function mergePyramidLevels(options: MergeOptions): Promise<void> {
         options.onProgress?.({ phase: 'merge-level', level: levelEntry.level, gridRef: childRef });
         const source = await loadSourceRasterForFiveKm(options.inputDir, childRef);
         if (!source) continue;
-        const downsampled = downsampleNearest(source, levelEntry.resolutionMetres);
+        const downsampled = await downsampleNearestGpu(source, levelEntry.resolutionMetres);
         const encoding = await encodeMergedChunk(
           options.outDir,
           ingestCell,
