@@ -373,8 +373,14 @@ async function main(): Promise<void> {
   throw new Error(usage());
 }
 
-main().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error);
-  console.error(message);
-  process.exitCode = 1;
-});
+// Explicit exit: WebGPU native handles keep the event loop alive, so the
+// process would otherwise hang forever after main() settles.
+main()
+  .then(() => {
+    process.exit(0);
+  })
+  .catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(message);
+    process.exit(1);
+  });
