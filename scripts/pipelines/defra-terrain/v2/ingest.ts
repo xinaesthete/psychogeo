@@ -5,7 +5,7 @@ import { defaultTileConcurrency } from '../ingest.ts';
 import { encodeUint16Normalized, type EncodedRaster } from '../encoding.ts';
 import { encodeHtj2k } from '../htj2k.ts';
 import { CHANNELS } from '../manifest.ts';
-import { readRasterSource, windowRaster } from '../raster.ts';
+import { readRasterSource, windowRaster, type RasterSource } from '../raster.ts';
 import { scanDefraZips, hasDsmSource, type DefraTileGroup } from '../scan.ts';
 import type { TerrainChannelId, TileExtent } from '../types.ts';
 import {
@@ -277,7 +277,13 @@ async function ingestOneGroup(
   ingestCell: string,
   metadata: TerrainManifestV2,
   group: DefraTileGroup,
-): Promise<{ readonly manifest: PyramidNodeManifest; readonly presentSlots: number; readonly bytes: number; readonly encodeMs: number }> {
+): Promise<{
+  readonly manifest: PyramidNodeManifest;
+  readonly presentSlots: number;
+  readonly bytes: number;
+  readonly encodeMs: number;
+  readonly raster: RasterSource;
+}> {
   const encodeStarted = Date.now();
   const fzSource = group.sources.FZ;
   if (!fzSource) {
@@ -345,7 +351,7 @@ async function ingestOneGroup(
       missing: missing.size > 0 ? [...missing].sort((a, b) => a - b) : undefined,
     },
   };
-  return { manifest, presentSlots, bytes: groupBytes, encodeMs: Date.now() - encodeStarted };
+  return { manifest, presentSlots, bytes: groupBytes, encodeMs: Date.now() - encodeStarted, raster };
 }
 
 interface TenKmCellResult {
@@ -466,6 +472,10 @@ async function ingestTenKmCell(
     .map((group, groupIndex) => ({ group, groupIndex }))
     .filter(({ group }) => !completedKeys.has(groupKey(group.tileRef, group.year)));
 
+  // Rasters decoded for leaf encoding are reused by the merge pass below,
+  // saving a second zip read per group. Bounded by the cell's child count.
+  const rasterCache = new Map<string, RasterSource>();
+
   await mapPool(pendingGroups, groupConcurrency, async ({ group, groupIndex }) => {
     options.onProgress?.({
       phase: 'group-start',
@@ -474,12 +484,13 @@ async function ingestTenKmCell(
       groupCount: groups.length,
     });
 
-    const { manifest, presentSlots, bytes, encodeMs: groupEncodeMs } = await ingestOneGroup(
+    const { manifest, presentSlots, bytes, encodeMs: groupEncodeMs, raster } = await ingestOneGroup(
       options,
       ingestCell,
       metadata,
       group,
     );
+    if (runMerge) rasterCache.set(manifest.gridRef, raster);
 
     await serializeWrites(async () => {
       const manifestPath = nodeManifestPath(ingestCell, manifest.gridRef);
@@ -545,6 +556,8 @@ async function ingestTenKmCell(
       ingestCell,
       metadata,
       inputDir: options.inputDir,
+      groups,
+      sourceCache: rasterCache,
       onProgress: options.onProgress,
       metrics,
     });
@@ -557,6 +570,7 @@ async function ingestTenKmCell(
     await markCellCompleted(options.outDir, ingestCell);
     completedCells.add(ingestCell);
   }
+  rasterCache.clear();
 
   if (leafChunkCount === 0) {
     const existing = await readCellIngestStats(options.outDir, ingestCell);

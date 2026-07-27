@@ -11,7 +11,7 @@ import {
   type RasterWindow,
 } from '../raster.ts';
 import { downsampleReduceManyGpu, type ReduceTarget } from '../rasterGpu.ts';
-import { scanDefraZips } from '../scan.ts';
+import { scanDefraZips, type DefraTileGroup } from '../scan.ts';
 import type { TerrainChannelId } from '../types.ts';
 import {
   mergedChunkDatasetPath,
@@ -33,6 +33,14 @@ export interface MergeOptions {
   readonly ingestCell: string;
   readonly metadata?: TerrainManifestV2;
   readonly inputDir?: string;
+  /** Pre-scanned source groups; avoids re-scanning inputDir per cell. */
+  readonly groups?: readonly DefraTileGroup[];
+  /**
+   * Decoded rasters left over from leaf ingestion, keyed by normalized child
+   * tileRef. Cache hits skip the second zip read entirely; misses (e.g.
+   * children completed in a prior run) fall back to reading the zip.
+   */
+  readonly sourceCache?: ReadonlyMap<string, RasterSource>;
   readonly onProgress?: (event: IngestV2ProgressEvent) => void;
   readonly metrics?: IngestMetricsCollector;
 }
@@ -231,7 +239,8 @@ export async function mergePyramidLevels(options: MergeOptions): Promise<MergeRe
   const squareLevel = finestSquareLevel(metadata);
   const steps: MergeStepMetrics[] = [];
 
-  const groups = options.inputDir ? await scanDefraZips(options.inputDir) : [];
+  const groups =
+    options.groups ?? (options.inputDir ? await scanDefraZips(options.inputDir) : []);
   const groupByRef = new Map(groups.map((group) => [normalizeGridRef(group.tileRef), group]));
 
   const targets: Array<{ level: PyramidLevel; bias: number; role: 'l1' | 'l2' | 'coarse' }> = [];
@@ -248,9 +257,12 @@ export async function mergePyramidLevels(options: MergeOptions): Promise<MergeRe
   for (const childRef of children) {
     const stepStarted = performance.now();
     const loadStarted = performance.now();
-    const group = groupByRef.get(normalizeGridRef(childRef));
-    const fz = group?.sources.FZ;
-    const source: RasterSource | undefined = fz ? await readRasterSource(fz) : undefined;
+    const normalizedRef = normalizeGridRef(childRef);
+    let source: RasterSource | undefined = options.sourceCache?.get(normalizedRef);
+    if (!source) {
+      const fz = groupByRef.get(normalizedRef)?.sources.FZ;
+      source = fz ? await readRasterSource(fz) : undefined;
+    }
     const loadMs = performance.now() - loadStarted;
     if (!source) continue;
 
