@@ -1,26 +1,27 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-
-const execFileAsync = promisify(execFile);
+import * as unzipper from 'unzipper';
 
 export async function listZipEntries(zipPath: string): Promise<string[]> {
-  const { stdout } = await execFileAsync('unzip', ['-Z1', zipPath], {
-    maxBuffer: 8 * 1024 * 1024,
-  });
-  return stdout
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
+  const directory = await unzipper.Open.file(zipPath);
+  return directory.files.map((f) => f.path);
 }
 
-export async function extractZipEntry(zipPath: string, entryPath: string): Promise<Buffer> {
-  const { stdout } = await execFileAsync('unzip', ['-p', zipPath, entryPath], {
-    encoding: 'buffer',
-    maxBuffer: 512 * 1024 * 1024,
-  });
-  return Buffer.from(stdout);
+export async function extractZipEntry(
+  zipPath: string,
+  entryPath: string,
+): Promise<Buffer> {
+  const directory = await unzipper.Open.file(zipPath);
+
+  const entry = directory.files.find((f) => f.path === entryPath);
+  if (!entry) {
+    throw new Error(`Entry not found: ${entryPath}`);
+  }
+
+  return await entry.buffer();
 }
 
-export function findFirstEntry(entries: string[], pattern: RegExp): string | null {
+export function findFirstEntry(
+  entries: string[],
+  pattern: RegExp,
+): string | null {
   return entries.find((entry) => pattern.test(entry)) ?? null;
 }

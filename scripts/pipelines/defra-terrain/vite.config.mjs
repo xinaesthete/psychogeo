@@ -29,7 +29,7 @@ export default defineConfig({
   ssr: {
     target: 'node',
     noExternal: true,
-    external: ['webgpu'],
+    external: ['webgpu', 'unzipper'],
   },
   test: {
     globals: true,
