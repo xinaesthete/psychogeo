@@ -4,8 +4,8 @@ import { encodeUint16Normalized } from '../encoding.ts';
 import { encodeHtj2k } from '../htj2k.ts';
 import { CHANNELS } from '../manifest.ts';
 import {
-  downsampleMaxBiased,
-  MAX_BIAS,
+  downsampleArea,
+  peakBlockSize,
   readRasterSource,
   type RasterSource,
   type RasterWindow,
@@ -243,10 +243,10 @@ export async function mergePyramidLevels(options: MergeOptions): Promise<MergeRe
     options.groups ?? (options.inputDir ? await scanDefraZips(options.inputDir) : []);
   const groupByRef = new Map(groups.map((group) => [normalizeGridRef(group.tileRef), group]));
 
-  const targets: Array<{ level: PyramidLevel; bias: number; role: 'l1' | 'l2' | 'coarse' }> = [];
-  if (l1) targets.push({ level: l1, bias: 0, role: 'l1' });
-  if (l2) targets.push({ level: l2, bias: MAX_BIAS, role: 'l2' });
-  if (squareLevel) targets.push({ level: squareLevel, bias: MAX_BIAS, role: 'coarse' });
+  const targets: Array<{ level: PyramidLevel; role: 'l1' | 'l2' | 'coarse' }> = [];
+  if (l1) targets.push({ level: l1, role: 'l1' });
+  if (l2) targets.push({ level: l2, role: 'l2' });
+  if (squareLevel) targets.push({ level: squareLevel, role: 'coarse' });
   if (targets.length === 0) return { steps };
 
   const l2Tiles: Array<{ extent: TileExtent; pixels: Float32Array; width: number; height: number }> = [];
@@ -266,10 +266,19 @@ export async function mergePyramidLevels(options: MergeOptions): Promise<MergeRe
     const loadMs = performance.now() - loadStarted;
     if (!source) continue;
 
-    const reduceTargets: ReduceTarget[] = targets.map((target) => ({
-      resolutionMetres: target.level.resolutionMetres,
-      bias: target.bias,
-    }));
+    // All merged levels use mean-of-block-maxes so adjacent LODs share the
+    // same surface statistic and transitions don't pop.
+    const reduceTargets: ReduceTarget[] = targets.map((target) => {
+      const factor = Math.max(
+        1,
+        Math.round(target.level.resolutionMetres / source.resolutionMetres),
+      );
+      return {
+        resolutionMetres: target.level.resolutionMetres,
+        blockSize: peakBlockSize(factor),
+        bias: 1,
+      };
+    });
     const { outputs, timing } = await downsampleReduceManyGpu(source, reduceTargets);
     const childBounds = gridRefToBounds(childRef);
 
@@ -490,7 +499,9 @@ export async function finalizeHundredKmSquares(options: SquareMergeOptions): Pro
       let downsampleMs = 0;
       if (!firstLevel) {
         const downsampleStarted = performance.now();
-        currentRaster = downsampleMaxBiased(
+        // The mosaic is already a peak surface (mean-of-block-maxes); coarser
+        // square levels just average it further.
+        currentRaster = downsampleArea(
           {
             pixels: currentRaster.pixels,
             width: currentRaster.width,

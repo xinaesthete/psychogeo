@@ -16,6 +16,8 @@ const ReduceParams = d.struct({
   inHeight: d.u32,
   outWidth: d.u32,
   factor: d.u32,
+  blockSize: d.u32,
+  blocksPerAxis: d.u32,
   bias: d.f32,
 });
 
@@ -140,27 +142,41 @@ function createReducePipeline(
   return root.createGuardedComputePipeline((outX, outY) => {
     'use gpu';
     const factor = params.$.factor;
+    const blockSize = params.$.blockSize;
+    const blocksPerAxis = params.$.blocksPerAxis;
     const inWidth = params.$.inWidth;
     const x0 = d.u32(outX) * factor;
     const y0 = d.u32(outY) * factor;
     let sum = d.f32(0);
-    let maxValue = d.f32(NODATA_OUT);
     let count = d.u32(0);
-    for (let dy = d.u32(0); dy < factor; dy += 1) {
-      const rowOffset = (y0 + dy) * inWidth + x0;
-      for (let dx = d.u32(0); dx < factor; dx += 1) {
-        const value = inPixels.$[rowOffset + dx];
-        if (value > d.f32(VALID_MIN)) {
-          sum += value;
-          maxValue = std.max(maxValue, value);
-          count += 1;
+    let blockMaxSum = d.f32(0);
+    let blockCount = d.u32(0);
+    for (let by = d.u32(0); by < blocksPerAxis; by += 1) {
+      for (let bx = d.u32(0); bx < blocksPerAxis; bx += 1) {
+        let blockMax = d.f32(NODATA_OUT);
+        let blockValid = d.u32(0);
+        for (let dy = d.u32(0); dy < blockSize; dy += 1) {
+          const rowOffset = (y0 + by * blockSize + dy) * inWidth + x0 + bx * blockSize;
+          for (let dx = d.u32(0); dx < blockSize; dx += 1) {
+            const value = inPixels.$[rowOffset + dx];
+            if (value > d.f32(VALID_MIN)) {
+              sum += value;
+              count += 1;
+              blockValid = 1;
+              blockMax = std.max(blockMax, value);
+            }
+          }
+        }
+        if (blockValid > 0) {
+          blockMaxSum += blockMax;
+          blockCount += 1;
         }
       }
     }
     let out = d.f32(NODATA_OUT);
     if (count > 0) {
       const mean = sum / d.f32(count);
-      out = mean + params.$.bias * (maxValue - mean);
+      out = mean + params.$.bias * (blockMaxSum / d.f32(blockCount) - mean);
     }
     outPixels.$[d.u32(outY) * params.$.outWidth + d.u32(outX)] = out;
   });
@@ -180,6 +196,8 @@ function getCachedReduceGpu(
     inHeight: 1,
     outWidth: 1,
     factor: 1,
+    blockSize: 1,
+    blocksPerAxis: 1,
     bias: 0,
   });
   const inPixels = getReduceInput(root, inCount);
@@ -254,7 +272,9 @@ export async function downsampleBilinearGpu(
 
 export interface ReduceTarget {
   readonly resolutionMetres: number;
-  /** 0 = area mean; 1 = footprint max; in between blends toward the max. */
+  /** Sub-block edge for peak preservation; must divide the reduction factor. 1 = plain mean terms. */
+  readonly blockSize: number;
+  /** 0 = area mean; 1 = pure mean-of-block-maxes; in between blends. */
   readonly bias: number;
 }
 
@@ -296,6 +316,9 @@ export async function downsampleReduceManyGpu(
       continue;
     }
 
+    if (factor % target.blockSize !== 0) {
+      throw new Error(`blockSize ${target.blockSize} must divide reduction factor ${factor}`);
+    }
     const cached = getCachedReduceGpu(root, inCount, width * height);
     const uploadStarted = performance.now();
     if (!uploaded) {
@@ -307,6 +330,8 @@ export async function downsampleReduceManyGpu(
       inHeight: source.height,
       outWidth: width,
       factor,
+      blockSize: target.blockSize,
+      blocksPerAxis: factor / target.blockSize,
       bias: target.bias,
     });
     uploadMs += performance.now() - uploadStarted;

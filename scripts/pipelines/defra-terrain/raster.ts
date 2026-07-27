@@ -221,38 +221,75 @@ export function downsampleNearest(source: RasterSource, resolutionMetres: number
   };
 }
 
-/** Weight of the footprint maximum in max-biased reduction: out = mean + bias * (max - mean). */
-export const MAX_BIAS = 0.5;
+/**
+ * Sub-block edge (in source pixels) for peak-preserving reduction — roughly
+ * one tree crown at 1 m resolution. Must divide the reduction factor; 4 covers
+ * the power-of-two factors (8, 32), 5 covers the 125 m level (factor 125).
+ */
+export function peakBlockSize(factor: number): number {
+  if (factor % 4 === 0) return 4;
+  if (factor % 5 === 0) return 5;
+  return 1;
+}
 
 /**
- * Reduce each factor×factor footprint of valid samples to a single value.
- * Footprints with no valid samples (nodata/NaN) produce NaN.
+ * Reduce each factor×factor footprint by averaging the maxima of its
+ * blockSize×blockSize sub-blocks, optionally blended with the plain mean:
+ * out = mean + bias * (meanOfBlockMaxes - mean).
+ *
+ * Peaks (canopy, buildings) survive the block max, while averaging the block
+ * maxima keeps gradients smooth — no extreme-value speckle or footprint-sized
+ * cliffs. Because every level averages the same fixed-scale peak surface,
+ * adjacent pyramid levels stay statistically consistent and LOD transitions
+ * don't pop. Footprints with no valid samples (nodata/NaN) produce NaN.
  */
-function downsampleReduce(
+export function downsampleReduce(
   source: DownsampleSource,
   resolutionMetres: number,
-  reduce: (sum: number, max: number, count: number) => number,
+  blockSize: number,
+  bias: number,
 ): RasterWindow {
   const { factor, width, height } = downsampleDimensions(source, resolutionMetres);
+  if (factor % blockSize !== 0) {
+    throw new Error(`blockSize ${blockSize} must divide reduction factor ${factor}`);
+  }
+  const blocksPerAxis = factor / blockSize;
   const pixels = new Float32Array(width * height);
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
-      let sum = 0;
-      let max = -Infinity;
-      let count = 0;
       const y0 = y * factor;
       const x0 = x * factor;
-      for (let dy = 0; dy < factor; dy += 1) {
-        const rowOffset = (y0 + dy) * source.width + x0;
-        for (let dx = 0; dx < factor; dx += 1) {
-          const value = source.pixels[rowOffset + dx];
-          if (!isValidHeight(value)) continue;
-          sum += value;
-          if (value > max) max = value;
-          count += 1;
+      let sum = 0;
+      let count = 0;
+      let blockMaxSum = 0;
+      let blockCount = 0;
+      for (let by = 0; by < blocksPerAxis; by += 1) {
+        for (let bx = 0; bx < blocksPerAxis; bx += 1) {
+          let blockMax = -Infinity;
+          let blockValid = false;
+          for (let dy = 0; dy < blockSize; dy += 1) {
+            const rowOffset = (y0 + by * blockSize + dy) * source.width + x0 + bx * blockSize;
+            for (let dx = 0; dx < blockSize; dx += 1) {
+              const value = source.pixels[rowOffset + dx];
+              if (!isValidHeight(value)) continue;
+              sum += value;
+              count += 1;
+              blockValid = true;
+              if (value > blockMax) blockMax = value;
+            }
+          }
+          if (blockValid) {
+            blockMaxSum += blockMax;
+            blockCount += 1;
+          }
         }
       }
-      pixels[y * width + x] = count === 0 ? Number.NaN : reduce(sum, max, count);
+      if (count === 0) {
+        pixels[y * width + x] = Number.NaN;
+      } else {
+        const mean = sum / count;
+        pixels[y * width + x] = mean + bias * (blockMaxSum / blockCount - mean);
+      }
     }
   }
   return {
@@ -265,27 +302,16 @@ function downsampleReduce(
 
 /** Area-average reduction: mean of valid samples in each footprint. */
 export function downsampleArea(source: DownsampleSource, resolutionMetres: number): RasterWindow {
-  return downsampleReduce(source, resolutionMetres, (sum, _max, count) => sum / count);
+  return downsampleReduce(source, resolutionMetres, 1, 0);
 }
 
-/**
- * Max-biased reduction: blend of footprint mean and max. Keeps ridgelines,
- * buildings, and canopy distinct at coarse levels where a plain average
- * flattens them.
- */
-export function downsampleMaxBiased(
+/** Peak-preserving reduction: mean of sub-block maxima (see downsampleReduce). */
+export function downsampleMeanOfMaxes(
   source: DownsampleSource,
   resolutionMetres: number,
-  bias = MAX_BIAS,
+  blockSize: number,
 ): RasterWindow {
-  return downsampleReduce(
-    source,
-    resolutionMetres,
-    (sum, max, count) => {
-      const mean = sum / count;
-      return mean + bias * (max - mean);
-    },
-  );
+  return downsampleReduce(source, resolutionMetres, blockSize, 1);
 }
 
 export function downsampleBilinear(source: RasterSource, resolutionMetres: number): RasterWindow {
