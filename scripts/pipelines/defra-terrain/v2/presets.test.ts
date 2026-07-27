@@ -27,6 +27,6 @@ describe('presets', () => {
       indexRoot: indexRootForCell('SP51'),
     });
     expect(parsed.tileMatrixSet.levels).toHaveLength(5);
-    expect(parsed.tileMatrixSet.levels[4]?.resolutionMetres).toBe(512);
+    expect(parsed.tileMatrixSet.levels[4]?.resolutionMetres).toBe(500);
   });
 });

@@ -120,6 +120,7 @@ export function chunkToDsmCatItem(descriptor: ChunkFetchDescriptor): DsmCatItem 
 
 export class PyramidCatalogResolver {
   private readonly manifestCache = new Map<string, PyramidNodeManifest>();
+  private readonly missingManifests = new Set<string>();
   private regionSummary: RegionSummary | undefined;
   private regionSummaryLoaded = false;
 
@@ -131,6 +132,7 @@ export class PyramidCatalogResolver {
 
   clearCache(): void {
     this.manifestCache.clear();
+    this.missingManifests.clear();
     this.regionSummary = undefined;
     this.regionSummaryLoaded = false;
   }
@@ -166,6 +168,92 @@ export class PyramidCatalogResolver {
     const manifest = parseNodeManifestJson(await response.json());
     this.manifestCache.set(cacheKey, manifest);
     return manifest;
+  }
+
+  /**
+   * Load a node manifest, returning undefined (and negative-caching the miss)
+   * instead of throwing. Used for 100 km square nodes, which only exist once
+   * their square has been finalized.
+   */
+  private async tryLoadNodeManifest(
+    ingestCell: string,
+    gridRef: string,
+  ): Promise<PyramidNodeManifest | undefined> {
+    const cacheKey = this.manifestCacheKey(ingestCell, gridRef);
+    if (this.missingManifests.has(cacheKey)) return undefined;
+    try {
+      return await this.loadNodeManifest(ingestCell, gridRef);
+    } catch {
+      this.missingManifests.add(cacheKey);
+      return undefined;
+    }
+  }
+
+  /** Coarsest level merged on cell nodes — the fallback when a square chunk is absent. */
+  private coarsestCellLevel(): number | undefined {
+    const cellLevels = this.catalog.meta.tileMatrixSet.levels.filter(
+      (entry) => entry.level > 0 && entry.tierMetres <= 10000,
+    );
+    if (cellLevels.length === 0) return undefined;
+    return Math.max(...cellLevels.map((entry) => entry.level));
+  }
+
+  private squareChunkDescriptor(
+    square: string,
+    levelEntry: { readonly level: number; readonly resolutionMetres: number; readonly tierMetres: number },
+    encoding: EncodingScalars,
+  ): ChunkFetchDescriptor {
+    const squareBounds = gridRefToBounds(square);
+    const { width, height } = pixelDimensions(levelEntry.tierMetres, levelEntry.resolutionMetres);
+    const relUrl = mergedChunkDatasetPath(square, square, levelEntry.level, this.catalog.meta.naming);
+    return {
+      gridRef: square,
+      level: levelEntry.level,
+      eastMin: squareBounds.eastMin,
+      northMin: squareBounds.northMin,
+      url: resolveDatasetHref(this.catalog.baseUrl, relUrl),
+      encoding,
+      width,
+      height,
+      extentMetres: levelEntry.tierMetres,
+    };
+  }
+
+  /**
+   * Resolve chunks for a 100 km-tier level: one chunk per square node. Cells
+   * whose square has not been finalized fall back to their own coarsest
+   * cell-tier chunks so partially merged datasets still render.
+   */
+  private async resolveSquareChunks(
+    cells: readonly string[],
+    bounds: TileExtent,
+    levelEntry: { readonly level: number; readonly resolutionMetres: number; readonly tierMetres: number },
+  ): Promise<ChunkFetchDescriptor[]> {
+    const cellsBySquare = new Map<string, string[]>();
+    for (const cell of cells) {
+      const cellBounds = gridRefToBounds(cell);
+      if (!extentsIntersect(cellBounds, bounds)) continue;
+      const square = cell.slice(0, 2).toUpperCase();
+      const existing = cellsBySquare.get(square) ?? [];
+      existing.push(cell);
+      cellsBySquare.set(square, existing);
+    }
+
+    const descriptors: ChunkFetchDescriptor[] = [];
+    for (const [square, squareCells] of cellsBySquare) {
+      const manifest = await this.tryLoadNodeManifest(square, square);
+      const encoding = manifest?.levels?.[String(levelEntry.level)];
+      if (encoding) {
+        descriptors.push(this.squareChunkDescriptor(square, levelEntry, encoding));
+        continue;
+      }
+      const fallbackLevel = this.coarsestCellLevel();
+      if (fallbackLevel === undefined) continue;
+      for (const cell of squareCells) {
+        descriptors.push(...(await this.resolveChunksForCell(cell, bounds, fallbackLevel)));
+      }
+    }
+    return descriptors;
   }
 
   private async resolveChunksForCell(
@@ -336,6 +424,26 @@ export class PyramidCatalogResolver {
 
     const descriptors: ChunkFetchDescriptor[] = [];
 
+    // 100 km square chunks cover many ingest cells — use one when every
+    // visible quad is far enough. Cells in the same square emit the same
+    // descriptor; the caller dedupes by chunk key.
+    const squareLevels = meta.tileMatrixSet.levels
+      .filter((entry) => entry.tierMetres === 100000)
+      .sort((a, b) => a.level - b.level);
+    if (squareLevels.length > 0 && quadPlans.every((plan) => plan.quadLevel >= squareLevels[0].level)) {
+      const wanted = Math.min(...quadPlans.map((plan) => plan.quadLevel));
+      const levelEntry =
+        [...squareLevels].reverse().find((entry) => entry.level <= wanted) ?? squareLevels[0];
+      const square = ingestCell.slice(0, 2).toUpperCase();
+      const manifest = await this.tryLoadNodeManifest(square, square);
+      const encoding = manifest?.levels?.[String(levelEntry.level)];
+      if (encoding) {
+        descriptors.push(this.squareChunkDescriptor(square, levelEntry, encoding));
+        return descriptors;
+      }
+      // Square not finalized yet — fall through to cell-tier resolution.
+    }
+
     // L2 covers the whole ingest cell — only use it when every visible quad is far enough.
     if (l2Entry && quadPlans.every((plan) => plan.quadLevel >= 2)) {
       const encoding = root.levels?.['2'];
@@ -417,18 +525,29 @@ export class PyramidCatalogResolver {
     targetLevel?: number,
   ): Promise<ChunkFetchDescriptor[]> {
     const regionSummary = await this.loadRegionSummary();
+    const { meta } = this.catalog;
+    const level = targetLevel ?? pickPyramidLevel(meta, viewportSpanMetres(bounds));
+    const levelEntry = meta.tileMatrixSet.levels.find((entry) => entry.level === level);
+
+    if (levelEntry && levelEntry.tierMetres === 100000) {
+      const cells = regionSummary
+        ? regionSummary.cells.map((cell) => cell.cell)
+        : [meta.ingestCell];
+      return this.resolveSquareChunks(cells, bounds, levelEntry);
+    }
+
     if (regionSummary) {
       const descriptors: ChunkFetchDescriptor[] = [];
       for (const cell of regionSummary.cells) {
         const cellBounds = gridRefToBounds(cell.cell);
         if (!extentsIntersect(cellBounds, bounds)) continue;
-        const cellChunks = await this.resolveChunksForCell(cell.cell, bounds, targetLevel);
+        const cellChunks = await this.resolveChunksForCell(cell.cell, bounds, level);
         descriptors.push(...cellChunks);
       }
       return descriptors;
     }
 
-    return this.resolveChunksForCell(this.catalog.meta.ingestCell, bounds, targetLevel);
+    return this.resolveChunksForCell(meta.ingestCell, bounds, level);
   }
 
   async resolveChunksInBoundsAdaptive(
@@ -452,6 +571,14 @@ export class PyramidCatalogResolver {
         camera,
       );
     }
+    // Cells sharing a 100 km square emit identical square descriptors.
+    const seen = new Set<string>();
+    descriptors = descriptors.filter((descriptor) => {
+      const key = chunkKey(descriptor);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
     return dedupeOverlappingChunks(descriptors);
   }
 

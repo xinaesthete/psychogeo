@@ -34,6 +34,13 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    include: ['**/*.test.ts'],
+    dir: resolve(pipelineRoot, '../../..'),
+    include: [
+      'scripts/pipelines/defra-terrain/**/*.test.ts',
+      'src/geo/pyramidCatalog.test.ts',
+      'src/geo/pyramidDerive.test.ts',
+      'src/geo/groundViewport.test.ts',
+      'src/geo/LodUtils.test.ts',
+    ],
   },
 });

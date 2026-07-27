@@ -87,6 +87,9 @@ importers:
       '@types/three':
         specifier: ^0.183.1
         version: 0.183.1
+      '@types/unzipper':
+        specifier: ^0.10.11
+        version: 0.10.11
       '@vitejs/plugin-react':
         specifier: ^6.0.1
         version: 6.0.1(vite@8.0.3(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)(@types/node@25.5.2))
@@ -691,6 +694,9 @@ packages:
 
   '@types/three@0.183.1':
     resolution: {integrity: sha512-f2Pu5Hrepfgavttdye3PsH5RWyY/AvdZQwIVhrc4uNtvF7nOWJacQKcoVJn0S4f0yYbmAE6AR+ve7xDcuYtMGw==}
+
+  '@types/unzipper@0.10.11':
+    resolution: {integrity: sha512-D25im2zjyMCcgL9ag6N46+wbtJBnXIr7SI4zHf9eJD2Dw2tEB5e+p5MYkrxKIVRscs5QV0EhtU9rgXSPx90oJg==}
 
   '@types/webxr@0.5.24':
     resolution: {integrity: sha512-h8fgEd/DpoS9CBrjEQXR+dIDraopAEfu4wYVNY2tEPwk60stPWhvZMf4Foo5FakuQ7HFZoa8WceaWFervK2Ovg==}
@@ -2545,6 +2551,10 @@ snapshots:
       '@webgpu/types': 0.1.70
       fflate: 0.8.2
       meshoptimizer: 1.0.1
+
+  '@types/unzipper@0.10.11':
+    dependencies:
+      '@types/node': 25.5.2
 
   '@types/webxr@0.5.24': {}
 

@@ -1,4 +1,5 @@
 import { fromArrayBuffer } from 'geotiff';
+import { isValidHeight } from './encoding.ts';
 import type { DefraZipSource } from './scan.ts';
 import type { SourceProvenance, TileExtent } from './types.ts';
 import { extentFromEsriXml, extentFromWorldFile, parseWorldFile } from './tfw.ts';
@@ -149,8 +150,14 @@ export interface RasterWindow {
   readonly extent: TileExtent;
 }
 
+/** The subset of RasterSource the downsample helpers actually need. */
+export type DownsampleSource = Pick<
+  RasterSource,
+  'width' | 'height' | 'pixels' | 'resolutionMetres' | 'extent'
+>;
+
 export function downsampleExtent(
-  source: RasterSource,
+  source: DownsampleSource,
   width: number,
   height: number,
   resolutionMetres: number,
@@ -164,7 +171,7 @@ export function downsampleExtent(
 }
 
 export function downsampleDimensions(
-  source: RasterSource,
+  source: DownsampleSource,
   resolutionMetres: number,
 ): { readonly factor: number; readonly width: number; readonly height: number } {
   const factor = Math.max(1, Math.round(resolutionMetres / source.resolutionMetres));
@@ -212,6 +219,73 @@ export function downsampleNearest(source: RasterSource, resolutionMetres: number
     height,
     extent: downsampleExtent(source, width, height, resolutionMetres),
   };
+}
+
+/** Weight of the footprint maximum in max-biased reduction: out = mean + bias * (max - mean). */
+export const MAX_BIAS = 0.5;
+
+/**
+ * Reduce each factor×factor footprint of valid samples to a single value.
+ * Footprints with no valid samples (nodata/NaN) produce NaN.
+ */
+function downsampleReduce(
+  source: DownsampleSource,
+  resolutionMetres: number,
+  reduce: (sum: number, max: number, count: number) => number,
+): RasterWindow {
+  const { factor, width, height } = downsampleDimensions(source, resolutionMetres);
+  const pixels = new Float32Array(width * height);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      let sum = 0;
+      let max = -Infinity;
+      let count = 0;
+      const y0 = y * factor;
+      const x0 = x * factor;
+      for (let dy = 0; dy < factor; dy += 1) {
+        const rowOffset = (y0 + dy) * source.width + x0;
+        for (let dx = 0; dx < factor; dx += 1) {
+          const value = source.pixels[rowOffset + dx];
+          if (!isValidHeight(value)) continue;
+          sum += value;
+          if (value > max) max = value;
+          count += 1;
+        }
+      }
+      pixels[y * width + x] = count === 0 ? Number.NaN : reduce(sum, max, count);
+    }
+  }
+  return {
+    pixels,
+    width,
+    height,
+    extent: downsampleExtent(source, width, height, resolutionMetres),
+  };
+}
+
+/** Area-average reduction: mean of valid samples in each footprint. */
+export function downsampleArea(source: DownsampleSource, resolutionMetres: number): RasterWindow {
+  return downsampleReduce(source, resolutionMetres, (sum, _max, count) => sum / count);
+}
+
+/**
+ * Max-biased reduction: blend of footprint mean and max. Keeps ridgelines,
+ * buildings, and canopy distinct at coarse levels where a plain average
+ * flattens them.
+ */
+export function downsampleMaxBiased(
+  source: DownsampleSource,
+  resolutionMetres: number,
+  bias = MAX_BIAS,
+): RasterWindow {
+  return downsampleReduce(
+    source,
+    resolutionMetres,
+    (sum, max, count) => {
+      const mean = sum / count;
+      return mean + bias * (max - mean);
+    },
+  );
 }
 
 export function downsampleBilinear(source: RasterSource, resolutionMetres: number): RasterWindow {

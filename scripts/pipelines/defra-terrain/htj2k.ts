@@ -45,7 +45,9 @@ function isEncoderInstance(value: unknown): value is EncoderInstance {
 function patchNodeFetchForOpenJph(): () => void {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    if (typeof input === 'string' && input.startsWith('/')) {
+    // Emscripten passes a local filesystem path here ('/…' on POSIX,
+    // 'C:\…' on Windows); anything that isn't an http(s) URL is a file.
+    if (typeof input === 'string' && !/^https?:/i.test(input)) {
       return Promise.resolve(
         new Response(readFileSync(input), {
           headers: {

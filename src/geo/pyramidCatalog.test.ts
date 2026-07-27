@@ -293,6 +293,124 @@ describe('pyramidCatalog', () => {
     }
   });
 
+  const NATIONAL_PYRAMID_LEVELS = [
+    { level: 0, resolutionMetres: 1, tierMetres: 1000 },
+    { level: 1, resolutionMetres: 8, tierMetres: 5000 },
+    { level: 2, resolutionMetres: 32, tierMetres: 10000 },
+    { level: 3, resolutionMetres: 125, tierMetres: 100000 },
+    { level: 4, resolutionMetres: 500, tierMetres: 100000 },
+  ];
+
+  function buildNationalHandlers(baseUrl: string, includeSquare: boolean): Record<string, unknown> {
+    const cellRoot = (cell: string) => ({
+      gridRef: cell,
+      children: [],
+      coverage: 'complete',
+      levels: {
+        '2': { min: 30, max: 120, scale: 0.02, offset: 30 },
+      },
+    });
+    const handlers: Record<string, unknown> = {
+      [`${baseUrl}metadata.json`]: {
+        schemaVersion: 'psychogeo.terrain.v2',
+        format: 'tc-dsm-pyramid',
+        datasetId: 'test-national',
+        channelId: 'height.dsm.fz',
+        ingestCell: 'SP50',
+        crs: { horizontal: 'EPSG:27700', verticalDatum: 'ODN' },
+        spatialIndex: defaultSpatialIndex(),
+        naming: defaultNamingConvention(),
+        tileMatrixSet: { levels: NATIONAL_PYRAMID_LEVELS },
+        encoding: {
+          codec: 'htj2k',
+          sampleType: 'uint16',
+          normalisation: 'perChunkScaleOffset',
+          nodata: 0,
+        },
+        indexRoot: indexRootForCell('SP50'),
+        regionSummary: 'index/region-summary.json',
+      },
+      [`${baseUrl}index/region-summary.json`]: {
+        region: { kind: 'grid-ref', gridRef: 'SP' },
+        regionLabel: 'SP',
+        cells: [
+          { cell: 'SP50', indexRoot: indexRootForCell('SP50'), groupCount: 4, leafChunks: 100, outputBytes: 1 },
+          { cell: 'SP51', indexRoot: indexRootForCell('SP51'), groupCount: 4, leafChunks: 100, outputBytes: 1 },
+        ],
+      },
+      [`${baseUrl}pyramid/SP50/manifest.json`]: cellRoot('SP50'),
+      [`${baseUrl}pyramid/SP51/manifest.json`]: cellRoot('SP51'),
+    };
+    if (includeSquare) {
+      handlers[`${baseUrl}pyramid/SP/manifest.json`] = {
+        gridRef: 'SP',
+        children: ['SP50', 'SP51'],
+        levels: {
+          '3': { min: 30, max: 120, scale: 0.02, offset: 30 },
+          '4': { min: 30, max: 120, scale: 0.03, offset: 30 },
+        },
+      };
+    }
+    return handlers;
+  }
+
+  it('picks 100 km levels by resolution-based viewport thresholds', async () => {
+    const baseUrl = 'https://example.test/national/';
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockFetch(buildNationalHandlers(baseUrl, true));
+    try {
+      const catalog = await loadPyramidDataset(`${baseUrl}metadata.json`);
+      expect(pickPyramidLevelForViewport(catalog, 26000)).toBe(2);
+      expect(pickPyramidLevelForViewport(catalog, 130000)).toBe(3);
+      expect(pickPyramidLevelForViewport(catalog, 400000)).toBe(4);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('resolves one square chunk per 100 km square at coarse levels', async () => {
+    const baseUrl = 'https://example.test/national/';
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockFetch(buildNationalHandlers(baseUrl, true));
+    try {
+      const catalog = await loadPyramidDataset(`${baseUrl}metadata.json`);
+      const resolver = new PyramidCatalogResolver(catalog);
+      const chunks = await resolver.resolveChunksInBounds(
+        { eastMin: 440000, eastMax: 470000, northMin: 200000, northMax: 230000 },
+        3,
+      );
+      expect(chunks).toHaveLength(1);
+      expect(chunks[0]?.gridRef).toBe('SP');
+      expect(chunks[0]?.level).toBe(3);
+      expect(chunks[0]?.eastMin).toBe(400000);
+      expect(chunks[0]?.northMin).toBe(200000);
+      expect(chunks[0]?.extentMetres).toBe(100000);
+      expect(chunks[0]?.width).toBe(800);
+      expect(chunks[0]?.height).toBe(800);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('falls back to cell-tier chunks when the square is not finalized', async () => {
+    const baseUrl = 'https://example.test/national-partial/';
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockFetch(buildNationalHandlers(baseUrl, false));
+    try {
+      const catalog = await loadPyramidDataset(`${baseUrl}metadata.json`);
+      const resolver = new PyramidCatalogResolver(catalog);
+      const chunks = await resolver.resolveChunksInBounds(
+        { eastMin: 440000, eastMax: 470000, northMin: 200000, northMax: 230000 },
+        3,
+      );
+      expect(chunks).toHaveLength(2);
+      expect(new Set(chunks.map((chunk) => chunk.level))).toEqual(new Set([2]));
+      expect(new Set(chunks.map((chunk) => chunk.gridRef))).toEqual(new Set(['SP50', 'SP51']));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it('parses node manifest schema', () => {
     const enc25 = Array.from({ length: 25 }, () => 1);
     const node = parseNodeManifestJson({

@@ -1,5 +1,5 @@
 import tgpu, { d, std, type TgpuGuardedComputePipeline, type TgpuMutable, type TgpuReadonly, type TgpuRoot, type TgpuUniform } from 'typegpu';
-import type { RasterWindow } from './raster.ts';
+import type { DownsampleSource, RasterWindow } from './raster.ts';
 import { downsampleDimensions, downsampleExtent } from './raster.ts';
 import { getGpuRoot } from './gpuContext.ts';
 import type { RasterSource } from './raster.ts';
@@ -10,6 +10,18 @@ const DownsampleParams = d.struct({
   outWidth: d.u32,
   factor: d.u32,
 });
+
+const ReduceParams = d.struct({
+  inWidth: d.u32,
+  inHeight: d.u32,
+  outWidth: d.u32,
+  factor: d.u32,
+  bias: d.f32,
+});
+
+// DEFRA float nodata is -3.4e38; anything below this threshold is invalid.
+const VALID_MIN = -1.7e38;
+const NODATA_OUT = -3.0e38;
 
 export interface DownsampleGpuTiming {
   readonly uploadMs: number;
@@ -102,8 +114,89 @@ async function getCachedDownsampleGpu(
   return cached;
 }
 
+interface CachedReduceGpu {
+  readonly params: TgpuUniform<typeof ReduceParams>;
+  readonly outPixels: TgpuMutable<d.WgslArray<d.F32>>;
+  readonly reducePipeline: TgpuGuardedComputePipeline<[outX: number, outY: number]>;
+}
+
+const reduceInputCache = new Map<number, TgpuReadonly<d.WgslArray<d.F32>>>();
+const reducePipelineCache = new Map<string, CachedReduceGpu>();
+
+function getReduceInput(root: TgpuRoot, inCount: number): TgpuReadonly<d.WgslArray<d.F32>> {
+  const existing = reduceInputCache.get(inCount);
+  if (existing) return existing;
+  const created = root.createReadonly(d.arrayOf(d.f32, inCount));
+  reduceInputCache.set(inCount, created);
+  return created;
+}
+
+function createReducePipeline(
+  root: TgpuRoot,
+  params: CachedReduceGpu['params'],
+  inPixels: TgpuReadonly<d.WgslArray<d.F32>>,
+  outPixels: CachedReduceGpu['outPixels'],
+): CachedReduceGpu['reducePipeline'] {
+  return root.createGuardedComputePipeline((outX, outY) => {
+    'use gpu';
+    const factor = params.$.factor;
+    const inWidth = params.$.inWidth;
+    const x0 = d.u32(outX) * factor;
+    const y0 = d.u32(outY) * factor;
+    let sum = d.f32(0);
+    let maxValue = d.f32(NODATA_OUT);
+    let count = d.u32(0);
+    for (let dy = d.u32(0); dy < factor; dy += 1) {
+      const rowOffset = (y0 + dy) * inWidth + x0;
+      for (let dx = d.u32(0); dx < factor; dx += 1) {
+        const value = inPixels.$[rowOffset + dx];
+        if (value > d.f32(VALID_MIN)) {
+          sum += value;
+          maxValue = std.max(maxValue, value);
+          count += 1;
+        }
+      }
+    }
+    let out = d.f32(NODATA_OUT);
+    if (count > 0) {
+      const mean = sum / d.f32(count);
+      out = mean + params.$.bias * (maxValue - mean);
+    }
+    outPixels.$[d.u32(outY) * params.$.outWidth + d.u32(outX)] = out;
+  });
+}
+
+function getCachedReduceGpu(
+  root: TgpuRoot,
+  inCount: number,
+  outCount: number,
+): CachedReduceGpu {
+  const key = cacheKey(inCount, outCount);
+  const existing = reducePipelineCache.get(key);
+  if (existing) return existing;
+
+  const params = root.createUniform(ReduceParams, {
+    inWidth: 1,
+    inHeight: 1,
+    outWidth: 1,
+    factor: 1,
+    bias: 0,
+  });
+  const inPixels = getReduceInput(root, inCount);
+  const outPixels = root.createMutable(d.arrayOf(d.f32, outCount));
+  const cached: CachedReduceGpu = {
+    params,
+    outPixels,
+    reducePipeline: createReducePipeline(root, params, inPixels, outPixels),
+  };
+  reducePipelineCache.set(key, cached);
+  return cached;
+}
+
 export function resetGpuRasterCache(): void {
   bilinearCache.clear();
+  reduceInputCache.clear();
+  reducePipelineCache.clear();
 }
 
 export async function downsampleBilinearGpu(
@@ -150,6 +243,88 @@ export async function downsampleBilinearGpu(
     width,
     height,
     extent: downsampleExtent(source, width, height, resolutionMetres),
+    timing: {
+      uploadMs,
+      kernelMs,
+      readbackMs,
+      totalMs: performance.now() - totalStarted,
+    },
+  };
+}
+
+export interface ReduceTarget {
+  readonly resolutionMetres: number;
+  /** 0 = area mean; 1 = footprint max; in between blends toward the max. */
+  readonly bias: number;
+}
+
+export interface ReduceManyGpuResult {
+  readonly outputs: readonly RasterWindow[];
+  readonly timing: DownsampleGpuTiming;
+}
+
+function sentinelToNaN(pixels: Float32Array): Float32Array {
+  for (let i = 0; i < pixels.length; i += 1) {
+    if (pixels[i] < VALID_MIN) pixels[i] = Number.NaN;
+  }
+  return pixels;
+}
+
+/**
+ * Run several nodata-aware reductions of one source raster with a single
+ * GPU upload. Each output pixel aggregates the full factor×factor footprint;
+ * footprints with no valid samples come back as NaN.
+ */
+export async function downsampleReduceManyGpu(
+  source: DownsampleSource,
+  targets: readonly ReduceTarget[],
+): Promise<ReduceManyGpuResult> {
+  const totalStarted = performance.now();
+  const outputs: RasterWindow[] = [];
+  let uploadMs = 0;
+  let kernelMs = 0;
+  let readbackMs = 0;
+  let uploaded = false;
+  const root = await getGpuRoot();
+  const inCount = source.width * source.height;
+
+  for (const target of targets) {
+    const { factor, width, height } = downsampleDimensions(source, target.resolutionMetres);
+    const extent = downsampleExtent(source, width, height, target.resolutionMetres);
+    if (width === 0 || height === 0) {
+      outputs.push({ pixels: new Float32Array(0), width, height, extent });
+      continue;
+    }
+
+    const cached = getCachedReduceGpu(root, inCount, width * height);
+    const uploadStarted = performance.now();
+    if (!uploaded) {
+      getReduceInput(root, inCount).write(source.pixels);
+      uploaded = true;
+    }
+    cached.params.write({
+      inWidth: source.width,
+      inHeight: source.height,
+      outWidth: width,
+      factor,
+      bias: target.bias,
+    });
+    uploadMs += performance.now() - uploadStarted;
+
+    const kernelStarted = performance.now();
+    cached.reducePipeline.dispatchThreads(width, height);
+    kernelMs += performance.now() - kernelStarted;
+
+    const readbackStarted = performance.now();
+    const out = await cached.outPixels.read();
+    const pixels = sentinelToNaN(Float32Array.from(out));
+    readbackMs += performance.now() - readbackStarted;
+
+    outputs.push({ pixels, width, height, extent });
+  }
+
+  return {
+    outputs,
     timing: {
       uploadMs,
       kernelMs,

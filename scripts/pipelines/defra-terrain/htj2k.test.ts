@@ -33,7 +33,7 @@ function isOpenJphModule(value: unknown): value is OpenJphModule {
 async function openJphModule(): Promise<OpenJphModule> {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    if (typeof input === 'string' && input.startsWith('/')) {
+    if (typeof input === 'string' && !/^https?:/i.test(input)) {
       return Promise.resolve(
         new Response(readFileSync(input), {
           headers: {

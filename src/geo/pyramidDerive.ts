@@ -150,6 +150,20 @@ export function pickPyramidLevelForTileDistance(
   return pickPyramidLevel(meta, viewportMetres);
 }
 
+/**
+ * Viewport pixels assumed when deciding whether a 100 km-tier level's
+ * resolution is coarse enough for the current view. Same-tier levels (e.g.
+ * 125 m and 500 m squares) are disambiguated by resolution, not tier.
+ */
+const COARSE_VIEWPORT_PIXELS = 780;
+
+export function pyramidLevelThreshold(entry: PyramidLevel): number {
+  if (entry.tierMetres === 100000) {
+    return entry.resolutionMetres * COARSE_VIEWPORT_PIXELS;
+  }
+  return entry.level > 1 ? entry.tierMetres * 2.5 : entry.tierMetres;
+}
+
 export function pickPyramidLevel(
   meta: TerrainManifestV2,
   viewportMetres: number,
@@ -157,8 +171,7 @@ export function pickPyramidLevel(
   const levels = [...meta.tileMatrixSet.levels].sort((a, b) => b.level - a.level);
   for (const entry of levels) {
     if (entry.level === 0) continue;
-    const threshold = entry.level > 1 ? entry.tierMetres * 2.5 : entry.tierMetres;
-    if (viewportMetres >= threshold) {
+    if (viewportMetres >= pyramidLevelThreshold(entry)) {
       return entry.level;
     }
   }

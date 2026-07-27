@@ -740,6 +740,26 @@ export async function ingestDefraTerrainV2(options: IngestV2Options): Promise<In
     }
   }
 
+  if (runMerge && levels.some((entry) => entry.tierMetres === 100000)) {
+    const mergedDataCells = cells.filter(
+      (cell) => completedCells.has(cell) && (groupsByCell.get(cell) ?? []).length > 0,
+    );
+    if (mergedDataCells.length > 0) {
+      const squareStarted = Date.now();
+      const { finalizeHundredKmSquares } = await import('./merge.ts');
+      const squareResult = await finalizeHundredKmSquares({
+        outDir: options.outDir,
+        metadata: buildMetadata(options, primaryCell, levels),
+        cells: mergedDataCells,
+        onProgress: options.onProgress,
+        metrics,
+      });
+      if (squareResult.steps.length > 0) {
+        metrics.addMergeMs(Date.now() - squareStarted);
+      }
+    }
+  }
+
   let metadataPath: string | undefined;
   let regionSummaryPath: string | undefined;
   const finalSkippedGroups = await readSkippedGroups(options.outDir);

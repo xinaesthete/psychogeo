@@ -159,6 +159,6 @@ export function isSingleTenKmCell(region: RegionSpec): boolean {
 }
 
 export function singleTenKmCell(region: RegionSpec): string | undefined {
-  if (!isSingleTenKmCell(region)) return undefined;
+  if (region.kind !== 'grid-ref' || !isSingleTenKmCell(region)) return undefined;
   return normalizeGridRef(region.gridRef);
 }

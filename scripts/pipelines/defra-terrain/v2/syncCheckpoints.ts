@@ -66,7 +66,11 @@ function tileRefYearMap(groups: readonly DefraTileGroup[]): Map<string, number> 
 }
 
 function topMergeLevel(metadata: TerrainManifestV2): number | undefined {
-  const mergeLevels = metadata.tileMatrixSet.levels.filter((entry) => entry.level > 0);
+  // 100 km-tier levels live on square nodes, not cell nodes — a cell counts
+  // as merged once its own coarsest (tier <= 10 km) level is present.
+  const mergeLevels = metadata.tileMatrixSet.levels.filter(
+    (entry) => entry.level > 0 && entry.tierMetres <= 10000,
+  );
   if (mergeLevels.length === 0) return undefined;
   return Math.max(...mergeLevels.map((entry) => entry.level));
 }

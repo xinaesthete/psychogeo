@@ -6,7 +6,13 @@
     "titleBar.activeBackground": "#4622A7",
     "titleBar.activeForeground": "#FBFAFE",
     "titleBar.inactiveBackground": "#24138A",
-    "titleBar.inactiveForeground": "#FAF9FE"
+    "titleBar.inactiveForeground": "#FAF9FE",
+    "statusBar.background": "#321976",
+    "statusBar.foreground": "#FCFCFE",
+    "statusBar.debuggingBackground": "#321976",
+    "statusBar.debuggingForeground": "#FCFCFE",
+    "statusBar.noFolderBackground": "#321976",
+    "statusBar.noFolderForeground": "#FCFCFE"
   },
   "typescript.tsdk": "node_modules/typescript/lib"
 }
