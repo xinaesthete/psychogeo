@@ -40,12 +40,12 @@ function exitAfterChildren(code = 0) {
   process.exitCode = code;
 }
 
-function spawnPnpmScript(scriptName) {
+function spawnPnpmScript(scriptName, envOverrides = {}) {
   const { command, args } = pnpmCommand();
   const child = spawn(command, [...args, 'run', scriptName], {
     cwd: process.cwd(),
     stdio: 'inherit',
-    env: process.env,
+    env: { ...process.env, ...envOverrides },
   });
   children.add(child);
   child.on('exit', (code, signal) => {
@@ -99,7 +99,9 @@ for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
 }
 
 console.log(`Starting dev proxy on port ${proxyPort}...`);
-spawnPnpmScript('dev:proxy');
+// Pin the proxy port: an inherited PORT (e.g. from preview tooling) would
+// otherwise steal Vite's port via start-server.js's `process.env.PORT`.
+spawnPnpmScript('dev:proxy', { PORT: String(proxyPort) });
 
 try {
   await waitForPort(proxyPort, proxyTimeoutMs);
