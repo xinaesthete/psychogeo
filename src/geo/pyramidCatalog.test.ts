@@ -139,6 +139,35 @@ describe('pyramidCatalog', () => {
     }
   });
 
+  it('shares one manifest fetch across concurrent resolves', async () => {
+    const baseUrl = 'https://example.test/dataset/';
+    const counts = new Map<string, number>();
+    const base = mockFetch(buildFixtureHandlers(baseUrl));
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      counts.set(url, (counts.get(url) ?? 0) + 1);
+      return base(input, init);
+    }) as typeof fetch;
+    try {
+      const catalog = await loadPyramidDataset(`${baseUrl}metadata.json`);
+      const resolver = new PyramidCatalogResolver(catalog);
+      const bounds = { eastMin: 455100, eastMax: 455900, northMin: 215100, northMax: 215900 };
+      const results = await Promise.all([
+        resolver.resolveChunksInBounds(bounds, 0),
+        resolver.resolveChunksInBounds(bounds, 0),
+        resolver.resolveChunksInBounds(bounds, 0),
+      ]);
+      for (const chunks of results) {
+        expect(chunks).toHaveLength(1);
+      }
+      expect(counts.get(`${baseUrl}pyramid/SP51/manifest.json`)).toBe(1);
+      expect(counts.get(`${baseUrl}pyramid/SP51/SP51ne/manifest.json`)).toBe(1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it('resolves leaf chunks in bounds by arithmetic', async () => {
     const baseUrl = 'https://example.test/dataset/';
     const originalFetch = globalThis.fetch;

@@ -119,7 +119,7 @@ export function chunkToDsmCatItem(descriptor: ChunkFetchDescriptor): DsmCatItem 
 }
 
 export class PyramidCatalogResolver {
-  private readonly manifestCache = new Map<string, PyramidNodeManifest>();
+  private readonly manifestCache = new Map<string, Promise<PyramidNodeManifest>>();
   private readonly missingManifests = new Set<string>();
   private regionSummary: RegionSummary | undefined;
   private regionSummaryLoaded = false;
@@ -155,19 +155,26 @@ export class PyramidCatalogResolver {
     return this.regionSummary;
   }
 
-  private async loadNodeManifest(ingestCell: string, gridRef: string): Promise<PyramidNodeManifest> {
+  private loadNodeManifest(ingestCell: string, gridRef: string): Promise<PyramidNodeManifest> {
     const cacheKey = this.manifestCacheKey(ingestCell, gridRef);
     const cached = this.manifestCache.get(cacheKey);
     if (cached) return cached;
-    const relPath = nodeManifestPath(ingestCell, gridRef);
-    const url = resolveDatasetHref(this.catalog.baseUrl, relPath);
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch pyramid node manifest ${url}: ${response.status}`);
-    }
-    const manifest = parseNodeManifestJson(await response.json());
-    this.manifestCache.set(cacheKey, manifest);
-    return manifest;
+    const pending = (async () => {
+      const relPath = nodeManifestPath(ingestCell, gridRef);
+      const url = resolveDatasetHref(this.catalog.baseUrl, relPath);
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch pyramid node manifest ${url}: ${response.status}`);
+      }
+      return parseNodeManifestJson(await response.json());
+    })();
+    // Cache the in-flight promise so concurrent resolves share one fetch;
+    // drop it on failure so a later call can retry.
+    this.manifestCache.set(cacheKey, pending);
+    pending.catch(() => {
+      this.manifestCache.delete(cacheKey);
+    });
+    return pending;
   }
 
   /**
