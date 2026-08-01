@@ -41,6 +41,7 @@ export default defineConfig({
       'src/geo/pyramidDerive.test.ts',
       'src/geo/groundViewport.test.ts',
       'src/geo/LodUtils.test.ts',
+      'src/geo/tileGeometry.test.ts',
       'src/camera/orbitClamp.test.ts',
       'src/openjpegjs/textureLruCache.test.ts',
     ],

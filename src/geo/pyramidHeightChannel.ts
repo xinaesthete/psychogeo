@@ -1,13 +1,20 @@
 import * as THREE from 'three';
 import * as JP2 from '../openjpegjs/jp2kloader';
 import { globalUniforms } from '../threact/threact';
-import { computeTriangleGridIndices } from '../threact/threexample';
 import { GeoLOD } from './GeoLod';
 import type { EncodingScalars } from './pyramidTypes';
+import {
+  getTileLodGeometry,
+  isSharedTileGeometry,
+  tileLodDistance,
+  tileLodLevels,
+  tileLodUniforms,
+} from './tileGeometry';
 import {
   applyCustomDepth,
   getTileMaterial,
   getTilePickMaterial,
+  unregisterTileMaterial,
   type TileUniformBag,
 } from './tileShaderRuntime';
 import type {
@@ -17,44 +24,19 @@ import type {
   TileNode,
 } from './tileLayerTypes';
 
-const LOD_LEVELS = 12;
-const tileBBox = new THREE.Box3(new THREE.Vector3(-0.5, -0.5, 0), new THREE.Vector3(0.5, 0.5, 1));
-const tileBSphere = new THREE.Sphere();
-tileBBox.getBoundingSphere(tileBSphere);
-
-function makeTileGeometry(s: number) {
-  const geo = new THREE.BufferGeometry();
-  geo.drawRange.count = (s - 1) * (s - 1) * 6;
-  geo.setIndex(computeTriangleGridIndices(s, s));
-  geo.boundingSphere = tileBSphere;
-  geo.boundingBox = tileBBox;
-  geo.name = `tileGeom (${s}, ${geo.drawRange.count/3} triangles)`
-  return geo;
-}
-
-const tileGeom: THREE.BufferGeometry[] = [];
-for (let i = 0; i < LOD_LEVELS; i += 1) {
-  tileGeom.push(makeTileGeometry(Math.floor(4096 / Math.pow(2, i))));
-}
-
-function getLodUniforms(lod: number) {
-  const s = Math.pow(2, lod);
-  const w = 4096 / s;
-  const e = 1 / (w - 1);
-  return {
-    EPS: { value: new THREE.Vector2(e, e) },
-    gridSizeX: { value: w },
-    gridSizeY: { value: w },
-    LOD: { value: lod / LOD_LEVELS },
-  };
-}
-
 function encodingHeightMin(encoding: EncodingScalars): number {
   return encoding.offset;
 }
 
 function encodingHeightMax(encoding: EncodingScalars): number {
   return encoding.offset + encoding.scale * 65536;
+}
+
+function textureWidthOf(texture: THREE.Texture): number | undefined {
+  const image = texture.image;
+  if (!image || typeof image !== 'object' || !('width' in image)) return undefined;
+  const width = (image as { width?: unknown }).width;
+  return typeof width === 'number' && Number.isFinite(width) ? width : undefined;
 }
 
 export function buildGeoLodMesh(
@@ -71,28 +53,37 @@ export function buildGeoLodMesh(
   lodObj.scale.set(extentMetres, extentMetres, eleScale);
   lodObj.position.z = heightMin;
 
-  for (let lod = 0; lod < LOD_LEVELS; lod += 1) {
+  const levels = tileLodLevels(textureWidthOf(texture));
+  // A fixed level finer than the texture supports has no geometry; use the
+  // finest the ladder actually offers.
+  const fixedLod =
+    fixedLodLevel === undefined
+      ? undefined
+      : Math.max(fixedLodLevel, levels[0]?.lod ?? fixedLodLevel);
+
+  for (const level of levels) {
     const uniforms: TileUniformBag = {
       heightFeild: { value: texture },
       heightMin: { value: heightMin },
       heightMax: { value: heightMax },
-      ...getLodUniforms(lod),
+      ...tileLodUniforms(level),
       uvTransform: { value: new THREE.Matrix3() },
       iTime: globalUniforms.iTime,
     };
-    const geo = tileGeom[lod];
+    const geo = getTileLodGeometry(level.gridSize);
     const mat = getTileMaterial(uniforms);
     const mesh = new THREE.Mesh(geo, mat);
-    mesh.name = `GeoLod ${lod} (${geo.name})`
+    mesh.name = `GeoLod ${level.lod} (${geo.name})`;
     mesh.userData.terrainPickMaterial = getTilePickMaterial(uniforms);
     applyCustomDepth(mesh, uniforms);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
-    const distance = fixedLodLevel === undefined
-      ? Math.pow(2, lod - lodBias) * extentMetres
-      : lod === fixedLodLevel
-        ? 0
-        : Number.POSITIVE_INFINITY;
+    const distance =
+      fixedLod === undefined
+        ? tileLodDistance(level, extentMetres, lodBias)
+        : level.lod === fixedLod
+          ? 0
+          : Number.POSITIVE_INFINITY;
     lodObj.addLevel(mesh, distance);
   }
 
@@ -182,12 +173,21 @@ export class PyramidHeightChannel implements RasterChannel<PyramidHeightChannelP
       tile.remove(mesh);
       mesh.traverse((child) => {
         if (child instanceof THREE.Mesh) {
-          child.geometry.dispose();
-          if (Array.isArray(child.material)) {
-            child.material.forEach((m) => m.dispose());
-          } else {
-            child.material.dispose();
+          // Tile index buffers are shared by every tile at that grid size —
+          // disposing one frees the GPU buffer for all of them, forcing a
+          // multi-hundred-MB re-upload on the next frame that uses it.
+          if (!isSharedTileGeometry(child.geometry)) {
+            child.geometry.dispose();
           }
+          const materials = Array.isArray(child.material) ? child.material : [child.material];
+          for (const material of materials) {
+            unregisterTileMaterial(material);
+            material.dispose();
+          }
+          if (child.customDepthMaterial) child.customDepthMaterial.dispose();
+          if (child.customDistanceMaterial) child.customDistanceMaterial.dispose();
+          const pickMaterial = child.userData.terrainPickMaterial;
+          if (pickMaterial instanceof THREE.Material) pickMaterial.dispose();
         }
       });
       tile.userData.geoLod = undefined;

@@ -46,6 +46,8 @@ let tileLoadingMaterial: THREE.ShaderMaterial | null = null;
 let lastTickMs = 0;
 
 const registry = new Set<RegisteredEntry>();
+/** Reverse index so per-tile setup never scans the whole registry. */
+const entryByMaterial = new WeakMap<THREE.Material, RegisteredEntry>();
 
 function programCacheKey(): string {
   return `tile-shader-${shaderGeneration}`;
@@ -57,6 +59,7 @@ function attachCacheKey(material: THREE.Material): void {
 
 function registerEntry(entry: RegisteredEntry): void {
   registry.add(entry);
+  entryByMaterial.set(entry.mat, entry);
 }
 
 /**
@@ -136,7 +139,7 @@ export function applyCustomDepth(mesh: THREE.Mesh, perTileUniforms: TileUniformB
   attachCacheKey(depth);
   attachCacheKey(dist);
 
-  const entry = [...registry].find((e) => e.mat === surface);
+  const entry = entryByMaterial.get(surface);
   if (entry) {
     entry.depth = depth;
     entry.dist = dist;
@@ -150,6 +153,22 @@ export function applyCustomDepthForViewshed(mesh: THREE.Mesh): void {
     throw new Error('TileShader not installed — import ./TileShader from the app entry');
   }
   currentModule.applyCustomDepthForViewshed(mesh);
+}
+
+/**
+ * Drop a tile material from the recompile registry when its tile is disposed.
+ * Without this the registry grows for the life of the page as tiles churn,
+ * and every shader hot-reload walks the dead entries.
+ */
+export function unregisterTileMaterial(material: THREE.Material): void {
+  const entry = entryByMaterial.get(material);
+  if (!entry) return;
+  entryByMaterial.delete(material);
+  registry.delete(entry);
+}
+
+export function registeredMaterialCount(): number {
+  return registry.size;
 }
 
 export function recompileRegisteredMaterials(): void {

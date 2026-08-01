@@ -1,11 +1,16 @@
 import * as THREE from 'three';
 import * as JP2 from '../openjpegjs/jp2kloader';
 import { globalUniforms } from '../threact/threact';
-import { computeTriangleGridIndices } from '../threact/threexample';
 import {
   isCompressionExperimentEnabled,
   registerCompressionTile,
 } from './compressionExperiment';
+import {
+  getTileLodGeometry,
+  tileLodDistance,
+  tileLodLevels,
+  tileLodUniforms,
+} from './tileGeometry';
 import { DsmCatItem, getImageFilename } from './TileLoaderUK';
 import {
   applyCustomDepth,
@@ -25,35 +30,6 @@ export {
   type ViewshedLodObserver,
 } from './GeoLod';
 import { GeoLOD } from './GeoLod';
-
-const tileBBox = new THREE.Box3(new THREE.Vector3(-0.5, -0.5, 0), new THREE.Vector3(0.5, 0.5, 1));
-const tileBSphere = new THREE.Sphere();
-tileBBox.getBoundingSphere(tileBSphere);
-function makeTileGeometry(s: number) {
-  const geo = new THREE.BufferGeometry();
-  geo.drawRange.count = (s-1) * (s-1) * 6;
-  geo.setIndex(computeTriangleGridIndices(s, s));
-  //would these be able to account for displacement if computed automatically?
-  geo.boundingSphere = tileBSphere;
-  geo.boundingBox = tileBBox;
-  return geo;
-}
-
-const LOD_LEVELS = 12;
-const tileGeom: THREE.BufferGeometry[] = [];
-for (let i=0; i<LOD_LEVELS; i++) {
-    tileGeom.push(makeTileGeometry(Math.floor(4096 / Math.pow(2, i))));
-}
-function getLodUniforms(lod: number) {
-  const s = Math.pow(2, lod);//1, 2, 4, ...
-  const w = 4096 / s; //4096, 2048, 1024, ...
-  const e = 1/(w-1);
-  const gridSizeX = {value: w};
-  const gridSizeY = {value: w};
-  const EPS = {value: new THREE.Vector2(e, e)};
-  const LOD = {value: lod/LOD_LEVELS};
-  return {EPS, gridSizeX, gridSizeY, LOD};
-}
 
 export interface GetTileMeshOptions {
   compressionExperiment?: boolean;
@@ -98,12 +74,17 @@ export async function getTileMesh(
   const uniformBags: TileUniformBag[] = [];
   const tileMeshes: THREE.Mesh[] = [];
 
-  for (let lod = 0; lod < LOD_LEVELS; lod++) {
+  const textureWidth =
+    texturePixelData && texture.image && typeof texture.image === 'object' && 'width' in texture.image
+      ? (texture.image as { width?: number }).width
+      : undefined;
+
+  for (const level of tileLodLevels(textureWidth)) {
     const uvTransform = new THREE.Matrix3();
     const uniforms: TileUniformBag = {
       heightFeild: { value: texture },
       heightMin: { value: heightMin }, heightMax: { value: heightMax },
-      ...getLodUniforms(lod),
+      ...tileLodUniforms(level),
       uvTransform: { value: uvTransform },
       iTime: globalUniforms.iTime,
     };
@@ -111,7 +92,7 @@ export async function getTileMesh(
       uniforms.heightFeildLossy = { value: texture };
     }
     uniformBags.push(uniforms);
-    const geo = tileGeom[lod];
+    const geo = getTileLodGeometry(level.gridSize);
 
     const mat = getTileMaterial(uniforms);
     const mesh = new THREE.Mesh(geo, mat);
@@ -121,7 +102,7 @@ export async function getTileMesh(
     mesh.castShadow = true;
     mesh.receiveShadow = true;
 
-    lodObj.addLevel(mesh, Math.pow(2, lod - lodBias) * s);
+    lodObj.addLevel(mesh, tileLodDistance(level, s, lodBias));
   }
 
   const compressionHandle = registerCompressionTile(recodeUrl, lowRes, uniformBags, metreRangeForRecode);
