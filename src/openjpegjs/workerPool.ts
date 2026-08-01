@@ -17,19 +17,23 @@ export class WorkerPool {
     workerAge: Map<Worker, number>;
     createWorker: WorkerFactory;
     maxAge = 10;
+    private readonly maxWorkers: number;
+    // Workers spawn lazily on demand: no startup burst, and importing a
+    // module that constructs a pool stays safe where Worker doesn't exist
+    // (e.g. node unit tests).
     constructor(numWorkers = 4, workerSource: string | WorkerFactory = 'texture_worker.js') {
         this.createWorker = typeof workerSource === "string"
             ? () => new Worker(workerSource)
             : workerSource;
         this.workerAge = new Map();
-        for (let i=0; i<numWorkers; i++) {
-            const w = this.newWorker();
-            this.idle.push(w);
-        }
+        this.maxWorkers = numWorkers;
     }
     async getWorker() {
         if (this.idle.length > 0) {
             return this.idle.shift();
+        }
+        if (this.workerAge.size < this.maxWorkers) {
+            return this.newWorker();
         }
         const promise = new Promise<Worker>(resolve => {
             this.backlog.push(worker=>{

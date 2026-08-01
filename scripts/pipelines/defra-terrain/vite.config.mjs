@@ -42,6 +42,7 @@ export default defineConfig({
       'src/geo/groundViewport.test.ts',
       'src/geo/LodUtils.test.ts',
       'src/camera/orbitClamp.test.ts',
+      'src/openjpegjs/textureLruCache.test.ts',
     ],
   },
 });

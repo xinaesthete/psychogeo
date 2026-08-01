@@ -116,6 +116,8 @@ export class PyramidHeightChannel implements RasterChannel<PyramidHeightChannelP
     const payloadUrl = ctx.payloadUrl;
     const { texture } = await JP2.jp2Texture(payloadUrl, false, 1, undefined, ctx.signal);
     if (ctx.signal.aborted || ctx.generation !== ctx.tile.userData.generation) {
+      // jp2Texture pinned the cache entry for us; nobody will display it.
+      JP2.releaseTexture(payloadUrl);
       throw new DOMException('Aborted', 'AbortError');
     }
     const textureSourceUrl = texture.userData.sourceUrl;
@@ -139,8 +141,13 @@ export class PyramidHeightChannel implements RasterChannel<PyramidHeightChannelP
     };
   }
 
-  unload(_payload: RasterPayload): void {
-    // HTJ2K textures are owned by the jp2Texture module cache.
+  unload(payload: RasterPayload): void {
+    // HTJ2K textures are owned by the jp2Texture module cache; drop this
+    // tile's pin so the cache can evict under memory pressure.
+    const url = payload.texture.userData.sourceUrl;
+    if (typeof url === 'string') {
+      JP2.releaseTexture(url);
+    }
   }
 
   evictCachedPayload(payloadUrl: string): void {

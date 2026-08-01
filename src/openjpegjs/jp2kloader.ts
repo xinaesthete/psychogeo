@@ -9,6 +9,7 @@
  */
 
 import * as THREE from 'three'
+import { TextureLruCache } from './textureLruCache';
 import { WorkerPool, defaultDecodeWorkerCount } from './workerPool';
 
 
@@ -224,8 +225,31 @@ export function clampLossyQuality(quality: number): number {
   return Math.min(MAX_LOSSY_COMPRESSION_RATIO, quality);
 }
 
-const textureCache = new Map<string, TextureTile>();
+/** Decoded-texture budget; evictions only touch tiles no consumer has pinned. */
+export const DEFAULT_TEXTURE_CACHE_BUDGET_BYTES = 1.5 * 1024 * 1024 * 1024;
+
+const textureCache = new TextureLruCache<TextureTile>(DEFAULT_TEXTURE_CACHE_BUDGET_BYTES);
 const inflight = new Map<string, Promise<TextureTile>>();
+
+export function setTextureCacheBudgetBytes(bytes: number): void {
+  textureCache.setBudgetBytes(bytes);
+}
+
+export function textureCacheStats(): {
+  entries: number;
+  totalBytes: number;
+  pinnedEntries: number;
+} {
+  return textureCache.stats();
+}
+
+/**
+ * Drop the pin taken by {@link jp2Texture} once the texture is no longer
+ * displayed; the cache may then evict it under memory pressure.
+ */
+export function releaseTexture(url: string, compressionRatio = 1): void {
+  textureCache.release(cacheKey(url, compressionRatio));
+}
 
 function awaitWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return promise;
@@ -289,7 +313,7 @@ async function jp2TextureLoad(
       }
       const tile = texFrameToTexture(result);
       tile.texture.userData.sourceUrl = url;
-      textureCache.set(key, tile);
+      textureCache.set(key, tile, result.texData.byteLength);
       inflight.delete(key);
       return tile;
     })
@@ -308,6 +332,12 @@ async function jp2TextureLoad(
   return awaitWithAbort(created, signal);
 }
 
+/**
+ * Load (or reuse) a decoded HTJ2K texture. Each successful call pins the
+ * cache entry against eviction; callers that stop displaying the texture
+ * should call {@link releaseTexture}. Legacy callers that never release
+ * simply keep their tiles resident, as before.
+ */
 export async function jp2Texture(
   url: string,
   simplerDecodeHack: boolean,
@@ -315,7 +345,7 @@ export async function jp2Texture(
   heightRangeMetres?: HeightRange,
   signal?: AbortSignal,
 ): Promise<TextureTile> {
-  return jp2TextureLoad(
+  const tile = await jp2TextureLoad(
     url,
     simplerDecodeHack,
     compressionRatio,
@@ -323,14 +353,14 @@ export async function jp2Texture(
     signal,
     true,
   );
+  textureCache.acquire(cacheKey(url, compressionRatio));
+  return tile;
 }
 
 /** Drop a cached decode so the next fetch re-reads from disk/worker. */
 export function evictTextureCacheEntry(url: string, compressionRatio = 1): void {
   const key = cacheKey(url, compressionRatio);
-  const entry = textureCache.get(key);
-  entry?.texture.dispose();
-  textureCache.delete(key);
+  textureCache.evict(key);
   inflight.delete(key);
 }
 
@@ -360,21 +390,16 @@ export function invalidateLossyCache(url?: string, compressionRatio?: number): v
       exactKey === key ||
       (exactKey === undefined && (url === undefined || key.startsWith(`${url}@q=`)))
     ) {
-      const entry = textureCache.get(key);
-      entry?.texture.dispose();
       toDelete.push(key);
     }
   }
   for (const key of toDelete) {
-    textureCache.delete(key);
+    textureCache.evict(key);
     inflight.delete(key);
   }
 }
 
 export function newGLContext() {
-  for (const entry of textureCache.values()) {
-    entry.texture.dispose();
-  }
   textureCache.clear();
   inflight.clear();
 }

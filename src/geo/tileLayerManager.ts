@@ -328,6 +328,9 @@ export class TileLayerManagerImpl implements TileLayerManager {
         !managed.inFrustum ||
         managed.tile.userData.payloadUrl !== payloadUrl
       ) {
+        // Loaded but will never be applied — let the channel drop any
+        // cache pin or resources tied to the payload.
+        channel.unload(payload);
         clearLoadingIfOwned(managed, channelId, generation, abortController);
         return;
       }
