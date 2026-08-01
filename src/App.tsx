@@ -6,6 +6,7 @@ import {
   setSensitivityTuning,
 } from './camera/cameraSensitivity';
 import { DEFAULT_PAN_INERTIA, setPanInertiaTuning } from './camera/panInertia';
+import { DEFAULT_PITCH_LIMITS, setPitchLimitTuning } from './camera/pitchLimits';
 import { DEFAULT_SMOOTH_ZOOM, setSmoothZoomTuning } from './camera/smoothZoom';
 import { convertWgsToOSGB, EastNorth } from './geo/Coordinates';
 import { CompressionAnalysisPanel } from './geo/CompressionAnalysisPanel';
@@ -72,7 +73,15 @@ function App() {
       label: 'dataset URL (manifest.json or metadata.json)',
     },
   });
-  const {zoomSpeed, zoomSmoothMs, panGain, zoomGain, panDamping} = useControls('Camera', {
+  const {
+    zoomSpeed,
+    zoomSmoothMs,
+    panGain,
+    zoomGain,
+    panDamping,
+    minViewPitchDeg,
+    minCameraElevationDeg,
+  } = useControls('Camera', {
     zoomSpeed: {
       value: DEFAULT_SMOOTH_ZOOM.speed,
       min: 0.005,
@@ -107,6 +116,20 @@ function App() {
       max: 24,
       step: 0.5,
       label: 'pan damping',
+    },
+    minViewPitchDeg: {
+      value: DEFAULT_PITCH_LIMITS.minViewPitchDeg,
+      min: -45,
+      max: 45,
+      step: 0.5,
+      label: 'min view pitch (°)',
+    },
+    minCameraElevationDeg: {
+      value: DEFAULT_PITCH_LIMITS.minCameraElevationDeg,
+      min: -45,
+      max: 45,
+      step: 0.5,
+      label: 'min cam elevation (°)',
     },
   });
   const {
@@ -153,7 +176,16 @@ function App() {
     setSmoothZoomTuning({speed: zoomSpeed, smoothMs: zoomSmoothMs});
     setSensitivityTuning({panGain, zoomGain});
     setPanInertiaTuning({damping: panDamping});
-  }, [zoomSpeed, zoomSmoothMs, panGain, zoomGain, panDamping]);
+    setPitchLimitTuning({minViewPitchDeg, minCameraElevationDeg});
+  }, [
+    zoomSpeed,
+    zoomSmoothMs,
+    panGain,
+    zoomGain,
+    panDamping,
+    minViewPitchDeg,
+    minCameraElevationDeg,
+  ]);
 
   const winchester = useMemo(() => DEV_LOCATIONS.winchester(), []);
   const terrainDatasetV1 = terrainHeightSource === 'v1';

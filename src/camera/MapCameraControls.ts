@@ -16,6 +16,7 @@ import {
     wheelDeltaToScale,
 } from "./smoothZoom";
 import { clampOrbitElevation } from "./orbitClamp";
+import { getPitchLimitTuning, setPitchLimitTuning } from "./pitchLimits";
 import {
     NADIR_PITCH,
     OBLIQUE_PITCH,
@@ -82,9 +83,28 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
     rotateSpeed = 1;
     minDistance = 10;
     maxDistance = 60_000;
-    minPitch = 0.05;
     /** Radians above horizon; near π/2 allows near-nadir views. */
     maxPitch = NADIR_PITCH;
+
+    /**
+     * Shallowest view pitch (radians below horizon), backed by the global
+     * pitch-limit tuning. May be ≤ 0 for grazing or above-horizon views.
+     */
+    get minPitch(): number {
+        return (getPitchLimitTuning().minViewPitchDeg * Math.PI) / 180;
+    }
+
+    set minPitch(v: number) {
+        setPitchLimitTuning({ minViewPitchDeg: (v * 180) / Math.PI });
+    }
+
+    /**
+     * Minimum camera elevation above the pivot's ground plane (radians).
+     * Negative allows the camera below the pivot, looking up at it.
+     */
+    private get minOffsetElevation(): number {
+        return (getPitchLimitTuning().minCameraElevationDeg * Math.PI) / 180;
+    }
 
     private bearing = 0;
     private pitch = OBLIQUE_PITCH;
@@ -304,7 +324,11 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
     }
 
     private clampAngles(): void {
-        this.pitch = Math.max(this.minPitch, Math.min(this.maxPitch, this.pitch));
+        // After an off-center orbit the state pitch reflects the pivot offset,
+        // which may legitimately sit below the view-pitch floor when the
+        // camera is allowed under the pivot plane.
+        const floor = Math.min(this.minPitch, this.minOffsetElevation);
+        this.pitch = Math.max(floor, Math.min(this.maxPitch, this.pitch));
     }
 
     private dispatchChange(): void {
@@ -664,6 +688,7 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
         this.orbitEl = clampOrbitElevation(_offset, _viewDir, _axis, this.orbitEl, {
             minPitch: this.minPitch,
             maxPitch: this.maxPitch,
+            minOffsetElevation: this.minOffsetElevation,
         });
 
         _offset.applyAxisAngle(_axis, this.orbitEl);

@@ -1,11 +1,17 @@
 import * as THREE from "three";
 
 export type OrbitPitchLimits = {
-    /** Radians above horizon; the view may not tilt shallower than this. */
+    /**
+     * Radians above horizon; the view may not tilt shallower than this.
+     * ≤ 0 allows grazing or above-horizon views.
+     */
     minPitch: number;
     /** Radians above horizon; the view may not tilt steeper than this. */
     maxPitch: number;
-    /** Camera must stay this many radians above the pivot's ground plane. */
+    /**
+     * Camera must stay this many radians above the pivot's ground plane.
+     * Negative allows the camera below the pivot, looking up at it.
+     */
     minOffsetElevation?: number;
 };
 
@@ -57,8 +63,16 @@ export function clampOrbitElevation(
         const zMin = offset.length() * Math.sin(minOffsetEl);
         const c = Math.asin(clampNumber(zMin / r, -1, 1));
         const phi = Math.atan2(a, b);
-        lo = Math.max(lo, c - phi);
-        hi = Math.min(hi, Math.PI - c - phi);
+        // Rotations keeping the camera above the plane form an arc of
+        // sin(θ+φ) ≥ sin(c) around each sine peak. Use the arc nearest the
+        // current pose so that a pose outside it (e.g. after the limits were
+        // tightened) can still rotate back in rather than getting stuck.
+        const peak =
+            Math.PI / 2 +
+            2 * Math.PI * Math.round((phi - Math.PI / 2) / (2 * Math.PI));
+        const half = Math.PI / 2 - c;
+        lo = Math.max(lo, peak - half - phi);
+        hi = Math.min(hi, peak + half - phi);
     }
 
     lo = Math.min(lo, 0);

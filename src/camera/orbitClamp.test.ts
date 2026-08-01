@@ -83,6 +83,57 @@ describe("clampOrbitElevation", () => {
         expect(viewPitchAfter(viewDir, axis, el)).toBeGreaterThan(MIN_PITCH);
     });
 
+    it("negative minPitch lets the view graze above the horizon", () => {
+        const pitch0 = THREE.MathUtils.degToRad(40);
+        const viewDir = viewDirAtPitch(pitch0);
+        const axis = pitchAxisFor(viewDir);
+        // Pivot under the camera so the ground guard cannot bind on tilt-up.
+        const offset = new THREE.Vector3(0, 0, 2000);
+        const minPitch = THREE.MathUtils.degToRad(-10);
+
+        const el = clampOrbitElevation(offset, viewDir, axis, 2, {
+            minPitch,
+            maxPitch: MAX_PITCH,
+        });
+        expect(viewPitchAfter(viewDir, axis, el)).toBeCloseTo(minPitch, 6);
+    });
+
+    it("negative minOffsetElevation lets the camera sink below the pivot plane", () => {
+        const pitch0 = THREE.MathUtils.degToRad(40);
+        const viewDir = viewDirAtPitch(pitch0);
+        const axis = pitchAxisFor(viewDir);
+        const offsetPitch = THREE.MathUtils.degToRad(15);
+        const radius = 3000;
+        const offset = new THREE.Vector3(
+            0,
+            -Math.cos(offsetPitch) * radius,
+            Math.sin(offsetPitch) * radius,
+        );
+        const minOffsetElevation = THREE.MathUtils.degToRad(-20);
+
+        const el = clampOrbitElevation(offset, viewDir, axis, 1, {
+            minPitch: MIN_PITCH,
+            maxPitch: MAX_PITCH,
+            minOffsetElevation,
+        });
+        const rotated = offset.clone().applyAxisAngle(axis, el);
+        expect(rotated.z).toBeLessThan(0);
+        expect(rotated.z).toBeCloseTo(radius * Math.sin(minOffsetElevation), 4);
+    });
+
+    it("lets a below-plane pose rotate back in after limits tighten", () => {
+        // Camera below the pivot plane looking up (reached under relaxed
+        // limits), then limits restored to defaults: tilting back down must
+        // recover; tilting further up stays blocked.
+        const viewDir = viewDirAtPitch(THREE.MathUtils.degToRad(-20));
+        const axis = pitchAxisFor(viewDir);
+        const offset = viewDir.clone().multiplyScalar(-3000);
+        expect(offset.z).toBeLessThan(0);
+
+        expect(clampOrbitElevation(offset, viewDir, axis, -0.5, LIMITS)).toBeCloseTo(-0.5, 6);
+        expect(clampOrbitElevation(offset, viewDir, axis, 0.5, LIMITS)).toBe(0);
+    });
+
     it("never forces a jump when the pose starts out of bounds", () => {
         const pitch0 = MAX_PITCH + 0.01;
         const viewDir = viewDirAtPitch(pitch0);
