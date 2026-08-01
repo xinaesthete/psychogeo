@@ -15,6 +15,7 @@ import {
     getSmoothZoomTuning,
     wheelDeltaToScale,
 } from "./smoothZoom";
+import { clampOrbitElevation } from "./orbitClamp";
 import {
     NADIR_PITCH,
     OBLIQUE_PITCH,
@@ -238,10 +239,26 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
     syncStateFromCamera(): void {
         const s = readSphericalFromCamera(this.camera, this.target);
         this.distance = s.distance;
-        this.bearing = s.bearing;
+        this.bearing = this.stableBearingFrom(s, this.target);
         this.pitch = s.pitch;
         this.clampAngles();
         this.clampDistance();
+    }
+
+    /**
+     * s.bearing, unless the offset is so close to vertical that the azimuth
+     * is numeric noise — then keep the current bearing so the view does not
+     * spin at the straight-down singularity.
+     */
+    private stableBearingFrom(
+        s: { bearing: number; distance: number },
+        pivot: Vector3,
+    ): number {
+        _delta.subVectors(this.camera.position, pivot);
+        const horizontal = Math.hypot(_delta.x, _delta.y);
+        return horizontal > 1e-6 * Math.max(s.distance, 1)
+            ? s.bearing
+            : this.bearing;
     }
 
     applyCameraFromState(): void {
@@ -615,8 +632,9 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
         _viewDir.set(0, 0, -1).transformDirection(this.camera.matrix);
         this.orbitStartViewDir.copy(_viewDir);
         const s = readSphericalFromCamera(this.camera, this.rotatePivot);
-        this.orbitStartBearing = s.bearing;
-        this.bearing = s.bearing;
+        const bearing = this.stableBearingFrom(s, this.rotatePivot);
+        this.orbitStartBearing = bearing;
+        this.bearing = bearing;
         this.pitch = s.pitch;
         this.distance = this.orbitRadius;
         this.orbitAz = 0;
@@ -643,16 +661,10 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
         const bearing = this.orbitStartBearing + this.orbitAz;
         this.pitchAxis(_viewDir, bearing, _axis);
 
-        const horizontal = Math.hypot(_offset.x, _offset.y);
-        const elev0 =
-            horizontal > 1e-9
-                ? Math.atan2(_offset.z, horizontal)
-                : Math.PI / 2;
-        const elev = Math.max(
-            this.minPitch,
-            Math.min(this.maxPitch, elev0 + this.orbitEl),
-        );
-        this.orbitEl = elev - elev0;
+        this.orbitEl = clampOrbitElevation(_offset, _viewDir, _axis, this.orbitEl, {
+            minPitch: this.minPitch,
+            maxPitch: this.maxPitch,
+        });
 
         _offset.applyAxisAngle(_axis, this.orbitEl);
         _viewDir.applyAxisAngle(_axis, this.orbitEl);
@@ -686,7 +698,7 @@ export class MapCameraControls extends EventDispatcher<MapCameraControlsEventMap
         this.target.copy(this.rotatePivot);
         this.distance = this.orbitRadius;
         const s = readSphericalFromCamera(this.camera, this.rotatePivot);
-        this.bearing = s.bearing;
+        this.bearing = this.stableBearingFrom(s, this.rotatePivot);
         this.pitch = s.pitch;
     }
 
