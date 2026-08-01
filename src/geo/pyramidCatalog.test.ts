@@ -440,6 +440,37 @@ describe('pyramidCatalog', () => {
     }
   });
 
+  it('emits the square chunk for distant cells without fetching their manifests', async () => {
+    const baseUrl = 'https://example.test/national-distant/';
+    const counts = new Map<string, number>();
+    const base = mockFetch(buildNationalHandlers(baseUrl, true));
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      counts.set(url, (counts.get(url) ?? 0) + 1);
+      return base(input, init);
+    }) as typeof fetch;
+    try {
+      const catalog = await loadPyramidDataset(`${baseUrl}metadata.json`);
+      const resolver = new PyramidCatalogResolver(catalog);
+      const camera = new THREE.PerspectiveCamera(60, 1, 1, 2_000_000);
+      camera.position.set(455500, 215500, 150000);
+      camera.updateMatrixWorld(true);
+      const chunks = await resolver.resolveChunksInBoundsAdaptive(
+        { eastMin: 400000, eastMax: 500000, northMin: 200000, northMax: 300000 },
+        camera,
+      );
+      expect(chunks).toHaveLength(1);
+      expect(chunks[0]?.gridRef).toBe('SP');
+      expect(chunks[0]?.level).toBe(3);
+      expect(counts.get(`${baseUrl}pyramid/SP/manifest.json`)).toBe(1);
+      expect(counts.get(`${baseUrl}pyramid/SP50/manifest.json`)).toBeUndefined();
+      expect(counts.get(`${baseUrl}pyramid/SP51/manifest.json`)).toBeUndefined();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it('parses node manifest schema', () => {
     const enc25 = Array.from({ length: 25 }, () => 1);
     const node = parseNodeManifestJson({

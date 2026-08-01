@@ -67,6 +67,48 @@ describe('groundViewport', () => {
     expect(viewportSpanMetres(bounds)).toBeGreaterThan(1000);
   });
 
+  it('covers ground near the horizon at the sides of the screen', () => {
+    // Shallow pitch: top corners pass above the horizon. The visible ground
+    // wedge spreads wide laterally near the horizon; the bounds must include
+    // it (regression: extension used to follow only the centre azimuth, and
+    // its reach shrank as the view got shallower).
+    const camera = new THREE.PerspectiveCamera(60, 1.6, 1, 100000);
+    camera.position.set(455000, 215000, 500);
+    camera.up.set(0, 0, 1);
+    camera.lookAt(455000, 225000, 0);
+    camera.updateMatrixWorld(true);
+
+    const bounds = groundViewportBounds(camera);
+    expect(bounds.eastMax).toBeGreaterThan(455000 + 20000);
+    expect(bounds.eastMin).toBeLessThan(455000 - 20000);
+    expect(bounds.northMax).toBeGreaterThan(215000 + 50000);
+  });
+
+  it('clamps bounds to the camera far plane', () => {
+    const camera = new THREE.PerspectiveCamera(60, 1.6, 1, 30000);
+    camera.position.set(455000, 215000, 500);
+    camera.up.set(0, 0, 1);
+    camera.lookAt(455000, 225000, 0);
+    camera.updateMatrixWorld(true);
+
+    const bounds = groundViewportBounds(camera);
+    expect(bounds.northMax - camera.position.y).toBeLessThanOrEqual(30001);
+    expect(bounds.eastMax - camera.position.x).toBeLessThanOrEqual(30001);
+    expect(camera.position.y - bounds.northMin).toBeLessThanOrEqual(30001);
+  });
+
+  it('produces forward bounds for a camera below the plane looking up', () => {
+    const camera = new THREE.PerspectiveCamera(60, 1.6, 1, 100000);
+    camera.position.set(455000, 215000, -200);
+    camera.up.set(0, 0, 1);
+    camera.lookAt(455000, 225000, 800);
+    camera.updateMatrixWorld(true);
+
+    const bounds = groundViewportBounds(camera);
+    expect(bounds.northMax).toBeGreaterThan(215000 + 1000);
+    expect(viewportSpanMetres(bounds)).toBeGreaterThan(1000);
+  });
+
   it('keeps a wider span for oblique views than a nearby nadir strip', () => {
     const oblique = new THREE.PerspectiveCamera(60, 1.6, 1, 100000);
     oblique.position.set(455000, 215000, 500);

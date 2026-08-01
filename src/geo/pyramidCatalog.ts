@@ -557,6 +557,35 @@ export class PyramidCatalogResolver {
     return this.resolveChunksForCell(meta.ingestCell, bounds, level);
   }
 
+  /**
+   * When the whole 10 km cell is far enough that even its nearest point
+   * resolves to a 100 km square level, emit the square chunk directly —
+   * skipping the cell's own manifests. Wide views over a large region would
+   * otherwise fetch thousands of cell manifests just to conclude "too far".
+   * Returns null when the cell is near enough (or the square is not
+   * finalized) and needs full per-quad resolution.
+   */
+  private async distantCellSquareChunk(
+    cell: string,
+    cellBounds: TileExtent,
+    camera: THREE.Camera,
+  ): Promise<ChunkFetchDescriptor | null> {
+    const { meta } = this.catalog;
+    const squareLevels = meta.tileMatrixSet.levels
+      .filter((entry) => entry.tierMetres === 100000)
+      .sort((a, b) => a.level - b.level);
+    if (squareLevels.length === 0) return null;
+    const cellLevel = pickPyramidLevelForTileDistance(meta, camera, cellBounds);
+    if (cellLevel < squareLevels[0].level) return null;
+    const levelEntry =
+      [...squareLevels].reverse().find((entry) => entry.level <= cellLevel) ?? squareLevels[0];
+    const square = cell.slice(0, 2).toUpperCase();
+    const manifest = await this.tryLoadNodeManifest(square, square);
+    const encoding = manifest?.levels?.[String(levelEntry.level)];
+    if (!encoding) return null;
+    return this.squareChunkDescriptor(square, levelEntry, encoding);
+  }
+
   async resolveChunksInBoundsAdaptive(
     bounds: TileExtent,
     camera: THREE.Camera,
@@ -568,6 +597,11 @@ export class PyramidCatalogResolver {
       for (const cell of regionSummary.cells) {
         const cellBounds = gridRefToBounds(cell.cell);
         if (!extentsIntersect(cellBounds, bounds)) continue;
+        const squareChunk = await this.distantCellSquareChunk(cell.cell, cellBounds, camera);
+        if (squareChunk) {
+          descriptors.push(squareChunk);
+          continue;
+        }
         const cellChunks = await this.resolveChunksForCellAdaptive(cell.cell, bounds, camera);
         descriptors.push(...cellChunks);
       }

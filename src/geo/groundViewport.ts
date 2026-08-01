@@ -1,123 +1,79 @@
 import * as THREE from 'three';
 import type { TileExtent } from './pyramidOsgb';
 
-const ndcCorners = [
-  new THREE.Vector3(-1, -1, 0),
-  new THREE.Vector3(1, -1, 0),
-  new THREE.Vector3(1, 1, 0),
-  new THREE.Vector3(-1, 1, 0),
+const ndcCorners: ReadonlyArray<readonly [number, number]> = [
+  [-1, -1],
+  [1, -1],
+  [1, 1],
+  [-1, 1],
 ];
 
-const scratchNdc = new THREE.Vector3();
+/** Cap on how far ground-plane bounds extend from the camera (metres). */
+const MAX_GROUND_REACH_METRES = 1_000_000;
+
 const scratchNear = new THREE.Vector3();
 const scratchFar = new THREE.Vector3();
-const scratchWorld = new THREE.Vector3();
 const scratchDir = new THREE.Vector3();
-const scratchForward = new THREE.Vector3();
 
-function intersectGroundPlane(
-  camera: THREE.Camera,
-  ndc: THREE.Vector3,
-  target: THREE.Vector3,
-): boolean {
-  scratchNdc.copy(ndc);
-  scratchNdc.unproject(camera);
-  const origin = camera.position;
-  scratchDir.copy(scratchNdc).sub(origin);
-  if (Math.abs(scratchDir.z) < 1e-9) return false;
-  const t = -origin.z / scratchDir.z;
-  if (t < 0) return false;
-  target.copy(origin).addScaledVector(scratchDir, t);
-  return true;
+function groundReach(camera: THREE.Camera): number {
+  const far =
+    camera instanceof THREE.PerspectiveCamera ? camera.far : MAX_GROUND_REACH_METRES;
+  return Math.min(far, MAX_GROUND_REACH_METRES);
 }
 
-function intersectGroundAlongViewRay(
-  camera: THREE.Camera,
-  ndcX: number,
-  ndcY: number,
-  target: THREE.Vector3,
-): boolean {
-  scratchNdc.set(ndcX, ndcY, 0);
-  scratchNdc.unproject(camera);
-  scratchNear.copy(scratchNdc);
-  scratchNdc.set(ndcX, ndcY, 1);
-  scratchNdc.unproject(camera);
-  scratchFar.copy(scratchNdc);
-  const origin = camera.position;
-  scratchDir.copy(scratchFar).sub(scratchNear);
-  if (Math.abs(scratchDir.z) < 1e-9) return false;
-  const t = -origin.z / scratchDir.z;
-  if (t < 0) return false;
-  target.copy(origin).addScaledVector(scratchDir, t);
-  return true;
-}
-
-function extendBoundsTowardHorizon(
-  camera: THREE.Camera,
-  bounds: TileExtent,
-  hitCount: number,
-): TileExtent {
-  if (hitCount >= 4) return bounds;
-  camera.getWorldDirection(scratchForward);
-  const forwardGroundX = scratchForward.x;
-  const forwardGroundY = scratchForward.y;
-  const forwardGroundLen = Math.hypot(forwardGroundX, forwardGroundY);
-  if (forwardGroundLen < 1e-9) return bounds;
-
-  const altitude = Math.max(camera.position.z, 1);
-  const pitch = Math.asin(
-    THREE.MathUtils.clamp(scratchForward.z / scratchForward.length(), -1, 1),
-  );
-  const pitchAboveHorizon = Math.max(Math.PI / 2 - Math.abs(pitch), 0.05);
-  const horizonReach = Math.min(
-    altitude / Math.tan(pitchAboveHorizon),
-    camera instanceof THREE.PerspectiveCamera ? camera.far : 100_000,
-  );
-  const reach = hitCount === 0 ? Math.max(horizonReach, 5000) : horizonReach;
-  const horizonEast = camera.position.x + (forwardGroundX / forwardGroundLen) * reach;
-  const horizonNorth = camera.position.y + (forwardGroundY / forwardGroundLen) * reach;
-
-  return {
-    eastMin: Math.min(bounds.eastMin, horizonEast),
-    eastMax: Math.max(bounds.eastMax, horizonEast),
-    northMin: Math.min(bounds.northMin, horizonNorth),
-    northMax: Math.max(bounds.northMax, horizonNorth),
-  };
-}
-
-/** OSGB ground-plane bounds visible to the camera (z = 0). */
+/**
+ * OSGB ground-plane bounds visible to the camera (z = 0).
+ *
+ * Each frustum corner ray contributes one point: its ground intersection
+ * (clamped to the far-plane reach), or — when the ray passes at or above the
+ * horizon — a point at full reach along the ray's own azimuth, since a flat
+ * ground plane is visible out to the far plane under that ray. Keeping each
+ * corner's azimuth preserves the wide lateral spread of the visible wedge
+ * near the horizon. Bounds are seeded with the camera's ground position so
+ * terrain underfoot survives extreme up-tilted views.
+ */
 export function groundViewportBounds(camera: THREE.Camera): TileExtent {
   camera.updateMatrixWorld(true);
-  let eastMin = Infinity;
-  let eastMax = -Infinity;
-  let northMin = Infinity;
-  let northMax = -Infinity;
-  let hitCount = 0;
+  const reach = groundReach(camera);
+  const origin = camera.position;
+  let eastMin = origin.x;
+  let eastMax = origin.x;
+  let northMin = origin.y;
+  let northMax = origin.y;
 
-  for (const corner of ndcCorners) {
-    const hit =
-      intersectGroundAlongViewRay(camera, corner.x, corner.y, scratchWorld) ||
-      intersectGroundPlane(camera, corner, scratchWorld);
-    if (!hit) continue;
-    eastMin = Math.min(eastMin, scratchWorld.x);
-    eastMax = Math.max(eastMax, scratchWorld.x);
-    northMin = Math.min(northMin, scratchWorld.y);
-    northMax = Math.max(northMax, scratchWorld.y);
-    hitCount += 1;
+  for (const [x, y] of ndcCorners) {
+    scratchNear.set(x, y, 0).unproject(camera);
+    scratchFar.set(x, y, 1).unproject(camera);
+    scratchDir.subVectors(scratchFar, scratchNear);
+
+    let east: number;
+    let north: number;
+    const t =
+      Math.abs(scratchDir.z) > 1e-12 ? -scratchNear.z / scratchDir.z : -1;
+    if (t > 0) {
+      east = scratchNear.x + scratchDir.x * t;
+      north = scratchNear.y + scratchDir.y * t;
+      const dx = east - origin.x;
+      const dy = north - origin.y;
+      const d = Math.hypot(dx, dy);
+      if (d > reach) {
+        east = origin.x + (dx / d) * reach;
+        north = origin.y + (dy / d) * reach;
+      }
+    } else {
+      const h = Math.hypot(scratchDir.x, scratchDir.y);
+      if (h < 1e-12) continue;
+      east = origin.x + (scratchDir.x / h) * reach;
+      north = origin.y + (scratchDir.y / h) * reach;
+    }
+
+    eastMin = Math.min(eastMin, east);
+    eastMax = Math.max(eastMax, east);
+    northMin = Math.min(northMin, north);
+    northMax = Math.max(northMax, north);
   }
 
-  if (hitCount === 0) {
-    const fallback = 5000;
-    return {
-      eastMin: camera.position.x - fallback,
-      eastMax: camera.position.x + fallback,
-      northMin: camera.position.y - fallback,
-      northMax: camera.position.y + fallback,
-    };
-  }
-
-  const bounds = { eastMin, eastMax, northMin, northMax };
-  return extendBoundsTowardHorizon(camera, bounds, hitCount);
+  return { eastMin, eastMax, northMin, northMax };
 }
 
 export function viewportSpanMetres(bounds: TileExtent): number {
