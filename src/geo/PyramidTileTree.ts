@@ -133,7 +133,8 @@ export class PyramidTileNode extends THREE.Group implements TileNode {
     working: false,
   };
   readonly sceneInspectObject: THREE.Mesh;
-  labelSprite: THREE.Sprite;
+  /** Canvas-text sprite; exists only while inspection labels are shown. */
+  labelSprite: THREE.Sprite | null = null;
   private selected = false;
 
   constructor(private readonly descriptor: ChunkFetchDescriptor) {
@@ -165,13 +166,6 @@ export class PyramidTileNode extends THREE.Group implements TileNode {
     this.sceneInspectObject.visible = false;
     this.add(this.sceneInspectObject);
 
-    this.labelSprite = createTileLabelSprite(buildTileLabelLines(this));
-    this.labelSprite.visible = false;
-    const labelHeight = (this.userData.heightMax as number) + Math.max(extentMetres * 0.08, 20);
-    this.labelSprite.position.z = labelHeight;
-    this.labelSprite.scale.set(extentMetres * 0.55, extentMetres * 0.18, 1);
-    this.add(this.labelSprite);
-
     attachPyramidTileDebugHooks(this, descriptor);
   }
 
@@ -202,21 +196,38 @@ export class PyramidTileNode extends THREE.Group implements TileNode {
     this.sceneInspectObject.material = inspectPickMaterial;
   }
 
+  /** Rebuild the label content; no-op unless a label is currently shown. */
   updateLabel(): void {
-    const visible = this.labelSprite.visible;
-    disposeTileLabelSprite(this.labelSprite);
-    this.remove(this.labelSprite);
-    this.labelSprite = createTileLabelSprite(buildTileLabelLines(this));
-    const extentMetres = this.userData.extentMetres as number;
-    const labelHeight = (this.userData.heightMax as number) + Math.max(extentMetres * 0.08, 20);
-    this.labelSprite.position.z = labelHeight;
-    this.labelSprite.scale.set(extentMetres * 0.55, extentMetres * 0.18, 1);
-    this.labelSprite.visible = visible;
-    this.add(this.labelSprite);
+    if (!this.labelSprite) return;
+    this.removeLabelSprite();
+    this.addLabelSprite();
   }
 
   setLabelVisible(visible: boolean): void {
-    this.labelSprite.visible = visible;
+    if (!visible) {
+      this.removeLabelSprite();
+      return;
+    }
+    if (!this.labelSprite) {
+      this.addLabelSprite();
+    }
+  }
+
+  private addLabelSprite(): void {
+    const sprite = createTileLabelSprite(buildTileLabelLines(this));
+    const extentMetres = this.userData.extentMetres as number;
+    const labelHeight = (this.userData.heightMax as number) + Math.max(extentMetres * 0.08, 20);
+    sprite.position.z = labelHeight;
+    sprite.scale.set(extentMetres * 0.55, extentMetres * 0.18, 1);
+    this.labelSprite = sprite;
+    this.add(sprite);
+  }
+
+  private removeLabelSprite(): void {
+    if (!this.labelSprite) return;
+    disposeTileLabelSprite(this.labelSprite);
+    this.remove(this.labelSprite);
+    this.labelSprite = null;
   }
 
   descriptorSnapshot(): ChunkFetchDescriptor {
@@ -229,8 +240,7 @@ export class PyramidTileNode extends THREE.Group implements TileNode {
       this.remove(placeholder);
     }
     this.remove(this.sceneInspectObject);
-    disposeTileLabelSprite(this.labelSprite);
-    this.remove(this.labelSprite);
+    this.removeLabelSprite();
     this.clear();
   }
 }
