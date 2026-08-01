@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { defaultDecodeWorkerCount } from '../openjpegjs/workerPool';
 import { GeoLOD } from './GeoLod';
 import type {
   ChannelReadyListener,
@@ -91,7 +92,8 @@ export class TileLayerManagerImpl implements TileLayerManager {
   private readonly channels = new Map<string, RasterChannel>();
   private readonly tiles = new Map<TileNode, ManagedTile>();
   private activeLoads = 0;
-  private readonly maxConcurrentLoads = 3;
+  /** A couple above the decode pool so fetches overlap in-progress decodes. */
+  private readonly maxConcurrentLoads = defaultDecodeWorkerCount() + 2;
   private readonly loadQueue: Array<{ managed: ManagedTile; channelId: string }> = [];
   private channelReadyListener: ChannelReadyListener | null = null;
 

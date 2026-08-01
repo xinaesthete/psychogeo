@@ -1,5 +1,16 @@
 type Backlog = (worker: Worker) => void;
 type WorkerFactory = () => Worker;
+
+/**
+ * Decode worker count sized to the machine: leave a couple of cores for the
+ * main/render threads, and cap the pool since each worker holds its own WASM
+ * heap.
+ */
+export function defaultDecodeWorkerCount(): number {
+    const cores =
+        typeof navigator !== "undefined" ? navigator.hardwareConcurrency ?? 4 : 4;
+    return Math.min(12, Math.max(4, cores - 2));
+}
 export class WorkerPool {
     idle: Worker[] = [];
     backlog: Backlog[] = [];

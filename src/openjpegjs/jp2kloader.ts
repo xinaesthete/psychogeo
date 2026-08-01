@@ -9,7 +9,7 @@
  */
 
 import * as THREE from 'three'
-import { WorkerPool } from './workerPool';
+import { WorkerPool, defaultDecodeWorkerCount } from './workerPool';
 
 
 export interface FrameInfo {
@@ -111,7 +111,7 @@ export const MIN_LOSSY_COMPRESSION_RATIO = 0;
  */
 export const MAX_LOSSY_COMPRESSION_RATIO = 0.9999;
 
-const workers = new WorkerPool(4); //chrome doesn't like it when we assign too many
+const workers = new WorkerPool(defaultDecodeWorkerCount());
 workers.maxAge = 9e9;
 const times: number[] = [];
 
