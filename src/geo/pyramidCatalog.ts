@@ -1,4 +1,5 @@
 import type * as THREE from 'three';
+import { mapWithConcurrency } from '../util/concurrency';
 import type { DsmCatItem } from './TileLoaderUK';
 import {
   cameraDistanceToExtent,
@@ -37,6 +38,15 @@ export interface RegionSummary {
   readonly regionLabel: string;
   readonly cells: readonly RegionSummaryCell[];
 }
+
+/**
+ * In-flight cell resolutions, and manifest fetches within one cell. Bounded so
+ * a wide view over a national region summary overlaps latency without burying
+ * the tile server — browsers cap per-origin connections anyway, and the origin
+ * is shared with the chunk fetches that actually put pixels on screen.
+ */
+const CELL_CONCURRENCY = 8;
+const MANIFEST_CONCURRENCY = 4;
 
 function datasetBaseUrl(metadataUrl: string): string {
   const slash = metadataUrl.lastIndexOf('/');
@@ -380,52 +390,55 @@ export class PyramidCatalogResolver {
       quadLevel: number;
     };
 
-    const quadPlans: QuadPlan[] = [];
+    const plans = await mapWithConcurrency(
+      root.children ?? [],
+      MANIFEST_CONCURRENCY,
+      async (childRef): Promise<QuadPlan | null> => {
+        const node = await this.loadNodeManifest(ingestCell, childRef);
+        const cellBounds = gridRefToBounds(childRef);
+        if (!extentsIntersect(cellBounds, bounds)) return null;
+        if (!node.leaf) return null;
 
-    for (const childRef of root.children ?? []) {
-      const node = await this.loadNodeManifest(ingestCell, childRef);
-      const cellBounds = gridRefToBounds(childRef);
-      if (!extentsIntersect(cellBounds, bounds)) continue;
-      if (!node.leaf) continue;
-
-      const slots = leafSlotsInBounds(
-        cellBounds,
-        bounds,
-        node.leaf.cols,
-        node.leaf.rows,
-        node.leaf.stepMetres,
-      );
-      if (slots.length === 0) continue;
-
-      let nearestBounds = leafSlotBounds(
-        cellBounds,
-        slots[0].col,
-        slots[0].row,
-        node.leaf.stepMetres,
-      );
-      let minDistance = cameraDistanceToExtent(camera, nearestBounds);
-      for (const slot of slots) {
-        const slotBounds = leafSlotBounds(
+        const slots = leafSlotsInBounds(
           cellBounds,
-          slot.col,
-          slot.row,
+          bounds,
+          node.leaf.cols,
+          node.leaf.rows,
           node.leaf.stepMetres,
         );
-        const distance = cameraDistanceToExtent(camera, slotBounds);
-        if (distance < minDistance) {
-          minDistance = distance;
-          nearestBounds = slotBounds;
-        }
-      }
+        if (slots.length === 0) return null;
 
-      quadPlans.push({
-        childRef,
-        node,
-        cellBounds,
-        slots,
-        quadLevel: pickPyramidLevelForTileDistance(meta, camera, nearestBounds),
-      });
-    }
+        let nearestBounds = leafSlotBounds(
+          cellBounds,
+          slots[0].col,
+          slots[0].row,
+          node.leaf.stepMetres,
+        );
+        let minDistance = cameraDistanceToExtent(camera, nearestBounds);
+        for (const slot of slots) {
+          const slotBounds = leafSlotBounds(
+            cellBounds,
+            slot.col,
+            slot.row,
+            node.leaf.stepMetres,
+          );
+          const distance = cameraDistanceToExtent(camera, slotBounds);
+          if (distance < minDistance) {
+            minDistance = distance;
+            nearestBounds = slotBounds;
+          }
+        }
+
+        return {
+          childRef,
+          node,
+          cellBounds,
+          slots,
+          quadLevel: pickPyramidLevelForTileDistance(meta, camera, nearestBounds),
+        };
+      },
+    );
+    const quadPlans = plans.filter((plan): plan is QuadPlan => plan !== null);
 
     if (quadPlans.length === 0) return [];
 
@@ -544,14 +557,13 @@ export class PyramidCatalogResolver {
     }
 
     if (regionSummary) {
-      const descriptors: ChunkFetchDescriptor[] = [];
-      for (const cell of regionSummary.cells) {
-        const cellBounds = gridRefToBounds(cell.cell);
-        if (!extentsIntersect(cellBounds, bounds)) continue;
-        const cellChunks = await this.resolveChunksForCell(cell.cell, bounds, level);
-        descriptors.push(...cellChunks);
-      }
-      return descriptors;
+      const cells = regionSummary.cells
+        .map((cell) => cell.cell)
+        .filter((cell) => extentsIntersect(gridRefToBounds(cell), bounds));
+      const perCell = await mapWithConcurrency(cells, CELL_CONCURRENCY, (cell) =>
+        this.resolveChunksForCell(cell, bounds, level),
+      );
+      return perCell.flat();
     }
 
     return this.resolveChunksForCell(meta.ingestCell, bounds, level);
@@ -593,18 +605,18 @@ export class PyramidCatalogResolver {
     const regionSummary = await this.loadRegionSummary();
     let descriptors: ChunkFetchDescriptor[];
     if (regionSummary) {
-      descriptors = [];
-      for (const cell of regionSummary.cells) {
-        const cellBounds = gridRefToBounds(cell.cell);
-        if (!extentsIntersect(cellBounds, bounds)) continue;
-        const squareChunk = await this.distantCellSquareChunk(cell.cell, cellBounds, camera);
-        if (squareChunk) {
-          descriptors.push(squareChunk);
-          continue;
-        }
-        const cellChunks = await this.resolveChunksForCellAdaptive(cell.cell, bounds, camera);
-        descriptors.push(...cellChunks);
-      }
+      // Cells resolve independently, so overlap them: walking a national
+      // region summary one cell at a time serialises a manifest round-trip
+      // per cell before the first chunk can even be requested.
+      const cells = regionSummary.cells
+        .map((cell) => ({ ref: cell.cell, bounds: gridRefToBounds(cell.cell) }))
+        .filter((cell) => extentsIntersect(cell.bounds, bounds));
+      const perCell = await mapWithConcurrency(cells, CELL_CONCURRENCY, async (cell) => {
+        const squareChunk = await this.distantCellSquareChunk(cell.ref, cell.bounds, camera);
+        if (squareChunk) return [squareChunk];
+        return this.resolveChunksForCellAdaptive(cell.ref, bounds, camera);
+      });
+      descriptors = perCell.flat();
     } else {
       descriptors = await this.resolveChunksForCellAdaptive(
         this.catalog.meta.ingestCell,

@@ -47,6 +47,7 @@ export default defineConfig({
       'src/openjpegjs/textureLruCache.test.ts',
       'src/openjpegjs/workerPool.test.ts',
       'src/util/timingStats.test.ts',
+      'src/util/concurrency.test.ts',
     ],
   },
 });
