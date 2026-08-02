@@ -412,10 +412,14 @@ async function recode(url, q, heightRangeMetres) {
         };
     }
 
+    // decodeData reuses one decoder, and pixelData is a view onto its WASM
+    // heap — decoding the recode overwrites it in place. Without this copy the
+    // comparison is the recode against itself, reporting zero error always.
+    const fullSamples = pixelData.slice();
     const encoded = await encode(pixelData, frameInfo, q);
     const encodedBytes = encoded.byteLength;
     const recoded = (await decodeData(encoded)).pixelData;
-    const heightError = computeHeightError(pixelData, recoded);
+    const heightError = computeHeightError(fullSamples, recoded);
     const texData = recoded.map(v => toHalf(v / (1 << 16)));
     return {
         texData,

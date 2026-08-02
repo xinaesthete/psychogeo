@@ -8,6 +8,7 @@ import {
   type HeightRange,
   type RecodeStats,
 } from '../openjpegjs/jp2kloader';
+import { metreErrorFromRawSamples } from './compressionFormat';
 import type { TileUniformBag } from './tileShaderRuntime';
 import { applyModuleUpdate, tileShaderUniforms } from './tileShaderRuntime';
 
@@ -42,6 +43,10 @@ export type CompressionLoadStatus = {
 export type CompressionTileRecodeStats = RecodeStats & {
   url: string;
   tileLabel: string;
+  /** Error in metres; present when the tile declared its metres-per-sample. */
+  rmseMetres?: number;
+  meanAbsMetres?: number;
+  maxAbsMetres?: number;
 };
 
 export type CompressionRecodeReport = {
@@ -57,6 +62,10 @@ export type CompressionRecodeReport = {
   maxRmseNorm: number;
   maxAbsNorm: number;
   meanIdenticalFraction: number;
+  /** Metre-domain aggregates over the tiles that reported them. */
+  meanRmseMetres?: number;
+  maxRmseMetres?: number;
+  maxAbsMetres?: number;
   tiles: CompressionTileRecodeStats[];
 };
 
@@ -68,6 +77,8 @@ type CompressionTileRecord = {
   simplerDecodeHack: boolean;
   /** 10m DTM: metre domain from /ttile/ used to denormalise /ltile/ uint16 recode. */
   heightRangeMetres?: HeightRange;
+  /** v2 chunks: metres per uint16 sample, so recode error can be reported in metres. */
+  metresPerSample?: number;
   uniformBags: TileUniformBag[];
   lossyGeneration: number;
   /** Single source of truth for this tile's recode state; counters are derived from phases. */
@@ -85,6 +96,12 @@ const TILE_ALIVE_GRACE_MS = 1500;
 
 export type CompressionTileHandle = {
   requestVisible(): void;
+  /**
+   * Drop the tile from the experiment. Pyramid tiles churn continuously, so
+   * callers with a disposal hook must release or the tracked set grows for the
+   * life of the page, pinning each tile's uniform bags and textures.
+   */
+  release(): void;
 };
 
 let lossyCompressionRatio = DEFAULT_LOSSY_COMPRESSION_RATIO;
@@ -161,6 +178,10 @@ function rebuildReportAggregate(): void {
   let maxAbsNorm = 0;
   let identicalSum = 0;
   let pixelSum = 0;
+  let metreSquaredSum = 0;
+  let metrePixelSum = 0;
+  let maxRmseMetres = 0;
+  let maxAbsMetres = 0;
   for (const t of tiles) {
     totalSourceBytes += t.sourceBytes;
     totalEncodedBytes += t.encodedBytes;
@@ -169,7 +190,15 @@ function rebuildReportAggregate(): void {
     if (t.rmseNorm > maxRmseNorm) maxRmseNorm = t.rmseNorm;
     if (t.maxAbsNorm > maxAbsNorm) maxAbsNorm = t.maxAbsNorm;
     identicalSum += t.identicalPixels;
+    if (t.rmseMetres !== undefined && t.maxAbsMetres !== undefined) {
+      // Pool RMSE in quadrature — averaging RMSEs directly understates the total.
+      metreSquaredSum += t.rmseMetres * t.rmseMetres * t.pixelCount;
+      metrePixelSum += t.pixelCount;
+      if (t.rmseMetres > maxRmseMetres) maxRmseMetres = t.rmseMetres;
+      if (t.maxAbsMetres > maxAbsMetres) maxAbsMetres = t.maxAbsMetres;
+    }
   }
+  const haveMetres = metrePixelSum > 0;
   recodeReport = {
     ...recodeReport,
     quality: lossyCompressionRatio,
@@ -182,15 +211,19 @@ function rebuildReportAggregate(): void {
     maxRmseNorm,
     maxAbsNorm,
     meanIdenticalFraction: pixelSum > 0 ? identicalSum / pixelSum : 0,
+    meanRmseMetres: haveMetres ? Math.sqrt(metreSquaredSum / metrePixelSum) : undefined,
+    maxRmseMetres: haveMetres ? maxRmseMetres : undefined,
+    maxAbsMetres: haveMetres ? maxAbsMetres : undefined,
   };
   emitReport();
 }
 
-function recordTileRecodeStats(url: string, stats: RecodeStats): void {
+function recordTileRecodeStats(record: CompressionTileRecord, stats: RecodeStats): void {
   recodeReport.tiles.push({
     ...stats,
-    url,
-    tileLabel: tileLabelFromUrl(url),
+    ...metreErrorFromRawSamples(stats, record.metresPerSample),
+    url: record.url,
+    tileLabel: tileLabelFromUrl(record.url),
   });
   rebuildReportAggregate();
 }
@@ -285,11 +318,13 @@ export function registerCompressionTile(
   simplerDecodeHack: boolean,
   uniformBags: TileUniformBag[],
   heightRangeMetres?: HeightRange,
+  metresPerSample?: number,
 ): CompressionTileHandle {
   const record: CompressionTileRecord = {
     url,
     simplerDecodeHack,
     heightRangeMetres,
+    metresPerSample,
     uniformBags,
     lossyGeneration: 0,
     phase: 'idle',
@@ -308,7 +343,24 @@ export function registerCompressionTile(
   }
   return {
     requestVisible: () => requestLossyForVisibleRecord(record),
+    release: () => releaseTileRecord(record),
   };
+}
+
+function releaseTileRecord(record: CompressionTileRecord): void {
+  if (record.aliveTimer) {
+    clearTimeout(record.aliveTimer);
+    record.aliveTimer = undefined;
+  }
+  if (!trackedTiles.delete(record)) return;
+  record.alive = false;
+  if (record.phase === 'loading') {
+    record.lossyGeneration += 1;
+    record.phase = 'idle';
+  }
+  clearPendingTransition(record);
+  disposeTileLossyPayload(record);
+  recomputeAndEmitStatus();
 }
 
 function syncVisibleLossyUniforms(record: CompressionTileRecord, fullTexture: THREE.Texture): void {
@@ -485,7 +537,7 @@ async function loadLossyForRecord(
     record.failedQuality = undefined;
 
     if (lossy.recodeStats) {
-      recordTileRecodeStats(url, lossy.recodeStats);
+      recordTileRecodeStats(record, lossy.recodeStats);
     }
 
     if (current && current !== lossy.texture) {

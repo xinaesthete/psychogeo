@@ -1,6 +1,11 @@
 import * as THREE from 'three';
 import * as JP2 from '../openjpegjs/jp2kloader';
 import { globalUniforms } from '../threact/threact';
+import {
+  isCompressionExperimentEnabled,
+  registerCompressionTile,
+  type CompressionTileHandle,
+} from './compressionExperiment';
 import { GeoLOD } from './GeoLod';
 import type { EncodingScalars } from './pyramidTypes';
 import {
@@ -39,13 +44,24 @@ function textureWidthOf(texture: THREE.Texture): number | undefined {
   return typeof width === 'number' && Number.isFinite(width) ? width : undefined;
 }
 
+export type BuildGeoLodMeshOptions = {
+  lodBias?: number;
+  fixedLodLevel?: number;
+  /**
+   * Chunk URL. When given, the tile joins the HTJ2K compression experiment so
+   * the analysis panel can recode it and report error against this (reference)
+   * encoding. The handle is stored on the returned object's userData.
+   */
+  compressionUrl?: string;
+};
+
 export function buildGeoLodMesh(
   texture: THREE.Texture,
   encoding: EncodingScalars,
   extentMetres: number,
-  lodBias = 3,
-  fixedLodLevel?: number,
+  options: BuildGeoLodMeshOptions = {},
 ): GeoLOD {
+  const { lodBias = 3, fixedLodLevel } = options;
   const heightMin = encodingHeightMin(encoding);
   const heightMax = encodingHeightMax(encoding);
   const eleScale = heightMax - heightMin;
@@ -61,6 +77,10 @@ export function buildGeoLodMesh(
       ? undefined
       : Math.max(fixedLodLevel, levels[0]?.lod ?? fixedLodLevel);
 
+  const compressionOn = isCompressionExperimentEnabled();
+  const uniformBags: TileUniformBag[] = [];
+  const meshes: THREE.Mesh[] = [];
+
   for (const level of levels) {
     const uniforms: TileUniformBag = {
       heightFeild: { value: texture },
@@ -70,6 +90,10 @@ export function buildGeoLodMesh(
       uvTransform: { value: new THREE.Matrix3() },
       iTime: globalUniforms.iTime,
     };
+    if (compressionOn) {
+      uniforms.heightFeildLossy = { value: texture };
+    }
+    uniformBags.push(uniforms);
     const geo = getTileLodGeometry(level.gridSize);
     const mat = getTileMaterial(uniforms);
     const mesh = new THREE.Mesh(geo, mat);
@@ -78,6 +102,7 @@ export function buildGeoLodMesh(
     applyCustomDepth(mesh, uniforms);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
+    meshes.push(mesh);
     const distance =
       fixedLod === undefined
         ? tileLodDistance(level, extentMetres, lodBias)
@@ -85,6 +110,28 @@ export function buildGeoLodMesh(
           ? 0
           : Number.POSITIVE_INFINITY;
     lodObj.addLevel(mesh, distance);
+  }
+
+  if (options.compressionUrl !== undefined) {
+    // Registration is unconditional so tiles already on screen join the
+    // experiment when it is switched on; requestVisible is a no-op while off.
+    // encoding.scale is metres per uint16 sample, which turns recode error
+    // into metres for the analysis panel.
+    const handle = registerCompressionTile(
+      options.compressionUrl,
+      false,
+      uniformBags,
+      undefined,
+      encoding.scale,
+    );
+    for (const mesh of meshes) {
+      const previousOnBeforeRender = mesh.onBeforeRender;
+      mesh.onBeforeRender = (renderer, scene, camera, geometry, material, group) => {
+        previousOnBeforeRender(renderer, scene, camera, geometry, material, group);
+        handle.requestVisible();
+      };
+    }
+    lodObj.userData.compressionHandle = handle;
   }
 
   return lodObj;
@@ -149,13 +196,12 @@ export class PyramidHeightChannel implements RasterChannel<PyramidHeightChannelP
     const encoding = tile.userData.encoding as EncodingScalars;
     const extentMetres = tile.userData.extentMetres as number;
     const lodBias = this.params.lodBias ?? 3;
-    const mesh = buildGeoLodMesh(
-      payload.texture,
-      encoding,
-      extentMetres,
+    const payloadUrl = tile.userData.payloadUrl;
+    const mesh = buildGeoLodMesh(payload.texture, encoding, extentMetres, {
       lodBias,
-      this.params.fixedLodLevel,
-    );
+      fixedLodLevel: this.params.fixedLodLevel,
+      compressionUrl: typeof payloadUrl === 'string' ? payloadUrl : undefined,
+    });
     mesh.name = `GeoLodMesh ${tile.name}`;
     const placeholder = tile.userData.placeholder as THREE.Object3D | undefined;
     if (placeholder) {
@@ -170,6 +216,10 @@ export class PyramidHeightChannel implements RasterChannel<PyramidHeightChannelP
   detachFromTile(tile: TileNode): void {
     const mesh = tile.userData.geoLod as GeoLOD | undefined;
     if (mesh) {
+      const compressionHandle = mesh.userData.compressionHandle as
+        | CompressionTileHandle
+        | undefined;
+      compressionHandle?.release();
       tile.remove(mesh);
       mesh.traverse((child) => {
         if (child instanceof THREE.Mesh) {

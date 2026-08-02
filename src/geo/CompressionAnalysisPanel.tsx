@@ -21,6 +21,7 @@ import {
 } from './compressionExperiment';
 import {
   formatBytes,
+  formatMetres,
   formatNormHeight,
   formatPercent,
   formatQuality,
@@ -371,14 +372,26 @@ export function CompressionAnalysisPanel({
             </div>
             <div>
               <dt>Mean height RMSE</dt>
-              <dd title="After decode: full vs recoded-decode, normalized to 16-bit range">
-                {formatNormHeight(report.meanRmseNorm)}
+              <dd title={`After decode: reference vs recoded-decode — ${formatNormHeight(report.meanRmseNorm)}`}>
+                {report.meanRmseMetres !== undefined
+                  ? formatMetres(report.meanRmseMetres)
+                  : formatNormHeight(report.meanRmseNorm)}
               </dd>
             </div>
             <div>
               <dt>Max height |Δ|</dt>
-              <dd>{formatNormHeight(report.maxAbsNorm)}</dd>
+              <dd title={formatNormHeight(report.maxAbsNorm)}>
+                {report.maxAbsMetres !== undefined
+                  ? formatMetres(report.maxAbsMetres)
+                  : formatNormHeight(report.maxAbsNorm)}
+              </dd>
             </div>
+            {report.maxRmseMetres !== undefined && (
+              <div>
+                <dt>Worst tile RMSE</dt>
+                <dd>{formatMetres(report.maxRmseMetres)}</dd>
+              </div>
+            )}
             <div>
               <dt>Identical pixels (mean)</dt>
               <dd>{formatPercent(report.meanIdenticalFraction)}</dd>
@@ -412,8 +425,16 @@ export function CompressionAnalysisPanel({
                       <td>{formatBytes(t.sourceBytes)}</td>
                       <td>{formatBytes(t.encodedBytes)}</td>
                       <td>{formatPercent(t.compressionVsSource)}</td>
-                      <td>{formatNormHeight(t.rmseNorm)}</td>
-                      <td>{formatNormHeight(t.maxAbsNorm)}</td>
+                      <td title={formatNormHeight(t.rmseNorm)}>
+                        {t.rmseMetres !== undefined
+                          ? formatMetres(t.rmseMetres)
+                          : formatNormHeight(t.rmseNorm)}
+                      </td>
+                      <td title={formatNormHeight(t.maxAbsNorm)}>
+                        {t.maxAbsMetres !== undefined
+                          ? formatMetres(t.maxAbsMetres)
+                          : formatNormHeight(t.maxAbsNorm)}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
