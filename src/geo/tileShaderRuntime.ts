@@ -10,7 +10,7 @@ let sharedEmptyMask: THREE.DataTexture | null = null;
  * Lives here rather than in TileShader because the tile builders import it and
  * TileShader sits downstream of them in the import graph.
  */
-export function emptyFallbackMaskTexture(): THREE.DataTexture {
+export function emptyCoverageMaskTexture(): THREE.DataTexture {
   if (!sharedEmptyMask) {
     sharedEmptyMask = new THREE.DataTexture(
       new Uint8Array([0]),

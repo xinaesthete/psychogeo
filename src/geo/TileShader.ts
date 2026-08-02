@@ -3,7 +3,7 @@ import { globalUniforms } from '../threact/threact';
 import { glsl } from '../threact/threexample';
 import { advanceCompressionTransitions, ensureCompressionShaderUniforms } from './compressionExperiment';
 import {
-    emptyFallbackMaskTexture,
+    emptyCoverageMaskTexture,
     installTileShaderModule,
     type TileShaderFrameContext,
     type TileShaderModule,
@@ -36,8 +36,8 @@ function ensureUniforms(shared: Record<string, THREE.IUniform>): void {
     ensureUniform(shared, 'contourStrength', () => ({ value: 0.3 }));
     // Defaults so every patched material has a valid sampler; tiles that can
     // act as fallbacks override both with their own per-tile uniforms.
-    ensureUniform(shared, 'fallbackMask', () => ({ value: emptyFallbackMaskTexture() }));
-    ensureUniform(shared, 'fallbackMaskEnabled', () => ({ value: 0 }));
+    ensureUniform(shared, 'coverageMask', () => ({ value: emptyCoverageMaskTexture() }));
+    ensureUniform(shared, 'coverageMaskEnabled', () => ({ value: 0 }));
     ensureCompressionShaderUniforms(shared);
 }
 
@@ -88,14 +88,14 @@ function createTerrainPickMaterial(uniforms: TileUniformBag): THREE.ShaderMateri
         fragmentShader: glsl`
             precision highp float;
             uniform vec3 pickOrigin;
-            uniform sampler2D fallbackMask;
-            uniform float fallbackMaskEnabled;
+            uniform sampler2D coverageMask;
+            uniform float coverageMaskEnabled;
             varying vec2 vUv;
             varying vec3 vPickWorld;
             void main() {
                 // A masked-out fallback is not on screen, so it must not answer
                 // picks either — otherwise the pivot lands on coarse terrain.
-                if (fallbackMaskEnabled > 0.5 && texture2D(fallbackMask, vUv).r > 0.5) discard;
+                if (coverageMaskEnabled > 0.5 && texture2D(coverageMask, vUv).r > 0.5) discard;
                 gl_FragColor = vec4(vPickWorld - pickOrigin, 1.0);
             }
         `,
@@ -266,8 +266,8 @@ const project_vertexChunk = glsl`
  * which reads as lower-resolution terrain flickering over correct geometry.
  * The mask marks the sub-regions that are already covered; drop them.
  */
-const fallbackMask_fragmentChunk = glsl`
-    if (fallbackMaskEnabled > 0.5 && texture2D(fallbackMask, vUv).r > 0.5) discard;
+const coverageMask_fragmentChunk = glsl`
+    if (coverageMaskEnabled > 0.5 && texture2D(coverageMask, vUv).r > 0.5) discard;
 `;
 
 const emissivemap_fragmentChunk = glsl`
@@ -329,8 +329,8 @@ function patchFragmentShader(fragmentShader: string) {
     uniform float compressionDeltaScale;
     uniform float compressionLossyMorph;
     uniform float compressionLoading;
-    uniform sampler2D fallbackMask;
-    uniform float fallbackMaskEnabled;
+    uniform sampler2D coverageMask;
+    uniform float coverageMaskEnabled;
     float bias(float t, float b) { return pow(t, log(b) / log(0.5)); }
     float gain(float t, float g) {
     if (t < 0.5)
@@ -419,7 +419,7 @@ function patchFragmentShader(fragmentShader: string) {
     fragmentShader = substituteInclude("clipping_planes_pars_fragment", fragPreamble, fragmentShader, SubstitutionType.APPEND);
     // First thing in main, and in the depth/distance passes too, so a masked
     // fallback stops casting shadows and stops answering terrain picks.
-    fragmentShader = substituteInclude("clipping_planes_fragment", fallbackMask_fragmentChunk, fragmentShader, SubstitutionType.PREPEND);
+    fragmentShader = substituteInclude("clipping_planes_fragment", coverageMask_fragmentChunk, fragmentShader, SubstitutionType.PREPEND);
     fragmentShader = substituteInclude("emissivemap_fragment", emissivemap_fragmentChunk, fragmentShader, SubstitutionType.PREPEND);
 
     return fragmentShader;

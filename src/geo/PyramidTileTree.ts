@@ -24,10 +24,11 @@ import {
   selectedInspectBoundsMaterial,
   tileMatchesQuery,
 } from './pyramidInspect';
+import { extentsIntersect } from './pyramidOsgb';
 import { chunkExtent, TileLayerManagerImpl } from './tileLayerManager';
 import {
   DEFAULT_RETAINED_BUDGET_BYTES,
-  FALLBACK_MASK_RESOLUTION,
+  COVERAGE_MASK_RESOLUTION,
   FALLBACK_POLYGON_OFFSET_FACTOR,
   FALLBACK_POLYGON_OFFSET_UNITS,
   isPinnedTier,
@@ -38,7 +39,7 @@ import {
   type CoverageEntry,
   type RetainedEntry,
 } from './tileRetention';
-import type { FallbackMaskUniforms } from './pyramidHeightChannel';
+import type { CoverageMaskUniforms } from './pyramidHeightChannel';
 import type { TileLayerManagerDebugStats } from './tileLayerTypes';
 import type {
   RasterChannelState,
@@ -271,20 +272,20 @@ export class PyramidTileNode extends THREE.Group implements TileNode {
    * Publish which parts of this tile are already covered by ready terrain.
    * Passing null clears the mask, so the whole tile draws again.
    */
-  setFallbackMask(mask: Uint8Array | null): void {
+  setCoverageMask(mask: Uint8Array | null): void {
     const uniforms = (this.userData.geoLod as THREE.Object3D | undefined)?.userData
-      .fallbackMaskUniforms as FallbackMaskUniforms | undefined;
+      .coverageMaskUniforms as CoverageMaskUniforms | undefined;
     if (!uniforms) return;
 
     if (!mask) {
-      uniforms.fallbackMaskEnabled.value = 0;
+      uniforms.coverageMaskEnabled.value = 0;
       return;
     }
     if (!this.maskTexture) {
       this.maskTexture = new THREE.DataTexture(
         new Uint8Array(mask.length),
-        FALLBACK_MASK_RESOLUTION,
-        FALLBACK_MASK_RESOLUTION,
+        COVERAGE_MASK_RESOLUTION,
+        COVERAGE_MASK_RESOLUTION,
         THREE.RedFormat,
         THREE.UnsignedByteType,
       );
@@ -292,11 +293,11 @@ export class PyramidTileNode extends THREE.Group implements TileNode {
       // them would fade the fallback out over ground nothing else is drawing.
       this.maskTexture.magFilter = THREE.NearestFilter;
       this.maskTexture.minFilter = THREE.NearestFilter;
-      uniforms.fallbackMask.value = this.maskTexture;
+      uniforms.coverageMask.value = this.maskTexture;
     }
     (this.maskTexture.image.data as Uint8Array).set(mask);
     this.maskTexture.needsUpdate = true;
-    uniforms.fallbackMaskEnabled.value = 1;
+    uniforms.coverageMaskEnabled.value = 1;
   }
 
   /**
@@ -351,7 +352,7 @@ export class PyramidTileTree {
   private retireCounter = 0;
   private lastVisibilityRevision = -1;
   private readonly maskScratch = new Uint8Array(
-    FALLBACK_MASK_RESOLUTION * FALLBACK_MASK_RESOLUTION,
+    COVERAGE_MASK_RESOLUTION * COVERAGE_MASK_RESOLUTION,
   );
   private lastBounds: ReturnType<typeof groundViewportBounds> | null = null;
   private lastQueryBounds: ReturnType<typeof groundViewportBounds> | null = null;
@@ -745,7 +746,7 @@ export class PyramidTileTree {
           revived.retiredTick = 0;
           revived.visible = true;
           revived.setFallbackDepthBias(false);
-          revived.setFallbackMask(null);
+          revived.setCoverageMask(null);
           this.manager.setTileRetention(revived, 'active');
           this.active.set(key, revived);
           continue;
@@ -773,14 +774,16 @@ export class PyramidTileTree {
   }
 
   /**
-   * Decide which retained tiles are still earning their place. Called on every
-   * reconcile and whenever a channel becomes ready, which is the moment a
-   * fallback stops being needed.
+   * Decide which retained tiles are still earning their place, and mask every
+   * tile down to the ground nothing better is drawing. Called on every
+   * reconcile and whenever a channel becomes ready.
    */
   private updateFallbackVisibility(): void {
     const covers: CoverageEntry[] = [];
+    const activeNodes: PyramidTileNode[] = [];
     for (const node of this.active.values()) {
       const status = node.channels.get(PRIMARY_HEIGHT_CHANNEL_ID)?.status;
+      activeNodes.push(node);
       covers.push({
         extent: node.extent,
         ready: status === 'ready',
@@ -788,6 +791,8 @@ export class PyramidTileTree {
         awaited: node.visibility.inFrustum || !node.visibility.observed,
       });
     }
+
+    this.maskCoarseActiveTiles(activeNodes, covers);
 
     const queryBounds = this.lastQueryBounds;
     for (const [key, node] of [...this.retained.entries()]) {
@@ -807,13 +812,52 @@ export class PyramidTileTree {
       // already on screen, and two surfaces over one patch of ground is the
       // flicker this whole mechanism exists to avoid.
       if (needed && rasteriseCoverageMask(node.extent, covers, this.maskScratch)) {
-        node.setFallbackMask(this.maskScratch);
+        node.setCoverageMask(this.maskScratch);
       } else {
-        node.setFallbackMask(null);
+        node.setCoverageMask(null);
       }
     }
 
     this.enforceRetainedBudget();
+  }
+
+  /**
+   * Mask coarse tiles where finer ones already cover them.
+   *
+   * The desired set is not a clean partition: a far cell resolves to its whole
+   * 100 km square chunk, and that square spans near cells that resolved to 1 km
+   * leaves. dedupeOverlappingChunks only drops a coarse chunk a finer one
+   * covers *entirely*, which a leaf never does, so both are legitimately
+   * fetched and both draw — the square at 125 m per sample, in huge polygons,
+   * over real terrain. Masking keeps the cheap square chunk (it exists to avoid
+   * walking thousands of cell manifests) while confining it to the ground no
+   * finer tile has.
+   */
+  private maskCoarseActiveTiles(
+    nodes: readonly PyramidTileNode[],
+    covers: readonly CoverageEntry[],
+  ): void {
+    for (let i = 0; i < nodes.length; i += 1) {
+      const node = nodes[i];
+      if (!node.hasTerrain()) continue;
+      const level = node.userData.pyramidLevel as number;
+      // Only finer tiles supersede; equal levels tile the plane without overlap.
+      const finer: CoverageEntry[] = [];
+      for (let j = 0; j < nodes.length; j += 1) {
+        if (j === i) continue;
+        if ((nodes[j].userData.pyramidLevel as number) >= level) continue;
+        const cover = covers[j];
+        if (!cover.ready || !extentsIntersect(cover.extent, node.extent)) continue;
+        finer.push(cover);
+      }
+      if (finer.length === 0) {
+        node.setCoverageMask(null);
+        continue;
+      }
+      node.setCoverageMask(
+        rasteriseCoverageMask(node.extent, finer, this.maskScratch) ? this.maskScratch : null,
+      );
+    }
   }
 
   private retainedEntry(key: string, node: PyramidTileNode): RetainedEntry {

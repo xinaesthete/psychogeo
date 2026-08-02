@@ -9,6 +9,7 @@ import {
 import { parseMetadataJson, parseNodeManifestJson } from './pyramidSchema';
 import {
   chunkKey,
+  dedupeOverlappingChunks,
   loadPyramidDataset,
   pickPyramidLevelForViewport,
   PyramidCatalogResolver,
@@ -89,6 +90,37 @@ function buildFixtureHandlers(baseUrl: string): Record<string, unknown> {
     [`${baseUrl}pyramid/SP51/SP51ne/manifest.json`]: leafManifest,
   };
 }
+
+describe('dedupeOverlappingChunks', () => {
+  const chunk = (level: number, eastMin: number, northMin: number, extentMetres: number) =>
+    ({
+      gridRef: 'X',
+      level,
+      eastMin,
+      northMin,
+      url: `${level}:${eastMin}:${northMin}`,
+      encoding: { min: 0, max: 1, scale: 1, offset: 0 },
+      width: 1,
+      height: 1,
+      extentMetres,
+    }) as never;
+
+  it('drops a coarse chunk a finer one covers entirely', () => {
+    const fine = chunk(0, 0, 0, 1_000);
+    const coarse = chunk(1, 0, 0, 1_000);
+    expect(dedupeOverlappingChunks([fine, coarse])).toEqual([fine]);
+  });
+
+  it('keeps a coarse chunk that finer ones only partly cover', () => {
+    // A far cell resolves to its whole 100 km square while near cells resolve
+    // to 1 km leaves; no leaf covers the square, so both are fetched and both
+    // draw. This is why coarse tiles carry a coverage mask at render time —
+    // see PyramidTileTree.maskCoarseActiveTiles.
+    const square = chunk(3, 400_000, 100_000, 100_000);
+    const leaves = [chunk(0, 470_000, 120_000, 1_000), chunk(0, 471_000, 120_000, 1_000)];
+    expect(dedupeOverlappingChunks([...leaves, square])).toHaveLength(3);
+  });
+});
 
 describe('pyramidCatalog', () => {
   it('validates metadata schema', () => {

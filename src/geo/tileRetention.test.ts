@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  FALLBACK_MASK_RESOLUTION,
+  COVERAGE_MASK_RESOLUTION,
   isPinnedTier,
   rasteriseCoverageMask,
   retainedShouldDrop,
@@ -98,7 +98,7 @@ describe('retainedStillNeeded', () => {
 });
 
 describe('rasteriseCoverageMask', () => {
-  const R = FALLBACK_MASK_RESOLUTION;
+  const R = COVERAGE_MASK_RESOLUTION;
   const mask = () => new Uint8Array(R * R);
   const ready = (e: ReturnType<typeof extent>) => ({
     extent: e,

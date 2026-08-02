@@ -41,7 +41,7 @@ export const FALLBACK_POLYGON_OFFSET_UNITS = 16;
  * play (2, 5, 10, 20, 100), so cover edges land exactly on cell edges and the
  * mask is exact rather than approximate. 10 KB per masked tile.
  */
-export const FALLBACK_MASK_RESOLUTION = 100;
+export const COVERAGE_MASK_RESOLUTION = 100;
 
 /** An active tile competing to replace retained coverage. */
 export type CoverageEntry = {
@@ -111,7 +111,7 @@ export function rasteriseCoverageMask(
   extent: TileExtent,
   covers: readonly CoverageEntry[],
   out: Uint8Array,
-  resolution = FALLBACK_MASK_RESOLUTION,
+  resolution = COVERAGE_MASK_RESOLUTION,
 ): boolean {
   out.fill(0);
   const stepEast = (extent.eastMax - extent.eastMin) / resolution;

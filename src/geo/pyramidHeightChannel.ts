@@ -17,7 +17,7 @@ import {
 } from './tileGeometry';
 import {
   applyCustomDepth,
-  emptyFallbackMaskTexture,
+  emptyCoverageMaskTexture,
   getTileMaterial,
   getTilePickMaterial,
   unregisterTileMaterial,
@@ -84,8 +84,8 @@ export function buildGeoLodMesh(
 
   // One pair of uniform objects shared by every LOD mesh of this tile, so
   // updating the mask is a single write no matter which level is drawing.
-  const fallbackMask: THREE.IUniform = { value: emptyFallbackMaskTexture() };
-  const fallbackMaskEnabled: THREE.IUniform = { value: 0 };
+  const coverageMask: THREE.IUniform = { value: emptyCoverageMaskTexture() };
+  const coverageMaskEnabled: THREE.IUniform = { value: 0 };
 
   for (const level of levels) {
     const uniforms: TileUniformBag = {
@@ -95,8 +95,8 @@ export function buildGeoLodMesh(
       ...tileLodUniforms(level),
       uvTransform: { value: new THREE.Matrix3() },
       iTime: globalUniforms.iTime,
-      fallbackMask,
-      fallbackMaskEnabled,
+      coverageMask,
+      coverageMaskEnabled,
     };
     if (compressionOn) {
       uniforms.heightFeildLossy = { value: texture };
@@ -142,13 +142,13 @@ export function buildGeoLodMesh(
     lodObj.userData.compressionHandle = handle;
   }
 
-  lodObj.userData.fallbackMaskUniforms = { fallbackMask, fallbackMaskEnabled };
+  lodObj.userData.coverageMaskUniforms = { coverageMask, coverageMaskEnabled };
   return lodObj;
 }
 
-export type FallbackMaskUniforms = {
-  readonly fallbackMask: THREE.IUniform;
-  readonly fallbackMaskEnabled: THREE.IUniform;
+export type CoverageMaskUniforms = {
+  readonly coverageMask: THREE.IUniform;
+  readonly coverageMaskEnabled: THREE.IUniform;
 };
 
 export interface PyramidHeightChannelParams {
