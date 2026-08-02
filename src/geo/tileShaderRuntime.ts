@@ -3,6 +3,27 @@ import * as THREE from 'three';
 /** Per-material uniform bag (per-tile refs + shared tileShaderUniforms). */
 export type TileUniformBag = Record<string, THREE.IUniform>;
 
+let sharedEmptyMask: THREE.DataTexture | null = null;
+
+/**
+ * 1x1 "nothing masked" texture, so the fallback-mask sampler is always bound.
+ * Lives here rather than in TileShader because the tile builders import it and
+ * TileShader sits downstream of them in the import graph.
+ */
+export function emptyFallbackMaskTexture(): THREE.DataTexture {
+  if (!sharedEmptyMask) {
+    sharedEmptyMask = new THREE.DataTexture(
+      new Uint8Array([0]),
+      1,
+      1,
+      THREE.RedFormat,
+      THREE.UnsignedByteType,
+    );
+    sharedEmptyMask.needsUpdate = true;
+  }
+  return sharedEmptyMask;
+}
+
 /**
  * Stable shared uniforms — same object identity for Leva, materials, and HMR.
  * Keys are added by the hot-reloadable module via `ensureUniforms`; values are preserved across reloads.

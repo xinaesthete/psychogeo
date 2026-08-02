@@ -27,15 +27,18 @@ import {
 import { chunkExtent, TileLayerManagerImpl } from './tileLayerManager';
 import {
   DEFAULT_RETAINED_BUDGET_BYTES,
+  FALLBACK_MASK_RESOLUTION,
   FALLBACK_POLYGON_OFFSET_FACTOR,
   FALLBACK_POLYGON_OFFSET_UNITS,
   isPinnedTier,
+  rasteriseCoverageMask,
   retainedShouldDrop,
   retainedStillNeeded,
   selectRetainedEvictions,
   type CoverageEntry,
   type RetainedEntry,
 } from './tileRetention';
+import type { FallbackMaskUniforms } from './pyramidHeightChannel';
 import type { TileLayerManagerDebugStats } from './tileLayerTypes';
 import type {
   RasterChannelState,
@@ -155,6 +158,7 @@ export class PyramidTileNode extends THREE.Group implements TileNode {
   readonly pinnedTier: boolean;
   /** Retain-pool ordering; 0 while the tile is still desired. */
   retiredTick = 0;
+  private maskTexture: THREE.DataTexture | null = null;
   private selected = false;
 
   constructor(private readonly descriptor: ChunkFetchDescriptor) {
@@ -264,6 +268,38 @@ export class PyramidTileNode extends THREE.Group implements TileNode {
   }
 
   /**
+   * Publish which parts of this tile are already covered by ready terrain.
+   * Passing null clears the mask, so the whole tile draws again.
+   */
+  setFallbackMask(mask: Uint8Array | null): void {
+    const uniforms = (this.userData.geoLod as THREE.Object3D | undefined)?.userData
+      .fallbackMaskUniforms as FallbackMaskUniforms | undefined;
+    if (!uniforms) return;
+
+    if (!mask) {
+      uniforms.fallbackMaskEnabled.value = 0;
+      return;
+    }
+    if (!this.maskTexture) {
+      this.maskTexture = new THREE.DataTexture(
+        new Uint8Array(mask.length),
+        FALLBACK_MASK_RESOLUTION,
+        FALLBACK_MASK_RESOLUTION,
+        THREE.RedFormat,
+        THREE.UnsignedByteType,
+      );
+      // Nearest: cell edges line up with cover edges, and interpolating across
+      // them would fade the fallback out over ground nothing else is drawing.
+      this.maskTexture.magFilter = THREE.NearestFilter;
+      this.maskTexture.minFilter = THREE.NearestFilter;
+      uniforms.fallbackMask.value = this.maskTexture;
+    }
+    (this.maskTexture.image.data as Uint8Array).set(mask);
+    this.maskTexture.needsUpdate = true;
+    uniforms.fallbackMaskEnabled.value = 1;
+  }
+
+  /**
    * Bias this tile's surface behind (or back level with) its replacements.
    * Shadow materials are left alone: a fallback that is about to be covered
    * should not also be moving the shadows around.
@@ -284,6 +320,8 @@ export class PyramidTileNode extends THREE.Group implements TileNode {
   }
 
   disposeNode(): void {
+    this.maskTexture?.dispose();
+    this.maskTexture = null;
     this.remove(this.sceneInspectObject);
     this.removeLabelSprite();
     this.clear();
@@ -312,6 +350,9 @@ export class PyramidTileTree {
   private retainBudgetBytes = DEFAULT_RETAINED_BUDGET_BYTES;
   private retireCounter = 0;
   private lastVisibilityRevision = -1;
+  private readonly maskScratch = new Uint8Array(
+    FALLBACK_MASK_RESOLUTION * FALLBACK_MASK_RESOLUTION,
+  );
   private lastBounds: ReturnType<typeof groundViewportBounds> | null = null;
   private lastQueryBounds: ReturnType<typeof groundViewportBounds> | null = null;
   private lastDesiredKey = '';
@@ -704,6 +745,7 @@ export class PyramidTileTree {
           revived.retiredTick = 0;
           revived.visible = true;
           revived.setFallbackDepthBias(false);
+          revived.setFallbackMask(null);
           this.manager.setTileRetention(revived, 'active');
           this.active.set(key, revived);
           continue;
@@ -741,6 +783,7 @@ export class PyramidTileTree {
       const status = node.channels.get(PRIMARY_HEIGHT_CHANNEL_ID)?.status;
       covers.push({
         extent: node.extent,
+        ready: status === 'ready',
         settled: status === 'ready' || status === 'error',
         awaited: node.visibility.inFrustum || !node.visibility.observed,
       });
@@ -758,7 +801,16 @@ export class PyramidTileTree {
         this.destroyNode(node);
         continue;
       }
-      node.visible = retainedStillNeeded(node.extent, covers);
+      const needed = retainedStillNeeded(node.extent, covers);
+      node.visible = needed;
+      // Only the uncovered part should draw: elsewhere the replacement is
+      // already on screen, and two surfaces over one patch of ground is the
+      // flicker this whole mechanism exists to avoid.
+      if (needed && rasteriseCoverageMask(node.extent, covers, this.maskScratch)) {
+        node.setFallbackMask(this.maskScratch);
+      } else {
+        node.setFallbackMask(null);
+      }
     }
 
     this.enforceRetainedBudget();
