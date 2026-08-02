@@ -443,8 +443,17 @@ async function encode(pixelData, frameInfo, q) {
     const pixelData_8 = new Uint8Array(pixelData.buffer, pixelData.byteOffset, pixelData.byteLength);
     uncompressedBuffer.set(pixelData_8);
 
-    encoder.setQuality(false, q);
-    encoder.setDecompositions(8);
+    // q === 0 means lossless, which needs the reversible transform — the
+    // ingest encoder uses setQuality(lossyQuality === 0, lossyQuality).
+    encoder.setQuality(q === 0, q);
+    // Decomposition levels must suit the image. The ingest leaves this at the
+    // library default (5); forcing 8 is degenerate for the coarse 200x200
+    // square chunks, where it took ~100 s to encode and destroyed the data
+    // (23% of full range RMSE at a near-lossless q). The encoder is a
+    // singleton, so set it explicitly every time rather than inheriting.
+    const minDim = Math.min(frameInfo.width, frameInfo.height);
+    const levels = Math.max(1, Math.min(5, Math.floor(Math.log2(minDim)) - 2));
+    encoder.setDecompositions(levels);
 
     try {
         encoder.encode();
