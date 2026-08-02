@@ -25,6 +25,17 @@ import {
   tileMatchesQuery,
 } from './pyramidInspect';
 import { chunkExtent, TileLayerManagerImpl } from './tileLayerManager';
+import {
+  DEFAULT_RETAINED_BUDGET_BYTES,
+  FALLBACK_POLYGON_OFFSET_FACTOR,
+  FALLBACK_POLYGON_OFFSET_UNITS,
+  isPinnedTier,
+  retainedShouldDrop,
+  retainedStillNeeded,
+  selectRetainedEvictions,
+  type CoverageEntry,
+  type RetainedEntry,
+} from './tileRetention';
 import type { TileLayerManagerDebugStats } from './tileLayerTypes';
 import type {
   RasterChannelState,
@@ -32,12 +43,7 @@ import type {
   TileVisibility,
 } from './tileLayerTypes';
 
-const placeholderGeometry = new THREE.BoxGeometry(1, 1, 1);
-const placeholderMaterial = new THREE.MeshBasicMaterial({
-  transparent: true,
-  color: 0x204060,
-  opacity: 0.35,
-});
+const tileBoundsGeometry = new THREE.BoxGeometry(1, 1, 1);
 
 export type PyramidTileDebugRecord = {
   readonly key: string;
@@ -66,8 +72,17 @@ export type PyramidTileDebugRecord = {
   };
 };
 
+export type PyramidRetainedStats = {
+  readonly count: number;
+  readonly visibleCount: number;
+  readonly pinnedCount: number;
+  readonly bytes: number;
+  readonly budgetBytes: number;
+};
+
 export type PyramidDebugSnapshot = {
   readonly activeTileCount: number;
+  readonly retained: PyramidRetainedStats;
   readonly reconcileGeneration: number;
   readonly inspectionModeEnabled: boolean;
   readonly inspectBoundsVisible: boolean;
@@ -128,6 +143,7 @@ export class PyramidTileNode extends THREE.Group implements TileNode {
   readonly channels = new Map<string, RasterChannelState>();
   visibility: TileVisibility = {
     inFrustum: false,
+    observed: false,
     screenPixelsApprox: 0,
     lodLevel: 0,
     working: false,
@@ -135,12 +151,17 @@ export class PyramidTileNode extends THREE.Group implements TileNode {
   readonly sceneInspectObject: THREE.Mesh;
   /** Canvas-text sprite; exists only while inspection labels are shown. */
   labelSprite: THREE.Sprite | null = null;
+  /** Coarse overview tiers are held resident rather than evicted. */
+  readonly pinnedTier: boolean;
+  /** Retain-pool ordering; 0 while the tile is still desired. */
+  retiredTick = 0;
   private selected = false;
 
   constructor(private readonly descriptor: ChunkFetchDescriptor) {
     super();
     const { eastMin, northMin, extentMetres, encoding } = descriptor;
     this.extent = chunkExtent(eastMin, northMin, extentMetres);
+    this.pinnedTier = isPinnedTier(extentMetres);
     const heightMin = encodingHeightMin(encoding);
     const heightMax = encodingHeightMax(encoding);
     const eleScale = Math.max(heightMax - heightMin, 1);
@@ -155,14 +176,12 @@ export class PyramidTileNode extends THREE.Group implements TileNode {
 
     this.position.set(eastMin + extentMetres / 2, northMin + extentMetres / 2, 0);
 
-    const placeholder = new THREE.Mesh(placeholderGeometry, placeholderMaterial);
-    placeholder.scale.set(extentMetres, extentMetres, eleScale);
-    placeholder.position.z = heightMin + eleScale / 2;
-    this.add(placeholder);
-    this.userData.placeholder = placeholder;
-
-    this.sceneInspectObject = placeholder.clone();
-    this.sceneInspectObject.material = inspectBoundsMaterial;
+    // No stand-in geometry while loading: a translucent slab popping in and out
+    // reads far worse than the older, coarser terrain the tree now keeps drawing
+    // underneath. See PyramidTileTree's retained pool.
+    this.sceneInspectObject = new THREE.Mesh(tileBoundsGeometry, inspectBoundsMaterial);
+    this.sceneInspectObject.scale.set(extentMetres, extentMetres, eleScale);
+    this.sceneInspectObject.position.z = heightMin + eleScale / 2;
     this.sceneInspectObject.visible = false;
     this.add(this.sceneInspectObject);
 
@@ -234,11 +253,37 @@ export class PyramidTileNode extends THREE.Group implements TileNode {
     return this.descriptor;
   }
 
+  /** True once real terrain geometry exists — the precondition for retaining it. */
+  hasTerrain(): boolean {
+    return this.userData.geoLod instanceof THREE.Object3D;
+  }
+
+  /** Decoded bytes this tile is holding, for the retain-pool budget. */
+  residentBytes(): number {
+    return this.channels.get(PRIMARY_HEIGHT_CHANNEL_ID)?.payload?.bytes ?? 0;
+  }
+
+  /**
+   * Bias this tile's surface behind (or back level with) its replacements.
+   * Shadow materials are left alone: a fallback that is about to be covered
+   * should not also be moving the shadows around.
+   */
+  setFallbackDepthBias(biased: boolean): void {
+    const mesh = this.userData.geoLod as THREE.Object3D | undefined;
+    if (!mesh) return;
+    mesh.traverse((child) => {
+      if (!(child instanceof THREE.Mesh)) return;
+      const materials = Array.isArray(child.material) ? child.material : [child.material];
+      for (const material of materials) {
+        // Render state, not program state — no recompile needed.
+        material.polygonOffset = biased;
+        material.polygonOffsetFactor = biased ? FALLBACK_POLYGON_OFFSET_FACTOR : 0;
+        material.polygonOffsetUnits = biased ? FALLBACK_POLYGON_OFFSET_UNITS : 0;
+      }
+    });
+  }
+
   disposeNode(): void {
-    const placeholder = this.userData.placeholder as THREE.Object3D | undefined;
-    if (placeholder) {
-      this.remove(placeholder);
-    }
     this.remove(this.sceneInspectObject);
     this.removeLabelSprite();
     this.clear();
@@ -258,6 +303,15 @@ function desiredChunkSetKey(desired: ChunkFetchDescriptor[]): string {
 
 export class PyramidTileTree {
   private readonly active = new Map<string, PyramidTileNode>();
+  /**
+   * Superseded tiles that still hold terrain. They keep drawing until whatever
+   * replaces them is ready, so changing zoom level no longer punches a hole in
+   * the scene while the new chunks are in flight.
+   */
+  private readonly retained = new Map<string, PyramidTileNode>();
+  private retainBudgetBytes = DEFAULT_RETAINED_BUDGET_BYTES;
+  private retireCounter = 0;
+  private lastVisibilityRevision = -1;
   private lastBounds: ReturnType<typeof groundViewportBounds> | null = null;
   private lastQueryBounds: ReturnType<typeof groundViewportBounds> | null = null;
   private lastDesiredKey = '';
@@ -282,10 +336,21 @@ export class PyramidTileTree {
     private readonly debugHooks?: PyramidTileTreeDebugHooks,
   ) {
     this.parent.name = this.parent.name || 'pyramid-tile-root';
+    // A tile becoming ready is what retires the fallback drawing underneath it.
+    this.manager.setChannelReadyListener(() => this.updateFallbackVisibility());
   }
 
   get activeTiles(): ReadonlyMap<string, PyramidTileNode> {
     return this.active;
+  }
+
+  get retainedTiles(): ReadonlyMap<string, PyramidTileNode> {
+    return this.retained;
+  }
+
+  setRetainedBudgetBytes(bytes: number): void {
+    this.retainBudgetBytes = Math.max(0, bytes);
+    this.enforceRetainedBudget();
   }
 
   get inspectBoundsShown(): boolean {
@@ -384,6 +449,14 @@ export class PyramidTileTree {
   }
 
   onVisibilityUpdated(): void {
+    // Frustum membership decides which tiles a fallback is still waiting on, so
+    // recompute when it moves — but only then, since this walks retained tiles
+    // against active ones and runs off the render loop.
+    const revision = this.manager.visibilityRevision;
+    if (revision !== this.lastVisibilityRevision) {
+      this.lastVisibilityRevision = revision;
+      this.updateFallbackVisibility();
+    }
     this.refreshLabels();
     this.applyInspectionVisuals();
   }
@@ -404,6 +477,17 @@ export class PyramidTileTree {
       });
       const showLabel = this.labelsVisible && node.visibility.inFrustum;
       node.setLabelVisible(showLabel);
+    }
+    // Retained fallbacks are not part of the current desired set, so they are
+    // never pick targets and never labelled — they would only clutter and
+    // shadow the tiles that are actually being reasoned about.
+    for (const node of this.retained.values()) {
+      node.configureInspectPresentation({
+        pickable: false,
+        showWireframe: false,
+        selected: false,
+      });
+      node.setLabelVisible(false);
     }
   }
 
@@ -461,15 +545,18 @@ export class PyramidTileTree {
 
   dispose(): void {
     this.unbindInspectionPointer();
+    this.manager.setChannelReadyListener(null);
     this.reconcileGeneration += 1;
     this.reconcileScheduled = false;
     this.pendingCamera = null;
-    for (const node of this.active.values()) {
+    for (const node of [...this.active.values(), ...this.retained.values()]) {
       this.manager.unregisterTile(node);
       this.parent.remove(node);
       node.disposeNode();
     }
     this.active.clear();
+    this.retained.clear();
+    this.retireCounter = 0;
     this.lastBounds = null;
     this.lastQueryBounds = null;
     this.lastDesiredKey = '';
@@ -519,8 +606,24 @@ export class PyramidTileTree {
       .filter(([, keys]) => keys.length > 1)
       .map(([url, keys]) => ({ url, count: keys.length, keys }));
 
+    let retainedBytes = 0;
+    let retainedVisible = 0;
+    let retainedPinned = 0;
+    for (const node of this.retained.values()) {
+      retainedBytes += node.residentBytes();
+      if (node.visible) retainedVisible += 1;
+      if (node.pinnedTier) retainedPinned += 1;
+    }
+
     return {
       activeTileCount: this.active.size,
+      retained: {
+        count: this.retained.size,
+        visibleCount: retainedVisible,
+        pinnedCount: retainedPinned,
+        bytes: retainedBytes,
+        budgetBytes: this.retainBudgetBytes,
+      },
       reconcileGeneration: this.reconcileGeneration,
       inspectionModeEnabled: this.inspectionModeEnabled,
       inspectBoundsVisible: this.inspectBoundsVisible,
@@ -575,16 +678,40 @@ export class PyramidTileTree {
 
     for (const [key, node] of [...this.active.entries()]) {
       if (desiredKeys.has(key)) continue;
-      node.userData.generation = (node.userData.generation as number) + 1;
-      this.manager.unregisterTile(node);
-      this.parent.remove(node);
-      node.disposeNode();
       this.active.delete(key);
+      // Terrain already on screen is the best fallback there is; keep it until
+      // its replacement can take over. Tiles that never loaded have nothing to
+      // contribute and go now.
+      if (node.hasTerrain()) {
+        node.retiredTick = ++this.retireCounter;
+        node.setFallbackDepthBias(true);
+        this.retained.set(key, node);
+        this.manager.setTileRetention(node, node.pinnedTier ? 'pinned' : 'retained');
+      } else {
+        this.destroyNode(node);
+      }
     }
 
     for (const chunk of desired) {
       const key = chunkKey(chunk);
       if (this.active.has(key)) continue;
+      const revived = this.retained.get(key);
+      if (revived) {
+        this.retained.delete(key);
+        if (revived.hasTerrain()) {
+          // Straight back out of the pool with its texture and mesh intact —
+          // this is what makes zoom out/in and pan-and-return free.
+          revived.retiredTick = 0;
+          revived.visible = true;
+          revived.setFallbackDepthBias(false);
+          this.manager.setTileRetention(revived, 'active');
+          this.active.set(key, revived);
+          continue;
+        }
+        // Payload was released while it sat off-screen; start over rather than
+        // adopt a husk that would never be scheduled for a load.
+        this.destroyNode(revived);
+      }
       const node = new PyramidTileNode(chunk);
       if (this.selectedKey === key) {
         node.setSelected(true);
@@ -594,13 +721,77 @@ export class PyramidTileTree {
       this.manager.registerTile(node);
     }
 
-    this.applyInspectionVisuals();
     this.lastBounds = bounds;
     this.lastQueryBounds = queryBounds;
     this.lastDesiredKey = desiredKey;
     this.lastLevelViewport = levelViewportMetres;
+    this.updateFallbackVisibility();
     this.refreshLabels();
     this.applyInspectionVisuals();
+  }
+
+  /**
+   * Decide which retained tiles are still earning their place. Called on every
+   * reconcile and whenever a channel becomes ready, which is the moment a
+   * fallback stops being needed.
+   */
+  private updateFallbackVisibility(): void {
+    const covers: CoverageEntry[] = [];
+    for (const node of this.active.values()) {
+      const status = node.channels.get(PRIMARY_HEIGHT_CHANNEL_ID)?.status;
+      covers.push({
+        extent: node.extent,
+        settled: status === 'ready' || status === 'error',
+        awaited: node.visibility.inFrustum || !node.visibility.observed,
+      });
+    }
+
+    const queryBounds = this.lastQueryBounds;
+    for (const [key, node] of [...this.retained.entries()]) {
+      // A fallback that lost its payload has nothing left to fall back to, and
+      // one outside the query bounds can never be uncovered by a loading tile.
+      const spent =
+        !node.hasTerrain() ||
+        (queryBounds !== null && retainedShouldDrop(this.retainedEntry(key, node), queryBounds));
+      if (spent) {
+        this.retained.delete(key);
+        this.destroyNode(node);
+        continue;
+      }
+      node.visible = retainedStillNeeded(node.extent, covers);
+    }
+
+    this.enforceRetainedBudget();
+  }
+
+  private retainedEntry(key: string, node: PyramidTileNode): RetainedEntry {
+    return {
+      key,
+      extent: node.extent,
+      bytes: node.residentBytes(),
+      pinned: node.pinnedTier,
+      retiredTick: node.retiredTick,
+    };
+  }
+
+  private enforceRetainedBudget(): void {
+    if (this.retained.size === 0) return;
+    const entries = [...this.retained.entries()].map(([key, node]) =>
+      this.retainedEntry(key, node),
+    );
+    for (const key of selectRetainedEvictions(entries, this.retainBudgetBytes)) {
+      const node = this.retained.get(key);
+      if (!node) continue;
+      this.retained.delete(key);
+      this.destroyNode(node);
+    }
+  }
+
+  private destroyNode(node: PyramidTileNode): void {
+    node.userData.generation = (node.userData.generation as number) + 1;
+    this.manager.unregisterTile(node);
+    this.parent.remove(node);
+    node.disposeNode();
   }
 }
 

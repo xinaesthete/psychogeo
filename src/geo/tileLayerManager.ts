@@ -9,6 +9,7 @@ import type {
   TileLayerManager,
   TileLayerManagerDebugStats,
   TileNode,
+  TileRetentionMode,
   TileVisibility,
 } from './tileLayerTypes';
 import type { TileExtent } from './pyramidOsgb';
@@ -18,6 +19,9 @@ type ManagedTile = {
   generation: number;
   abortController: AbortController | null;
   inFrustum: boolean;
+  retention: TileRetentionMode;
+  /** When the tile left the frustum; null while visible, or once unloaded. */
+  offscreenSinceMs: number | null;
   channelStates: Map<string, RasterChannelState>;
 };
 
@@ -28,10 +32,17 @@ const HORIZONTAL_CULL_PADDING_METRES = 250;
 const VERTICAL_CULL_PADDING_METRES = 500;
 /** Brief gap after unload before re-queueing so refetch reads visually (mesh gone → loading). */
 const REFETCH_RELOAD_DELAY_MS = 200;
+/**
+ * Grace period before an off-screen tile's payload is released. Dropping it the
+ * instant it clears the frustum means a small pan or a rotation throws away a
+ * mesh that is about to be needed again, and rebuilding it costs a frame.
+ */
+const OFFSCREEN_UNLOAD_GRACE_MS = 4000;
 
 function defaultVisibility(): TileVisibility {
   return {
     inFrustum: false,
+    observed: false,
     screenPixelsApprox: 0,
     lodLevel: 0,
     working: false,
@@ -96,6 +107,11 @@ export class TileLayerManagerImpl implements TileLayerManager {
   private readonly maxConcurrentLoads = defaultDecodeWorkerCount() + 2;
   private readonly loadQueue: Array<{ managed: ManagedTile; channelId: string }> = [];
   private channelReadyListener: ChannelReadyListener | null = null;
+  private visibilityRevisionCounter = 0;
+
+  get visibilityRevision(): number {
+    return this.visibilityRevisionCounter;
+  }
 
   setChannelReadyListener(listener: ChannelReadyListener | null): void {
     this.channelReadyListener = listener;
@@ -158,9 +174,14 @@ export class TileLayerManagerImpl implements TileLayerManager {
   }
 
   debugStats(): TileLayerManagerDebugStats {
+    const managed = [...this.tiles.values()];
     return {
       registeredTiles: this.tiles.size,
-      inFrustumTiles: [...this.tiles.values()].filter((m) => m.inFrustum).length,
+      inFrustumTiles: managed.filter((m) => m.inFrustum).length,
+      retainedTiles: managed.filter((m) => m.retention !== 'active').length,
+      pinnedTiles: managed.filter((m) => m.retention === 'pinned').length,
+      offscreenHeldTiles: managed.filter((m) => !m.inFrustum && m.offscreenSinceMs !== null)
+        .length,
       activeLoads: this.activeLoads,
       queuedLoads: this.loadQueue.length,
       channelIds: [...this.channels.keys()],
@@ -175,8 +196,25 @@ export class TileLayerManagerImpl implements TileLayerManager {
       generation: tile.userData.generation as number,
       abortController: null,
       inFrustum: false,
+      retention: 'active',
+      offscreenSinceMs: null,
       channelStates: tile.channels as Map<string, RasterChannelState>,
     });
+  }
+
+  /**
+   * `retained` tiles are superseded but still drawing as a fallback: they keep
+   * what they already have, but never start a fetch, because nothing wants
+   * their data any more. `pinned` additionally holds the payload off-screen —
+   * used for the coarse overview tiers, which are few, small, and the thing
+   * everything else falls back to.
+   */
+  setTileRetention(tile: TileNode, retention: TileRetentionMode): void {
+    const managed = this.tiles.get(tile);
+    if (!managed) return;
+    managed.retention = retention;
+    if (retention === 'pinned') managed.offscreenSinceMs = null;
+    if (retention !== 'active') this.cancelQueuedLoads(managed);
   }
 
   unregisterTile(tile: TileNode): void {
@@ -197,31 +235,51 @@ export class TileLayerManagerImpl implements TileLayerManager {
     camera.updateMatrixWorld(true);
     projScreenMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     frustum.setFromProjectionMatrix(projScreenMatrix);
+    const nowMs = performance.now();
 
     for (const managed of this.tiles.values()) {
       const { tile } = managed;
       tileWorldBox(tile, scratchBox);
       const inFrustum = frustum.intersectsBox(scratchBox);
       const wasVisible = managed.inFrustum;
+      const wasObserved = tile.visibility.observed;
+      if (inFrustum !== wasVisible || !wasObserved) this.visibilityRevisionCounter += 1;
       managed.inFrustum = inFrustum;
       const lodLevel = currentGeoLodLevel(tile, camera, inFrustum);
       tile.visibility = {
         inFrustum,
+        observed: true,
         screenPixelsApprox: 0,
         lodLevel,
         working: managed.abortController !== null,
       };
       syncTileDebugLabel(tile);
 
-      if (inFrustum && !wasVisible) {
-        for (const channelId of this.channels.keys()) {
-          this.enqueueLoad(managed, channelId);
+      if (inFrustum) {
+        managed.offscreenSinceMs = null;
+        if (!wasVisible) {
+          for (const channelId of this.channels.keys()) {
+            this.enqueueLoad(managed, channelId);
+          }
         }
-      } else if (!inFrustum && wasVisible) {
+        continue;
+      }
+
+      if (wasVisible) {
+        // Stop fetching what cannot be seen straight away, but hold anything
+        // already decoded for a while — see OFFSCREEN_UNLOAD_GRACE_MS.
         this.cancelLoads(managed);
+        managed.offscreenSinceMs = nowMs;
+      }
+      if (
+        managed.retention !== 'pinned' &&
+        managed.offscreenSinceMs !== null &&
+        nowMs - managed.offscreenSinceMs >= OFFSCREEN_UNLOAD_GRACE_MS
+      ) {
         for (const channelId of this.channels.keys()) {
           this.unloadChannel(managed, channelId);
         }
+        managed.offscreenSinceMs = null;
       }
     }
   }
@@ -237,6 +295,10 @@ export class TileLayerManagerImpl implements TileLayerManager {
   private cancelLoads(managed: ManagedTile): void {
     managed.abortController?.abort();
     managed.abortController = null;
+    this.cancelQueuedLoads(managed);
+  }
+
+  private cancelQueuedLoads(managed: ManagedTile): void {
     for (let i = this.loadQueue.length - 1; i >= 0; i -= 1) {
       if (this.loadQueue[i]?.managed === managed) {
         this.loadQueue.splice(i, 1);
@@ -264,6 +326,9 @@ export class TileLayerManagerImpl implements TileLayerManager {
   }
 
   private enqueueLoad(managed: ManagedTile, channelId: string): void {
+    // Retained tiles draw whatever they already hold; refetching data nothing
+    // has asked for would compete with the tiles that are actually wanted.
+    if (managed.retention !== 'active') return;
     const existing = managed.channelStates.get(channelId);
     if (existing?.status === 'ready' || existing?.status === 'loading') return;
     if (

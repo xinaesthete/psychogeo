@@ -164,15 +164,7 @@ export function syncPyramidTileNodeLabels(node: PyramidInspectableNode): void {
   const label = formatPyramidTileNodeName(descriptor, status, node.visibility.inFrustum);
   node.name = label;
 
-  const placeholder = node.userData.placeholder;
   const geoLod = node.userData.geoLod;
-  const showPlaceholder =
-    status === 'loading' || (status !== 'ready' && !(geoLod instanceof THREE.Object3D));
-  if (placeholder instanceof THREE.Object3D) {
-    placeholder.name = `placeholder ${label}`;
-    placeholder.visible = showPlaceholder;
-  }
-
   node.sceneInspectObject.name = `inspect-bounds ${label}`;
 
   if (geoLod instanceof THREE.Object3D) {

@@ -15,8 +15,21 @@ export interface RasterPayload {
   dispose(): void;
 }
 
+/**
+ * `active` — currently wanted, loads freely.
+ * `retained` — superseded but still drawing as a fallback; never starts a load.
+ * `pinned` — retained, and holds its payload even off-screen.
+ */
+export type TileRetentionMode = 'active' | 'retained' | 'pinned';
+
 export interface TileVisibility {
   readonly inFrustum: boolean;
+  /**
+   * False until the tile has been through a frustum test. Distinguishes "known
+   * to be off-screen" from "not looked at yet", which matters because loads are
+   * only scheduled for on-screen tiles.
+   */
+  readonly observed: boolean;
   readonly screenPixelsApprox: number;
   readonly lodLevel: number;
   readonly working: boolean;
@@ -82,7 +95,10 @@ export interface TileLayerManager {
   ): ChannelReconciliation;
   invalidateChannel(channelId: string): ChannelReconciliation;
   refetchChannel(tile: TileNode, channelId: string): boolean;
+  setTileRetention(tile: TileNode, retention: TileRetentionMode): void;
   observeVisibility(camera: THREE.Camera): void;
+  /** Bumped whenever frustum membership changes; lets callers skip stale recomputes. */
+  readonly visibilityRevision: number;
   setChannelReadyListener(listener: ChannelReadyListener | null): void;
   dispose(): void;
 }
@@ -90,6 +106,12 @@ export interface TileLayerManager {
 export type TileLayerManagerDebugStats = {
   readonly registeredTiles: number;
   readonly inFrustumTiles: number;
+  /** Superseded tiles still held as fallbacks. */
+  readonly retainedTiles: number;
+  /** Retained tiles holding their payload indefinitely (coarse overview tiers). */
+  readonly pinnedTiles: number;
+  /** Off-screen tiles still inside the unload grace period. */
+  readonly offscreenHeldTiles: number;
   readonly activeLoads: number;
   readonly queuedLoads: number;
   readonly channelIds: readonly string[];

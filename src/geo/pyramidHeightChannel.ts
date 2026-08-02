@@ -203,10 +203,6 @@ export class PyramidHeightChannel implements RasterChannel<PyramidHeightChannelP
       compressionUrl: typeof payloadUrl === 'string' ? payloadUrl : undefined,
     });
     mesh.name = `GeoLodMesh ${tile.name}`;
-    const placeholder = tile.userData.placeholder as THREE.Object3D | undefined;
-    if (placeholder) {
-      placeholder.visible = false;
-    }
     tile.add(mesh);
     tile.userData.geoLod = mesh;
     const sync = tile.userData.syncDebugLabel;
@@ -241,10 +237,6 @@ export class PyramidHeightChannel implements RasterChannel<PyramidHeightChannelP
         }
       });
       tile.userData.geoLod = undefined;
-    }
-    const placeholder = tile.userData.placeholder as THREE.Object3D | undefined;
-    if (placeholder) {
-      placeholder.visible = true;
     }
     const sync = tile.userData.syncDebugLabel;
     if (typeof sync === 'function') sync();

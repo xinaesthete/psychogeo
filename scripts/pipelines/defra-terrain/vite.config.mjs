@@ -42,6 +42,7 @@ export default defineConfig({
       'src/geo/groundViewport.test.ts',
       'src/geo/LodUtils.test.ts',
       'src/geo/tileGeometry.test.ts',
+      'src/geo/tileRetention.test.ts',
       'src/geo/compressionFormat.test.ts',
       'src/camera/orbitClamp.test.ts',
       'src/openjpegjs/textureLruCache.test.ts',
