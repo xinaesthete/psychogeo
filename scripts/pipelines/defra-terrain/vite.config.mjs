@@ -45,6 +45,7 @@ export default defineConfig({
       'src/geo/compressionFormat.test.ts',
       'src/camera/orbitClamp.test.ts',
       'src/openjpegjs/textureLruCache.test.ts',
+      'src/openjpegjs/workerPool.test.ts',
     ],
   },
 });

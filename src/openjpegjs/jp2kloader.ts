@@ -114,7 +114,42 @@ export const MAX_LOSSY_COMPRESSION_RATIO = 0.9999;
 
 const workers = new WorkerPool(defaultDecodeWorkerCount());
 workers.maxAge = 9e9;
-const times: number[] = [];
+
+/**
+ * How long a worker may hold its slot before we give up on it and replace it.
+ * Generous: healthy decodes are tens of milliseconds, but a busy machine with
+ * every worker encoding can stretch that a long way, and killing live work is
+ * worse than waiting.
+ */
+let workerJobTimeoutMs = 60_000;
+
+export function setWorkerJobTimeoutMs(ms: number): void {
+  workerJobTimeoutMs = Math.max(100, ms);
+}
+
+/** Running decode timings — kept as aggregates, not a per-decode array. */
+const decodeTiming = { count: 0, total: 0, min: Infinity, max: 0 };
+
+function recordDecodeTime(ms: number): void {
+  decodeTiming.count += 1;
+  decodeTiming.total += ms;
+  if (ms < decodeTiming.min) decodeTiming.min = ms;
+  if (ms > decodeTiming.max) decodeTiming.max = ms;
+}
+
+export function decodeTimingStats(): {
+  count: number;
+  meanMs: number;
+  minMs: number;
+  maxMs: number;
+} {
+  return {
+    count: decodeTiming.count,
+    meanMs: decodeTiming.count > 0 ? decodeTiming.total / decodeTiming.count : 0,
+    minMs: decodeTiming.count > 0 ? decodeTiming.min : 0,
+    maxMs: decodeTiming.max,
+  };
+}
 
 function cacheKey(url: string, compressionRatio: number): string {
   return `${url}@q=${compressionRatio}`;
@@ -162,27 +197,68 @@ async function getTexData(
       reject(new DOMException('Aborted', 'AbortError'));
       return;
     }
+
+    let released = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
     const onAbort = () => {
       cancelled = true;
       reject(new DOMException('Aborted', 'AbortError'));
       // Do not release the worker here — it may still be decoding this URL.
-      // The onmessage handler releases once the in-flight job completes.
+      // The timeout below bounds how long it can hold the slot.
     };
-    signal?.addEventListener('abort', onAbort, { once: true });
-    worker.onmessage = (m) => {
+
+    /**
+     * Return the worker to the pool exactly once, whichever of message,
+     * error or timeout lands first. The pool runs one job per worker, so a
+     * worker that never reports back costs a slot for the life of the page —
+     * lose them all and every decode blocks forever.
+     *
+     * A worker that errored or timed out is killed rather than reused: it may
+     * still post its result later, and that message would land on whichever
+     * request picks the worker up next, silently swapping one tile's raster
+     * for another's.
+     */
+    const release = (kill: boolean): boolean => {
+      if (released) return false;
+      released = true;
+      if (timer !== undefined) clearTimeout(timer);
       signal?.removeEventListener('abort', onAbort);
-      workers.releaseWorker(worker);
+      worker.onmessage = null;
+      worker.onerror = null;
+      worker.onmessageerror = null;
+      workers.releaseWorker(worker, kill);
+      return true;
+    };
+
+    signal?.addEventListener('abort', onAbort, { once: true });
+
+    timer = setTimeout(() => {
+      if (!release(true)) return;
+      reject(new Error(`HTJ2K worker gave no response within ${workerJobTimeoutMs} ms: ${url}`));
+    }, workerJobTimeoutMs);
+
+    worker.onerror = (event: ErrorEvent) => {
+      if (!release(true)) return;
+      reject(new Error(`HTJ2K worker failed: ${event.message || 'unknown error'} (${url})`));
+    };
+
+    worker.onmessageerror = () => {
+      if (!release(true)) return;
+      reject(new Error(`HTJ2K worker sent an undeserialisable response: ${url}`));
+    };
+
+    worker.onmessage = (m) => {
+      if (!release(false)) return;
       if (cancelled) return;
-      const dt = Date.now() - t;
-      times.push(dt);
-      const avg = times.reduce((a, b) => a + b, 0) / times.length;
-      console.log(`t: ${dt}, min: ${Math.min(...times)}, max: ${Math.max(...times)} avg: ${avg}`);
+      recordDecodeTime(Date.now() - t);
       if (typeof m.data === 'string') {
         reject(m.data);
         return;
       }
       resolve(m.data as TexFrame);
     };
+
     const workerUrl = workerHeightUrl(url);
     if (compressionRatio === 1) worker.postMessage({ cmd: 'tex', url: workerUrl, fullFloat });
     else worker.postMessage({ cmd: 'recode', url: workerUrl, compressionRatio, fullFloat, heightRangeMetres });
