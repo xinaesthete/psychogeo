@@ -1,11 +1,12 @@
 import * as THREE from 'three'
 import { EastNorth, gridRefString } from './Coordinates';
 import { WorkerPool } from '../openjpegjs/workerPool';
+import { TimingStats } from '../util/timingStats';
 import type { DelaunayBuffers, ShpWorkerRequest, ShpWorkerResponse } from './shpWorkerProtocol';
 import ShpTriangulationWorker from './shpWorker?worker';
 
 type Delaun = DelaunayBuffers; //maybe Delaunator<Float64Array>?
-const times: number[] = [];
+const triangulationTiming = new TimingStats();
 const workerRegister: Map<EastNorth, Worker> = new Map();
 /** returns THREE.BufferGeometry based on shapefile at the given OS coordinate */
 export async function threeGeometryFromShpZip(coord: EastNorth) {
@@ -81,8 +82,8 @@ export async function threeGeometryFromShpZip(coord: EastNorth) {
 
     const delaunay = await promise;
     const points = delaunay.coordinates;
-    times.push(delaunay.computeTime);
-    console.log(`took ${delaunay.computeTime} via ${delaunay.backend}, average: ${times.reduce((a, b) => a+b, 0)/times.length}\t${delaunay.triangles.length/3} triangles`);
+    triangulationTiming.record(delaunay.computeTime);
+    console.log(`took ${delaunay.computeTime} via ${delaunay.backend} (${triangulationTiming})\t${delaunay.triangles.length/3} triangles`);
     
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.BufferAttribute(points, 3));

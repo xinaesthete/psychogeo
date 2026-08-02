@@ -46,6 +46,7 @@ export default defineConfig({
       'src/camera/orbitClamp.test.ts',
       'src/openjpegjs/textureLruCache.test.ts',
       'src/openjpegjs/workerPool.test.ts',
+      'src/util/timingStats.test.ts',
     ],
   },
 });

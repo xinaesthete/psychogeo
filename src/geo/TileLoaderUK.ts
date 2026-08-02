@@ -363,6 +363,8 @@ export type TerrainDebugSnapshot = {
     lod: ReturnType<typeof collectGeoLodDebugSnapshot>;
     pyramid?: PyramidDebugSnapshot;
     lastPick: ReturnType<typeof getLastTerrainPickDebug>;
+    decodeTiming: ReturnType<typeof JP2.decodeTimingStats>;
+    textureCache: ReturnType<typeof JP2.textureCacheStats>;
     layers: {
         dsmVisible: boolean;
         dtmVisible: boolean;
@@ -1003,6 +1005,8 @@ export class TerrainRenderer extends ThreactTrackballBase {
             ]),
             pyramid: this.pyramidTree?.debugSnapshot(),
             lastPick: getLastTerrainPickDebug(),
+            decodeTiming: JP2.decodeTimingStats(),
+            textureCache: JP2.textureCacheStats(),
         };
         if (this.mapCtrl) {
             snapshot.controls = {

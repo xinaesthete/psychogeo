@@ -53,7 +53,6 @@ export class WorkerPool {
     private newWorker() {
         const w = this.createWorker();
         this.workerAge.set(w, 0);
-        console.log(`newWorker() : current count: ${this.workerAge.size}`);
         return w;
     }
     //I seem to face ever-growing heap, so simplest strategy appears to be to terminate
@@ -66,17 +65,12 @@ export class WorkerPool {
         this.workerAge.set(worker, age);
         return worker;
     }
+    /** Terminate and immediately replace, so pool capacity stays constant. */
     private terminateWorker(worker: Worker) {
         worker.terminate();
-        if (!this.workerAge.has(worker)) {
+        if (!this.workerAge.delete(worker)) {
             throw new Error("tried to delete worker that isn't in workerAge");
         }
-        if (!this.workerAge.delete(worker)) {
-            console.warn(`workerAge.delete() returned false!`);
-        } else {
-            console.log(`workerAge.delete() ok`);
-        }
-        console.log(`terminateWorker() : current count: ${this.workerAge.size}`);
         return this.newWorker();
     }
 }

@@ -9,6 +9,7 @@
  */
 
 import * as THREE from 'three'
+import { TimingStats, type TimingSnapshot } from '../util/timingStats';
 import { TextureLruCache } from './textureLruCache';
 import { WorkerPool, defaultDecodeWorkerCount } from './workerPool';
 
@@ -127,28 +128,10 @@ export function setWorkerJobTimeoutMs(ms: number): void {
   workerJobTimeoutMs = Math.max(100, ms);
 }
 
-/** Running decode timings — kept as aggregates, not a per-decode array. */
-const decodeTiming = { count: 0, total: 0, min: Infinity, max: 0 };
+const decodeTiming = new TimingStats();
 
-function recordDecodeTime(ms: number): void {
-  decodeTiming.count += 1;
-  decodeTiming.total += ms;
-  if (ms < decodeTiming.min) decodeTiming.min = ms;
-  if (ms > decodeTiming.max) decodeTiming.max = ms;
-}
-
-export function decodeTimingStats(): {
-  count: number;
-  meanMs: number;
-  minMs: number;
-  maxMs: number;
-} {
-  return {
-    count: decodeTiming.count,
-    meanMs: decodeTiming.count > 0 ? decodeTiming.total / decodeTiming.count : 0,
-    minMs: decodeTiming.count > 0 ? decodeTiming.min : 0,
-    maxMs: decodeTiming.max,
-  };
+export function decodeTimingStats(): TimingSnapshot {
+  return decodeTiming.snapshot();
 }
 
 function cacheKey(url: string, compressionRatio: number): string {
@@ -251,7 +234,7 @@ async function getTexData(
     worker.onmessage = (m) => {
       if (!release(false)) return;
       if (cancelled) return;
-      recordDecodeTime(Date.now() - t);
+      decodeTiming.record(Date.now() - t);
       if (typeof m.data === 'string') {
         reject(m.data);
         return;
