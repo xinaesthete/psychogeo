@@ -166,12 +166,30 @@ def main() -> None:
             error_stats(values, quantised.reconstructed, valid),
         )
 
-        national = quantise_globally(values, valid, args.global_range[0], args.global_range[1])
+        lo, hi = args.global_range
+        national = quantise_globally(values, valid, lo, hi)
         national_encoded = imagecodecs.jpeg2k_encode(national.raw, level=0, reversible=True, codecformat="J2K")
         report(
-            f"uint16 global {args.global_range[0]:g}..{args.global_range[1]:g} + J2K",
+            f"uint16 global {lo:g}..{hi:g} + J2K (from source)",
             national_encoded,
             error_stats(values, national.reconstructed, valid),
+        )
+
+        # Same target, but reached by requantising what is already on disk
+        # rather than going back to the TIFFs. Errors compose, so the question
+        # is whether the existing ~1.4 mm step shows up at all next to the
+        # ~21 mm one it is being folded into. Measured against the original
+        # float, so this is the total error, not the increment.
+        relay = quantise_globally(quantised.reconstructed, valid, lo, hi)
+        relay_encoded = imagecodecs.jpeg2k_encode(relay.raw, level=0, reversible=True, codecformat="J2K")
+        report(
+            f"uint16 global {lo:g}..{hi:g} + J2K (from shipped)",
+            relay_encoded,
+            error_stats(values, relay.reconstructed, valid),
+        )
+        identical = int(np.count_nonzero(relay.raw != national.raw))
+        print(
+            f"  {'':38s} {identical} of {relay.raw.size} samples differ from the direct route"
         )
 
         report("zfp reversible", zfp_reversible(values), None)

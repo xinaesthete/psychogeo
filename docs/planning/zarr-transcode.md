@@ -136,8 +136,10 @@ anything. A 400× separation is.
   instead of per-chunk makes files **31–44% smaller** while deleting the
   `encoding/` arrays, because a 1.4 mm per-chunk step spends most of its bits
   encoding sensor noise — DEFRA LIDAR is accurate to ~±150 mm. A national step
-  of ~21 mm is still an order of magnitude inside that. Needs a re-encode from
-  the source TIFFs, so it belongs with a full transcode rather than this repack.
+  of ~21 mm is still an order of magnitude inside that. It does **not** need the
+  source TIFFs: requantising the shipped chunks adds only +0.79 mm to the max
+  error and +0.02 mm rms. It does need CPU — a decode and re-encode of every
+  chunk, where this repack was a byte copy.
 - **Browser loader** — nothing in `src/` reads the store yet. `zarrextra/workers`
   + `@fideus-labs/fizarrita` is the intended path for off-main-thread decode.
 - **National run** — only SU42 has been transcoded. 144 GB at I/O speed.

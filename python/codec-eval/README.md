@@ -54,8 +54,28 @@ the files get substantially *smaller* while `encoding/scale` and
 `encoding/offset` disappear entirely.
 
 That makes the interoperable option and the cheap option the same option, which
-is not how these usually go. It needs a re-encode from the source TIFFs to act
-on, so it belongs with a full transcode rather than the repack.
+is not how these usually go.
+
+**Reaching it from the shipped data costs almost nothing.** Requantising what is
+already on disk, rather than going back to the TIFFs, adds only the existing
+quantiser's own error on top:
+
+| | from source | from shipped | Δ |
+|---|---|---|---|
+| max error | 10.77 mm | 11.56 mm | +0.79 mm |
+| rms error | 6.21 mm | 6.23 mm | +0.02 mm |
+| encoded size | 0.574 MB | 0.574 MB | — |
+
+Which is exactly the composition you would predict: max error goes as
+`(s₁+s₂)/2` — the window ships at 0.84 mm and gains 0.79 mm — and rms in
+quadrature, `√(6.21² + 0.48²) = 6.229` against 6.23 measured. About 1.8% of
+samples land one uint16 level away from where the direct route puts them.
+
+So the re-encode does not need the source zips. What it does need is CPU: it is
+a decode and re-encode of every chunk rather than the byte copy the repack was.
+Going back to source would only be worth it for the things requantisation
+cannot recover — real nodata sentinels instead of the reserved `0`, or
+revisiting the 1 km windowing and apron.
 
 Caveats: five windows from two 5 km tiles, all 100% valid, both in England /
 southern Scotland. Nodata behaviour under global normalisation is untested, and
