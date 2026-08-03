@@ -24,6 +24,7 @@ import { formatRegionPlan, planRegionIngest } from './v2/plan.ts';
 import { parseRegionArg } from './v2/region.ts';
 import { validateDatasetV2 } from './v2/validate.ts';
 import { syncCheckpointsFromDisk } from './v2/syncCheckpoints.ts';
+import { transcodeToZarr, type TranscodeProgressEvent } from './zarr/transcode.ts';
 
 const startTime = Date.now();
 
@@ -67,6 +68,10 @@ function usage(): string {
     '  pnpm pipeline:defra -- sync-checkpoints-v2 --input <dir> --out <dataset-dir>',
     '      [--region <gridRef> | --cell <gridRef> | --bounds eastMin,northMin,eastMax,northMax]',
     '  pnpm pipeline:defra -- inspect-v2 --dataset <dataset-dir>',
+    '  pnpm pipeline:defra -- transcode-zarr --dataset <dataset-dir> --out <zarr-dir>',
+    '      [--region <gridRef>] [--progress]',
+    '        Repacks the existing HTJ2K chunks into a sharded zarr v3 store.',
+    '        No decode or re-encode: the codestreams become zarr chunks as they are.',
     '',
     'Region examples:',
     '  --region SP51     one 10 km cell',
@@ -112,6 +117,17 @@ function parseArgs(argv: string[]): CliArgs {
     noMerge: flags.has('no-merge'),
     skipValidation: flags.has('skip-validation'),
   };
+}
+
+function formatTranscodeProgress(event: TranscodeProgressEvent): string {
+  switch (event.kind) {
+    case 'scan':
+      return `[zarr] scanned ${event.nodes} nodes, ${event.chunks} chunks`;
+    case 'shard':
+      return `[zarr] level ${event.level}: ${event.done}/${event.total} objects`;
+    case 'level':
+      return `[zarr] level ${event.level} done: ${event.chunks} chunks in ${event.shards} objects`;
+  }
 }
 
 function parseMinFreeBytes(value: string | undefined): number {
@@ -368,6 +384,31 @@ async function main(): Promise<void> {
   if (args.command === 'inspect-v2') {
     if (!args.dataset) throw new Error('--dataset is required for inspect-v2');
     console.log(await inspectDatasetV2(args.dataset));
+    return;
+  }
+  if (args.command === 'transcode-zarr') {
+    if (!args.dataset) throw new Error('--dataset is required for transcode-zarr');
+    if (!args.out) throw new Error('--out is required for transcode-zarr');
+    const summary = await transcodeToZarr({
+      datasetDir: args.dataset,
+      outDir: args.out,
+      gridRefFilter: args.region ?? args.cell,
+      onProgress: args.progress ? (event) => console.log(formatTranscodeProgress(event)) : undefined,
+    });
+    console.log(
+      [
+        `scanned ${summary.nodes} nodes`,
+        `wrote ${summary.totalShards} objects for ${summary.totalChunks} chunks, ${formatBytes(summary.totalBytes)}`,
+        ...summary.levels.map(
+          (level) =>
+            `  level ${level.level}: ${level.chunks} chunks → ${level.shards} objects, ` +
+            `${formatBytes(level.bytes)} (${formatBytes(level.indexBytes)} shard index)`,
+        ),
+        summary.missingChunks.length > 0
+          ? `  ${summary.missingChunks.length} chunks listed in a manifest but absent on disk, skipped`
+          : '  no missing chunks',
+      ].join('\n'),
+    );
     return;
   }
   throw new Error(usage());

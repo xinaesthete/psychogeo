@@ -225,6 +225,8 @@ Not blocking v2 bespoke layout. Run when national extent stabilises ([NOTES.md](
 
 Recommendation: **prototype zarrita + one small multiscale group** transcoded from v2 `L0..Ln` layout; keep v2 files as source of truth until browser path proves parity with `jp2Texture`.
 
+**Done for one cell** — see **[zarr-transcode.md](zarr-transcode.md)**. `transcode-zarr` repacks existing `.j2c` codestreams into a sharded Zarr v3 store with no decode or re-encode, using `zarrextra`'s `experimental.openjph_htj2k` codec. SU42: 105 chunks → 3 objects, byte-identical. v2 files remain the source of truth; no browser loader yet.
+
 Checklist inherited from [server-side.md](../server-side.md) § 6 — apron strategy, shard size vs viewport, `.zattrs` vs compat catalog, compression experiment continuity.
 
 ## Index slimming (concrete)

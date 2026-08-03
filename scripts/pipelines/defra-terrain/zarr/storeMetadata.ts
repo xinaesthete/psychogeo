@@ -1,0 +1,155 @@
+import type { TerrainManifestV2 } from '../v2/types.ts';
+import { NATIONAL_EXTENT, type LevelGrid } from './grid.ts';
+
+/**
+ * Codec id registered by `zarrextra`'s `registerExperimentalHtj2kCodec()`,
+ * backed by openjph-wasm. Experimental until there is registry alignment —
+ * datasets written with it are explicitly labelled in the group attributes.
+ */
+export const HTJ2K_CODEC_NAME = 'experimental.openjph_htj2k';
+
+export const ZARR_FORMAT = 3;
+
+type Json = Record<string, unknown>;
+
+function htj2kCodec(): Json {
+  return { name: HTJ2K_CODEC_NAME };
+}
+
+function shardingCodec(grid: LevelGrid): Json {
+  return {
+    name: 'sharding_indexed',
+    configuration: {
+      chunk_shape: grid.chunkShape,
+      codecs: [htj2kCodec()],
+      index_codecs: [{ name: 'bytes', configuration: { endian: 'little' } }, { name: 'crc32c' }],
+      index_location: 'end',
+    },
+  };
+}
+
+export function buildGroupMetadata(attributes: Json = {}): Json {
+  return { zarr_format: ZARR_FORMAT, node_type: 'group', attributes };
+}
+
+/**
+ * One level of the height pyramid.
+ *
+ * When the level is sharded the array's own chunk grid is the *shard* grid and
+ * the sharding codec carries the inner chunk shape — that indirection is what
+ * turns 150k files into a few thousand while each codestream stays
+ * individually range-readable.
+ */
+export function buildLevelArrayMetadata(grid: LevelGrid, source: TerrainManifestV2): Json {
+  const sharded = grid.shardChunks !== null && grid.shardShape !== null;
+  return {
+    zarr_format: ZARR_FORMAT,
+    node_type: 'array',
+    shape: grid.shape,
+    data_type: source.encoding.sampleType,
+    chunk_grid: {
+      name: 'regular',
+      configuration: { chunk_shape: sharded ? grid.shardShape : grid.chunkShape },
+    },
+    chunk_key_encoding: { name: 'default', configuration: { separator: '/' } },
+    fill_value: source.encoding.nodata,
+    codecs: sharded ? [shardingCodec(grid)] : [htj2kCodec()],
+    dimension_names: ['y', 'x'],
+    attributes: {
+      psychogeo: {
+        level: grid.level,
+        chunkMetres: grid.chunkMetres,
+        chunkPixels: grid.chunkPixels,
+        resolutionMetres: grid.resolutionMetres,
+        nominalResolutionMetres: grid.nominalResolutionMetres,
+        shardMetres: grid.shardMetres,
+      },
+    },
+  };
+}
+
+/**
+ * Per-chunk `scale` / `offset`, one value per chunk of the matching level.
+ *
+ * The source normalises every chunk independently (uint16 1..65535 across that
+ * chunk's own min..max), and Zarr has no array-level home for that — dtype
+ * semantics are uniform across the array. So it travels alongside, at chunk
+ * resolution. NaN marks a chunk with no data.
+ */
+export function buildEncodingArrayMetadata(grid: LevelGrid, name: 'scale' | 'offset'): Json {
+  return {
+    zarr_format: ZARR_FORMAT,
+    node_type: 'array',
+    shape: grid.chunkGrid,
+    data_type: 'float64',
+    chunk_grid: { name: 'regular', configuration: { chunk_shape: grid.chunkGrid } },
+    chunk_key_encoding: { name: 'default', configuration: { separator: '/' } },
+    fill_value: 'NaN',
+    codecs: [{ name: 'bytes', configuration: { endian: 'little' } }],
+    dimension_names: ['y', 'x'],
+    attributes: { psychogeo: { level: grid.level, quantity: name } },
+  };
+}
+
+/**
+ * Channel group attributes: an OME-style `multiscales` block for tooling that
+ * looks for one, plus the exact OSGB affine, which `multiscales` has no
+ * standard way to express.
+ */
+export function buildChannelGroupMetadata(
+  source: TerrainManifestV2,
+  grids: readonly LevelGrid[],
+): Json {
+  const ordered = [...grids].sort((a, b) => a.level - b.level);
+  return buildGroupMetadata({
+    multiscales: [
+      {
+        name: source.channelId,
+        axes: [
+          { name: 'y', type: 'space', unit: 'metre' },
+          { name: 'x', type: 'space', unit: 'metre' },
+        ],
+        datasets: ordered.map((grid) => ({
+          path: String(grid.level),
+          coordinateTransformations: [
+            { type: 'scale', scale: [grid.resolutionMetres, grid.resolutionMetres] },
+          ],
+        })),
+      },
+    ],
+    psychogeo: {
+      sourceSchemaVersion: source.schemaVersion,
+      sourceFormat: source.format,
+      sourceDatasetId: source.datasetId,
+      channelId: source.channelId,
+      crs: source.crs,
+      encoding: {
+        codec: source.encoding.codec,
+        codecName: HTJ2K_CODEC_NAME,
+        sampleType: source.encoding.sampleType,
+        normalisation: source.encoding.normalisation,
+        nodata: source.encoding.nodata,
+        // value = raw * scale + offset, with raw 0 reserved for nodata; so
+        // min = offset + scale and max = offset + 65535 * scale.
+        rawMin: 1,
+        rawMax: 65535,
+      },
+      // Array index (y, x) → OSGB: east = eastOrigin + x * res,
+      // north = northOrigin - y * res. y runs south because the codestreams
+      // are stored north-first.
+      grid: {
+        crs: source.crs.horizontal,
+        eastOrigin: NATIONAL_EXTENT.eastMin,
+        northOrigin: NATIONAL_EXTENT.northMax,
+        yAxis: 'south',
+        levels: ordered.map((grid) => ({
+          level: grid.level,
+          resolutionMetres: grid.resolutionMetres,
+          chunkMetres: grid.chunkMetres,
+          shape: grid.shape,
+          chunkGrid: grid.chunkGrid,
+        })),
+      },
+    },
+  });
+}

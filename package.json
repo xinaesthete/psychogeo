@@ -19,12 +19,15 @@
     "geotiff": "^3.0.5",
     "http-proxy": "^1.18.1",
     "leva": "^0.10.1",
+    "openjph-wasm": "^0.1.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "three": "^0.183.2",
     "three-stdlib": "^2.36.1",
     "typegpu": "^0.11.8",
     "unzipper": "^0.12.5",
+    "zarrextra": "^0.3.0",
+    "zarrita": "^0.7.3",
     "zod": "^4.4.3"
   },
   "scripts": {
