@@ -1,11 +1,11 @@
-import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { readMetadata } from '../v2/layout.ts';
 import { leafSlotBounds, leafSlotIndex } from '../v2/derive.ts';
 import { gridRefToBounds, normalizeGridRef, type TileExtent } from '../v2/osgb.ts';
 import { safeParseNodeManifestJson } from '../v2/schema.ts';
 import type { PyramidNodeManifest, TerrainManifestV2 } from '../v2/types.ts';
 import { chunkCoordForExtent, chunkKey, levelGrid, shardPlacement, type LevelGrid } from './grid.ts';
+import { nodePath, openSourceStore, readSourceMetadata, type SourceStore } from './sourceStore.ts';
 import { writeShard, type ShardChunk } from './shardWriter.ts';
 import {
   buildChannelGroupMetadata,
@@ -15,7 +15,8 @@ import {
 } from './storeMetadata.ts';
 
 export type TranscodeOptions = {
-  readonly datasetDir: string;
+  /** An extracted v2 dataset directory, or the `.zip` holding one. */
+  readonly datasetPath: string;
   readonly outDir: string;
   /** Restrict to nodes under this OSGB grid ref, e.g. `SU` or `SU42`. */
   readonly gridRefFilter?: string;
@@ -52,35 +53,22 @@ type PendingChunk = {
 };
 
 /**
- * Walk `pyramid/` for node manifests.
+ * Yield every node manifest under `pyramid/`.
  *
- * The tree is walked rather than derived from `naming` because a bounds ingest
- * has no single grid-ref root to template against (`ingestCell` reads
+ * Nodes are enumerated rather than derived from `naming` because a bounds
+ * ingest has no single grid-ref root to template against (`ingestCell` reads
  * `bounds_0_0_700000_700000`), and the manifests carry their own `gridRef`
- * anyway. Numeric directories are the level payload dirs — thousands of `.j2c`
- * files with nothing to read, so they are not descended into.
+ * anyway. Which nodes exist is the store's problem: a directory walks the tree,
+ * an archive filters its central directory.
  */
 export async function* walkNodes(
-  pyramidDir: string,
-  relDir = '',
+  store: SourceStore,
 ): AsyncGenerator<{ relDir: string; manifest: PyramidNodeManifest }> {
-  const absDir = path.join(pyramidDir, relDir);
-  let entries;
-  try {
-    entries = await readdir(absDir, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  const manifestEntry = entries.find((entry) => entry.isFile() && entry.name === 'manifest.json');
-  if (manifestEntry) {
-    const raw = await readFile(path.join(absDir, 'manifest.json'), 'utf8');
+  for (const relDir of await store.nodeDirs()) {
+    const raw = await store.readText(nodePath(relDir, 'manifest.json'));
+    if (raw === undefined) continue;
     const parsed = safeParseNodeManifestJson(JSON.parse(raw));
     if (parsed.success) yield { relDir, manifest: parsed.data };
-  }
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    if (/^\d+$/.test(entry.name)) continue; // level payload dir
-    yield* walkNodes(pyramidDir, relDir ? path.join(relDir, entry.name) : entry.name);
   }
 }
 
@@ -98,11 +86,11 @@ function gridsByLevel(source: TerrainManifestV2): Map<number, LevelGrid> {
 }
 
 async function collectChunks(
+  store: SourceStore,
   options: TranscodeOptions,
   source: TerrainManifestV2,
   grids: Map<number, LevelGrid>,
 ): Promise<{ byLevel: Map<number, PendingChunk[]>; nodes: number; missing: string[] }> {
-  const pyramidDir = path.join(options.datasetDir, 'pyramid');
   const byLevel = new Map<number, PendingChunk[]>();
   const missing: string[] = [];
   let nodes = 0;
@@ -111,9 +99,7 @@ async function collectChunks(
   const push = async (level: number, chunk: PendingChunk) => {
     // A manifest can outlive its payload if a run was interrupted; a missing
     // file is recorded and skipped rather than aborting the transcode.
-    try {
-      await stat(chunk.sourcePath);
-    } catch {
+    if ((await store.size(chunk.sourcePath)) === undefined) {
       missing.push(chunk.sourcePath);
       return;
     }
@@ -123,10 +109,9 @@ async function collectChunks(
     chunks += 1;
   };
 
-  for await (const { relDir, manifest } of walkNodes(pyramidDir)) {
+  for await (const { relDir, manifest } of walkNodes(store)) {
     if (!matchesFilter(manifest.gridRef, options.gridRefFilter)) continue;
     nodes += 1;
-    const nodeDir = path.join(pyramidDir, relDir);
     const nodeBounds = gridRefToBounds(manifest.gridRef);
 
     for (const [levelKey, enc] of Object.entries(manifest.levels ?? {})) {
@@ -134,7 +119,7 @@ async function collectChunks(
       const grid = grids.get(level);
       if (!grid) continue;
       await push(level, {
-        sourcePath: path.join(nodeDir, String(level), `${manifest.gridRef}.j2c`),
+        sourcePath: nodePath(relDir, String(level), `${manifest.gridRef}.j2c`),
         chunkCoord: chunkCoordForExtent(grid, nodeBounds),
         scale: enc.scale,
         offset: enc.offset,
@@ -152,7 +137,7 @@ async function collectChunks(
           if (absent.has(slot)) continue;
           const bounds: TileExtent = leafSlotBounds(nodeBounds, col, row, leaf.stepMetres);
           await push(0, {
-            sourcePath: path.join(nodeDir, '0', `${bounds.eastMin}_${bounds.northMin}.j2c`),
+            sourcePath: nodePath(relDir, '0', `${bounds.eastMin}_${bounds.northMin}.j2c`),
             chunkCoord: chunkCoordForExtent(grid, bounds),
             scale: leaf.enc.scale[slot],
             offset: leaf.enc.offset[slot],
@@ -187,9 +172,21 @@ async function writeEncodingArray(
 }
 
 export async function transcodeToZarr(options: TranscodeOptions): Promise<TranscodeSummary> {
-  const source = await readMetadata(options.datasetDir);
+  const store = await openSourceStore(options.datasetPath);
+  try {
+    return await runTranscode(store, options);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runTranscode(
+  store: SourceStore,
+  options: TranscodeOptions,
+): Promise<TranscodeSummary> {
+  const source = await readSourceMetadata(store);
   const grids = gridsByLevel(source);
-  const { byLevel, nodes, missing } = await collectChunks(options, source, grids);
+  const { byLevel, nodes, missing } = await collectChunks(store, options, source, grids);
 
   const channelDir = path.join(options.outDir, source.channelId);
   await writeJson(path.join(options.outDir, 'zarr.json'), buildGroupMetadata({
@@ -226,7 +223,11 @@ export async function transcodeToZarr(options: TranscodeOptions): Promise<Transc
       const key = chunkKey(placement.shard);
       const entry: ShardChunk = {
         local: placement.local,
-        load: async () => new Uint8Array(await readFile(chunk.sourcePath)),
+        load: async () => {
+          const bytes = await store.readBytes(chunk.sourcePath);
+          if (!bytes) throw new Error(`${chunk.sourcePath} vanished from ${store.label}`);
+          return bytes;
+        },
       };
       const list = shards.get(key);
       if (list) list.push(entry);

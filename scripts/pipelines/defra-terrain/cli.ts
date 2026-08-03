@@ -71,14 +71,18 @@ function usage(): string {
     '  pnpm pipeline:defra -- sync-checkpoints-v2 --input <dir> --out <dataset-dir>',
     '      [--region <gridRef> | --cell <gridRef> | --bounds eastMin,northMin,eastMax,northMax]',
     '  pnpm pipeline:defra -- inspect-v2 --dataset <dataset-dir>',
-    '  pnpm pipeline:defra -- transcode-zarr --dataset <dataset-dir> --out <zarr-dir>',
+    '  pnpm pipeline:defra -- transcode-zarr --dataset <dataset-dir|.zip> --out <zarr-dir>',
     '      [--region <gridRef>] [--progress]',
     '        Repacks the existing HTJ2K chunks into a sharded zarr v3 store.',
     '        No decode or re-encode: the codestreams become zarr chunks as they are.',
-    '  pnpm pipeline:defra -- renormalise-zarr --dataset <dataset-dir> --out <zarr-dir>',
+    '  pnpm pipeline:defra -- renormalise-zarr --dataset <dataset-dir|.zip> --out <zarr-dir>',
     '      [--region <gridRef>] [--dither] [--levels <n>] [--progress]',
     '        Re-encodes to one national scale/offset and a 4x pyramid of 1000px chunks.',
     '        Drops the per-chunk encoding arrays; smaller output, but decodes every chunk.',
+    '',
+    '        --dataset takes a .zip directly. Preferred at national scale: extracting',
+    '        160k files costs far more disk than the data (1 MiB allocation units) and',
+    '        the walk alone takes minutes, where the archive index takes seconds.',
     '',
     'Region examples:',
     '  --region SP51     one 10 km cell',
@@ -410,7 +414,7 @@ async function main(): Promise<void> {
     if (!args.dataset) throw new Error('--dataset is required for renormalise-zarr');
     if (!args.out) throw new Error('--out is required for renormalise-zarr');
     const summary = await renormaliseToZarr({
-      datasetDir: args.dataset,
+      datasetPath: args.dataset,
       outDir: args.out,
       gridRefFilter: args.region ?? args.cell,
       dither: args.dither,
@@ -438,7 +442,7 @@ async function main(): Promise<void> {
     if (!args.dataset) throw new Error('--dataset is required for transcode-zarr');
     if (!args.out) throw new Error('--out is required for transcode-zarr');
     const summary = await transcodeToZarr({
-      datasetDir: args.dataset,
+      datasetPath: args.dataset,
       outDir: args.out,
       gridRefFilter: args.region ?? args.cell,
       onProgress: args.progress ? (event) => console.log(formatTranscodeProgress(event)) : undefined,
