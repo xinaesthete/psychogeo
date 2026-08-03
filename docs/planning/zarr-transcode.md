@@ -96,11 +96,65 @@ an exact divisor, but that is a pipeline change, not a transcode.
 ## CLI
 
 ```bash
-pnpm pipeline:defra -- transcode-zarr --dataset <v2-dataset-dir> --out <zarr-dir> [--region <gridRef>] [--progress]
+pnpm pipeline:defra -- transcode-zarr --dataset <v2-dataset|.zip> --out <zarr-dir> [--region <gridRef>] [--progress]
 ```
 
 `--region` takes any OSGB prefix (`SU`, `SU42`) and filters by node grid ref,
-which is how you transcode one cell for a trial run.
+which is how you transcode one cell for a trial run. It must be a whole
+grid reference: `SU` and `SU42` work, `SU4` is rejected.
+
+## Reading the source in place
+
+`--dataset` takes the `.zip` as readily as an extracted directory, and at
+national scale the archive is the better source.
+
+`terra-cognita-winchester.zip` holds 160,750 files. Extracted onto the exFAT
+volume it lives on it occupies **239 GiB for 144 GiB of data** — the allocation
+unit is 1 MiB, 8,772 of the files are ~2.9 KB manifests, and 6,556 of the
+level-0 tiles are sub-3 KB all-nodata. The directory walk that finds the node
+manifests takes over two minutes before the first chunk is read. Reading the
+archive in place costs 3.2 s to parse the 181,039-entry central directory,
+after which existence and size are index lookups rather than syscalls, and a
+chunk read is ~10 ms for ~1.1 MB — 18% of the per-chunk budget.
+
+Deflate is doing nothing on the payloads (143.0 GiB archive against 143.97 GiB
+logical), so nothing is lost by leaving them compressed; `.j2c` is already
+entropy-coded.
+
+[zarr/sourceStore.ts](../../scripts/pipelines/defra-terrain/zarr/sourceStore.ts)
+is the seam. It stays small because the passes only ever want four things from
+a source: the metadata, the node manifests, the level-0 codestreams, and
+whether a given codestream exists. `nodeDirs()` sorts, so the shard sequence is
+a function of the dataset and not of the filesystem — which is what makes the
+resume comparison below meaningful.
+
+Extracting also invites a trap worth knowing about: macOS writes an AppleDouble
+`._name.j2c` beside every file on a volume with no native xattrs, so an exFAT
+extraction has one per chunk. They match the suffix and sort first. The passes
+are immune because they construct exact filenames, but both verifiers globbed
+and had to be taught to skip them.
+
+## What the codec actually costs
+
+The pass is one decode plus one re-encode per chunk, and the earlier estimate
+of ~0.5 s each — "even at half a second a chunk that is a full day" — was out
+by roughly 9×. Measured over 40 level-0 tiles spread across the archive:
+
+| Stage | ms/chunk | |
+|-------|----------|---|
+| read (ranged read + inflate) | 10.0 | 18% |
+| decode | 12.8 | 23% |
+| requantise | 14.8 | 27% |
+| encode | 17.8 | 32% |
+| **total** | **55.4** | |
+
+Confirmed end to end on NT: 1,330 level-0 chunks and 105 coarse ones in 90 s,
+or 68 ms per level-0 chunk including the pyramid and the archive index.
+
+That reframes the `worker_threads` pool as an optimisation rather than a
+prerequisite. It is still worth having — the run sits at ~170% CPU, so there
+are cores idle — but it is not what stood between this pass and a national
+store.
 
 ## Verification
 
@@ -199,6 +253,40 @@ significant figures. Both the orientation and alignment checks score a
 deliberately wrong alternative alongside the right one, because a shifted
 pyramid level looks entirely plausible on its own.
 
+Reproduced from the archive rather than an extracted tree: every figure above,
+and every level's byte count, comes out identical.
+
+NT60 verifies too, 480 km further north — max 10.78 mm, rms 6.21 mm against a
+bound of 11.11 mm; orientation 0.131 m against a 7.249 m control; alignment
+best at (0,0), 0.231 m against 14.925 m for the nearest wrong shift. The same
+rms in both places is the requantisation being uniform, as intended.
+
+Getting that second data point needed a fix to the verifier. NT60 is mostly
+sea, `findLeaf` took the first chunk it found, and the run reported
+`REQUANTISATION OK` over **zero samples** — max error 0.00 mm because there
+was no error to find. It now picks the largest leaf across the node's quads
+and reports `NOT TESTED` rather than `OK` when nothing overlaps. A check that
+cannot fail is worse than no check, because it reads as evidence.
+
+### The streaming writer
+
+The open question was whether the shard-at-a-time rewrite still produced the
+store the level-at-a-time version did. There was no pre-rewrite store left to
+diff against, so the check is a stronger one: **an interrupted run resumes to a
+byte-identical store**.
+
+On NT — 1,330 chunks, 16 level-0 shards, 21 objects across 5 levels — a run
+killed after 5 shards and resumed, and a second run with 11 of 16 shards
+deleted, both produce output that `diff -r` cannot distinguish from the
+single-shot run. That covers the writer and the resume predicate together, and
+it is only meaningful because `nodeDirs()` sorts.
+
+That did surface a real defect. A resumed run reported only what that
+invocation wrote — 414.01 MiB from 739.65 MiB of source, where the store on
+disk was 533.21 MiB from 959.97 MiB. Skipped shards now count towards the
+level, and the source total comes from the scan, which knows every leaf's size
+without reading it.
+
 ## Open
 
 - **zfp was prototyped and lost** — see [python/codec-eval](../../python/codec-eval/README.md).
@@ -210,27 +298,23 @@ pyramid level looks entirely plausible on its own.
   whether fine-interval contours are a mode worth supporting, since that is the
   only case where it pays.
 - **Browser loader** — nothing in `src/` reads either store yet.
-  `zarrextra/workers` + `@fideus-labs/fizarrita` is the intended path.
-- **National run** — only SU42 has been through either pass. Two things to
-  settle first:
-  - **Verify the streaming writer.** `renormalise-zarr` now writes shard by
-    shard and skips shards already on disk, so it resumes and its memory is
-    bounded by one shard rather than a whole level — the level-at-a-time
-    version would have needed ~75 GB nationally. That rewrite is typechecked
-    but its output has **not** been compared against the store built before it;
-    do that on one cell before trusting it with 144 GB.
-  - **Parallelise the codec.** Level 0 is ~150k chunks and each one is a
-    decode plus a re-encode on a single thread. Even at half a second a chunk
-    that is a full day; a `worker_threads` pool over the cores would bring it
-    to hours. Nothing else in the pass is a bottleneck — it is all openjph.
+  `zarrextra/workers` + `@fideus-labs/fizarrita` is the intended path for
+  off-main-thread decode.
+- **Parallelise the codec.** Deferred rather than blocking, now that a serial
+  national run is ~3 h rather than a day. The pass sits at ~170% CPU on a
+  12-core machine and every millisecond of it is openjph, so a
+  `worker_threads` pool should take it to well under an hour. That matters
+  once DTM, the FZ−LZ foliage measure and the survey years each want a run of
+  their own.
 - **Nodata** is still the reserved raw 0 rather than a real sentinel; only a
   re-encode from the source TIFFs could change that.
 - **Which store wins.** The repack and the renormalisation both exist; if the
   renormalised one holds up in the viewer there is little reason to keep the
   repack beyond its value as a byte-identity reference.
-- **Browser loader** — nothing in `src/` reads the store yet. `zarrextra/workers`
-  + `@fideus-labs/fizarrita` is the intended path for off-main-thread decode.
-- **National run** — only SU42 has been transcoded. 144 GB at I/O speed.
+- **AppleDouble sidecars.** macOS writes a `._` file beside every object
+  written to exFAT, which doubles the store's file count and costs a 1 MiB
+  allocation unit each. `dot_clean` removes them; a store destined for object
+  hosting should not carry them.
 - **Retiring the bespoke index** was not a goal of this pass, so
   `metadata.json` and the 8,772 node manifests remain the source of truth.
   Most of what `derive.ts` computes is chunk-key arithmetic in this layout.
