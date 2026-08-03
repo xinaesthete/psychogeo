@@ -46,6 +46,7 @@ export default defineConfig({
       'src/geo/tileGeometry.test.ts',
       'src/geo/tileRetention.test.ts',
       'src/geo/pyramidTileNode.test.ts',
+      'src/geo/zarrPyramid.test.ts',
       'src/geo/compressionFormat.test.ts',
       'src/camera/orbitClamp.test.ts',
       'src/openjpegjs/textureLruCache.test.ts',

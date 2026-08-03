@@ -6,12 +6,9 @@ import {
   viewportMetresFromCameraDistance,
   viewportSpanMetres,
 } from './groundViewport';
-import {
-  chunkKey,
-  type PyramidCatalogResolver,
-} from './pyramidCatalog';
+import { chunkKey } from './pyramidCatalog';
 import { finestLeafLevel } from './pyramidDerive';
-import type { ChunkFetchDescriptor, EncodingScalars } from './pyramidTypes';
+import type { ChunkFetchDescriptor, EncodingScalars, PyramidResolver } from './pyramidTypes';
 import {
   attachPyramidTileDebugHooks,
   buildTileLabelLines,
@@ -114,7 +111,7 @@ function encodingHeightMax(encoding: EncodingScalars): number {
   return encoding.offset + encoding.scale * 65536;
 }
 
-function gridStepForLevel(level: number, resolver: PyramidCatalogResolver): number {
+function gridStepForLevel(level: number, resolver: PyramidResolver): number {
   const meta = resolver.catalogRef.meta;
   if (level === 0) {
     return finestLeafLevel(meta.tileMatrixSet.levels).tierMetres;
@@ -378,7 +375,7 @@ export class PyramidTileTree {
 
   constructor(
     private readonly parent: THREE.Object3D,
-    private readonly resolver: PyramidCatalogResolver,
+    private readonly resolver: PyramidResolver,
     private readonly manager: TileLayerManagerImpl,
     private readonly debugHooks?: PyramidTileTreeDebugHooks,
   ) {

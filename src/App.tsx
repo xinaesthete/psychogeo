@@ -70,7 +70,9 @@ function App() {
   const { terrainDatasetManifestUrl } = useControls('Terrain dataset', {
     terrainDatasetManifestUrl: {
       value: '/terrain-datasets/terra-cognita-winchester/metadata.json',
-      label: 'dataset URL (manifest.json or metadata.json)',
+      // A URL ending in zarr.json selects the renormalised zarr store instead
+      // of the v2 manifest tree — see docs/planning/zarr-transcode.md.
+      label: 'dataset URL (metadata.json or zarr.json)',
     },
   });
   const {

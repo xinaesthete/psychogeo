@@ -249,12 +249,28 @@ async function decodeData(encodedBitstream) {
     // decoder.delete();// should have been there before, or decoder reused
     return { pixelData, frameInfo, decodedBuffer };
 }
+/**
+ * Zarr shards pack many codestreams into one object, so a chunk URL carries
+ * its byte range as a `#bytes=start-end` fragment. Fragments are never sent to
+ * the server, so the same string doubles as a per-chunk cache key everywhere
+ * else in the app; here it becomes a Range header.
+ */
+function splitByteRange(url) {
+    const hash = url.indexOf('#bytes=');
+    if (hash < 0) return { url, headers: undefined };
+    return { url: url.slice(0, hash), headers: { Range: 'bytes=' + url.slice(hash + 7) } };
+}
+
+async function fetchCodestream(url) {
+    const { url: fetchUrl, headers } = splitByteRange(url);
+    const response = await fetch(fetchUrl, headers ? { headers } : undefined);
+    if (!response.ok) throw 'failed to fetch ' + fetchUrl;
+    return new Uint8Array(await response.arrayBuffer());
+}
+
 async function decodeFromURL(url) {
     // if (!j) j = await OpenJPEGWASM();
-    const response = await fetch(url);
-    if (!response.ok) throw 'failed to fetch ' + url;
-    const encodedBitstream = new Uint8Array(await response.arrayBuffer());
-    return decodeData(encodedBitstream);
+    return decodeData(await fetchCodestream(url));
 }
 
 //takes unsigned 16bit int & splits for use in RGB texture (a bit wasteful)
@@ -366,9 +382,7 @@ function computeHeightErrorMeters(full, lossy, range) {
 }
 
 async function recode(url, q, heightRangeMetres) {
-    const response = await fetch(url);
-    if (!response.ok) throw 'failed to fetch ' + url;
-    const encodedBitstream = new Uint8Array(await response.arrayBuffer());
+    const encodedBitstream = await fetchCodestream(url);
     const sourceBytes = encodedBitstream.byteLength;
     const { pixelData, frameInfo, decodedBuffer } = await decodeData(encodedBitstream);
 

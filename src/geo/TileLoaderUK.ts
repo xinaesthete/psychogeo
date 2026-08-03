@@ -53,7 +53,9 @@ import {
     PyramidCatalogResolver,
 } from './pyramidCatalog';
 import { PyramidHeightChannel } from './pyramidHeightChannel';
+import type { PyramidResolver } from './pyramidTypes';
 import { TileLayerManagerImpl } from './tileLayerManager';
+import { ZarrPyramidResolver } from './zarrPyramid';
 
 
 type DsmSources = Partial<Record<"500" | "1000" | "2000", string>>;
@@ -553,7 +555,7 @@ export class TerrainRenderer extends ThreactTrackballBase {
     private lastViewshedLodStateKey = "";
     private lastSyncedDoubleSidedShadows: boolean | undefined;
     private terrainDatasetKey = "";
-    private pyramidResolver?: PyramidCatalogResolver;
+    private pyramidResolver?: PyramidResolver;
     private pyramidTree?: PyramidTileTree;
     private tileLayerManager?: TileLayerManagerImpl;
     private inspectTexturePreview?: THREE.Object3D;
@@ -803,8 +805,17 @@ export class TerrainRenderer extends ThreactTrackballBase {
         const config = this.options.terrainDataset;
         if (!config) return;
         this.disposePyramid();
-        const catalog = await loadPyramidDataset(config.manifestUrl);
-        this.pyramidResolver = new PyramidCatalogResolver(catalog);
+        // A store URL ending in zarr.json selects the renormalised zarr
+        // reader; anything else is a v2 manifest tree.
+        if (/\/zarr\.json$/.test(config.manifestUrl)) {
+            const storeUrl = config.manifestUrl.replace(/\/zarr\.json$/, '');
+            const zarrResolver = await ZarrPyramidResolver.load(storeUrl);
+            if (!zarrResolver) throw new Error(`not a renormalised zarr store: ${storeUrl}`);
+            this.pyramidResolver = zarrResolver;
+        } else {
+            const catalog = await loadPyramidDataset(config.manifestUrl);
+            this.pyramidResolver = new PyramidCatalogResolver(catalog);
+        }
         this.tileLayerManager = new TileLayerManagerImpl();
         this.tileLayerManager.attachChannel(new PyramidHeightChannel());
         this.dsmLayer.name = `DSM PyramidTileTree '${config.manifestUrl}'`
