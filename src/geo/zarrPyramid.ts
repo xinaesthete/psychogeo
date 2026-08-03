@@ -105,6 +105,8 @@ export class ZarrPyramidResolver {
   private constructor(
     readonly storeUrl: string,
     readonly channelId: string,
+    /** Every channel the store declares, so a caller can offer the others. */
+    readonly availableChannels: readonly string[],
     readonly levels: readonly ZarrLevel[],
     readonly encoding: EncodingScalars,
   ) {
@@ -133,24 +135,59 @@ export class ZarrPyramidResolver {
     } as unknown as TerrainManifestV2;
   }
 
-  static async load(storeUrl: string): Promise<ZarrPyramidResolver | undefined> {
+  /**
+   * Open a store, or one channel of it.
+   *
+   * `storeUrl` may address the store root or a channel group directly, which
+   * is what lets the dataset URL control select a channel with no new syntax:
+   * a group carrying `multiscales` *is* a channel, and anything else is a root
+   * that names its channels. Nothing here guesses a channel name — a guess
+   * looks exactly like working code until a second channel exists.
+   */
+  static async load(
+    storeUrl: string,
+    requestedChannel?: string,
+  ): Promise<ZarrPyramidResolver | undefined> {
     const root = await fetchJson(joinUrl(storeUrl, 'zarr.json'));
     if (!root || typeof root !== 'object') return undefined;
     const rootNode = root as Record<string, unknown>;
     if (rootNode.node_type !== 'group') return undefined;
+    const rootAttrs = (rootNode.attributes ?? {}) as Record<string, unknown>;
+    const rootPsychogeo = (rootAttrs.psychogeo ?? {}) as Record<string, unknown>;
 
-    const channelId =
-      ((rootNode.attributes as Record<string, unknown> | undefined)?.psychogeo as
+    let channelUrl: string;
+    let channelRaw: Record<string, unknown>;
+    let channels: string[];
+    if (rootAttrs.multiscales !== undefined) {
+      // Already a channel group. Its own name is the last path segment unless
+      // it records one.
+      channelUrl = storeUrl;
+      channelRaw = rootNode;
+      channels = [
+        (rootPsychogeo.channelId as string | undefined) ??
+          storeUrl.replace(/\/+$/, '').split('/').pop() ??
+          '',
+      ];
+      if (requestedChannel !== undefined && requestedChannel !== channels[0]) return undefined;
+    } else {
+      const declared = rootPsychogeo.channels;
+      channels = Array.isArray(declared)
+        ? declared.filter((entry): entry is string => typeof entry === 'string')
+        : [];
+      if (channels.length === 0) return undefined;
+      const wanted = requestedChannel ?? channels[0];
+      if (!channels.includes(wanted)) return undefined;
+      channelUrl = joinUrl(storeUrl, wanted);
+      const raw = (await fetchJson(joinUrl(channelUrl, 'zarr.json'))) as
         | Record<string, unknown>
-        | undefined)?.channelId as string | undefined ?? 'height.dsm.fz';
-
-    const channelUrl = joinUrl(storeUrl, channelId);
-    const channelRaw = (await fetchJson(joinUrl(channelUrl, 'zarr.json'))) as
-      | Record<string, unknown>
-      | undefined;
-    if (!channelRaw) return undefined;
+        | undefined;
+      if (!raw) return undefined;
+      channelRaw = raw;
+    }
     const channelAttrs = (channelRaw.attributes ?? {}) as Record<string, unknown>;
     const psychogeo = (channelAttrs.psychogeo ?? {}) as Record<string, unknown>;
+    const channelId =
+      (psychogeo.channelId as string | undefined) ?? requestedChannel ?? channels[0];
     const channelEncoding = (psychogeo.encoding ?? {}) as Record<string, unknown>;
     if (
       channelEncoding.normalisation !== undefined &&
@@ -197,7 +234,7 @@ export class ZarrPyramidResolver {
     const offset = channelEncoding.offset as number;
     if (!Number.isFinite(scale) || !Number.isFinite(offset)) return undefined;
 
-    return new ZarrPyramidResolver(storeUrl, channelId, levels, {
+    return new ZarrPyramidResolver(storeUrl, channelId, channels, levels, {
       scale,
       offset,
       min: offset + scale,

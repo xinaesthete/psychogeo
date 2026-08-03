@@ -3,6 +3,7 @@ import { parseByteRange, withByteRange, ZarrPyramidResolver } from './zarrPyrami
 
 const STORE = 'https://example.test/store';
 const CHANNEL = 'height.dsm.fz';
+const DTM_CHANNEL = 'height.dtm';
 const SCALE = 0.02151554918057802;
 const OFFSET = -10.021515549180577;
 
@@ -51,15 +52,23 @@ function mockStore(shards: Map<string, ArrayBuffer>) {
       new Response(JSON.stringify(value), { status: 200, headers: { 'content-type': 'application/json' } });
 
     if (url === `${STORE}/zarr.json`) {
-      return json({ zarr_format: 3, node_type: 'group', attributes: { psychogeo: { channelId: CHANNEL } } });
+      return json({
+        zarr_format: 3,
+        node_type: 'group',
+        attributes: { psychogeo: { channels: [CHANNEL, DTM_CHANNEL] } },
+      });
     }
-    if (url === `${STORE}/${CHANNEL}/zarr.json`) {
+    if (url === `${STORE}/${CHANNEL}/zarr.json` || url === `${STORE}/${DTM_CHANNEL}/zarr.json`) {
+      const id = url.slice(STORE.length + 1, url.lastIndexOf('/'));
       return json({
         zarr_format: 3,
         node_type: 'group',
         attributes: {
           multiscales: [{ datasets: [{ path: '0' }, { path: '1' }] }],
-          psychogeo: { encoding: { normalisation: 'globalScaleOffset', scale: SCALE, offset: OFFSET } },
+          psychogeo: {
+            channelId: id,
+            encoding: { normalisation: 'globalScaleOffset', scale: SCALE, offset: OFFSET },
+          },
         },
       });
     }
@@ -103,6 +112,49 @@ describe('ZarrPyramidResolver', () => {
     expect(resolver!.levels[0].shardChunks).toEqual([10, 10]);
     // The tree picks a level from this, so it has to carry the ground size.
     expect(resolver!.catalogRef.meta.tileMatrixSet.levels[1].tierMetres).toBe(4000);
+  });
+
+  it('opens the first channel the root declares, and reports the rest', async () => {
+    globalThis.fetch = mockStore(new Map()) as unknown as typeof fetch;
+    const resolver = await ZarrPyramidResolver.load(STORE);
+    expect(resolver!.channelId).toBe(CHANNEL);
+    expect(resolver!.availableChannels).toEqual([CHANNEL, DTM_CHANNEL]);
+  });
+
+  it('opens a named channel instead of the first', async () => {
+    globalThis.fetch = mockStore(new Map()) as unknown as typeof fetch;
+    const resolver = await ZarrPyramidResolver.load(STORE, DTM_CHANNEL);
+    expect(resolver!.channelId).toBe(DTM_CHANNEL);
+    expect(resolver!.levels[0].baseUrl).toBe(`${STORE}/${DTM_CHANNEL}/0`);
+  });
+
+  it('refuses a channel the store does not declare', async () => {
+    globalThis.fetch = mockStore(new Map()) as unknown as typeof fetch;
+    expect(await ZarrPyramidResolver.load(STORE, 'height.nope')).toBeUndefined();
+  });
+
+  it('opens a channel group addressed directly', async () => {
+    // How the dataset URL control selects a channel: no new syntax, just point
+    // at the channel rather than the store.
+    globalThis.fetch = mockStore(new Map()) as unknown as typeof fetch;
+    const resolver = await ZarrPyramidResolver.load(`${STORE}/${DTM_CHANNEL}`);
+    expect(resolver!.channelId).toBe(DTM_CHANNEL);
+    expect(resolver!.levels[0].baseUrl).toBe(`${STORE}/${DTM_CHANNEL}/0`);
+  });
+
+  it('refuses a root that names no channels rather than guessing one', async () => {
+    // The shape written before the root carried a channel list. Guessing
+    // `height.dsm.fz` here would work until a store had something else.
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === `${STORE}/zarr.json`) {
+        return new Response(
+          JSON.stringify({ zarr_format: 3, node_type: 'group', attributes: { psychogeo: {} } }),
+          { status: 200 },
+        );
+      }
+      return new Response(null, { status: 404 });
+    }) as unknown as typeof fetch;
+    expect(await ZarrPyramidResolver.load(STORE)).toBeUndefined();
   });
 
   it('emits one descriptor per present chunk, with its byte range', async () => {
@@ -209,7 +261,7 @@ describe('ZarrPyramidResolver', () => {
         return new Response(null, { status: url.endsWith('/c/4/1') ? 200 : 404 });
       }
       if (url === `${STORE}/zarr.json`) {
-        return new Response(JSON.stringify({ zarr_format: 3, node_type: 'group', attributes: { psychogeo: { channelId: CHANNEL } } }));
+        return new Response(JSON.stringify({ zarr_format: 3, node_type: 'group', attributes: { psychogeo: { channels: [CHANNEL] } } }));
       }
       if (url === `${STORE}/${CHANNEL}/zarr.json`) {
         return new Response(JSON.stringify({

@@ -314,6 +314,39 @@ The same 6.21 mm rms in all three is the point of renormalising to one national
 scale: the error is now a property of the encoding rather than of whatever
 range a particular chunk happened to span.
 
+### Reading it in the browser
+
+[src/geo/zarrPyramid.ts](../../src/geo/zarrPyramid.ts) reads the renormalised
+store: shard indices by suffix request, then each chunk as a `#bytes=` range
+the texture worker turns into a `Range` header. No zarr library at runtime.
+
+Pointed at the national store it draws the whole country, descending all five
+levels in one view — 1 m underfoot to 256 m at the skyline, in about 110
+requests over 97 objects. The only gap is the known one in the North Yorkshire
+Moors. Before this it had only ever seen SU42, where every coarse level held a
+single chunk.
+
+The root group names its channels, and the reader uses that rather than
+guessing:
+
+```
+psychogeo.channels: ["height.dsm.fz"]
+```
+
+A Zarr group does not record its children and a store served as static files
+has no listing to ask for, so a reader either finds the channels named or
+assumes one. It previously assumed `height.dsm.fz` — which is indistinguishable
+from working code until a second channel exists, and DTM, foliage and the
+survey years are all meant to arrive as siblings.
+
+Selecting a channel needs no new syntax, because a group carrying
+`multiscales` *is* a channel and anything else is a root:
+
+```
+/terra-cognita.zarr/zarr.json                 first channel the root declares
+/terra-cognita.zarr/height.dsm.fz/zarr.json   that channel, no root fetch
+```
+
 ### The streaming writer
 
 The open question was whether the shard-at-a-time rewrite still produced the
@@ -343,29 +376,24 @@ without reading it.
 - **Dither** is settled for normal use (off) — see above. What is not settled is
   whether fine-interval contours are a mode worth supporting, since that is the
   only case where it pays.
-- **Browser loader** — [src/geo/zarrPyramid.ts](../../src/geo/zarrPyramid.ts)
-  reads the renormalised store, and a dataset URL ending in `zarr.json` selects
-  it over the v2 manifest tree. It resolves shard indices by suffix request and
-  hands each chunk to the texture worker as a `#bytes=` range, so it needs no
-  zarr library at runtime. What it has not had is a store bigger than SU42:
-  every coarse level had exactly one chunk there, where the national store has
-  7 at level 4 and 143,185 across 1,503 shards at level 0. The descent and
-  `REFINE_DISTANCE_FACTOR` are untested at that fan-out.
-- **Which channel the reader opens.** The root group records
-  `renormalisedFrom` and `sourceFormat` but no channel, and the reader falls
-  back to a hardcoded `height.dsm.fz`. That fallback is doing real work rather
-  than covering an edge case, and it is the first thing a second channel
-  breaks — which is the layout's whole justification. Either the pass writes
-  the channel list at the root or the reader enumerates the group; neither
-  happens now.
+- **A tile that fails to load is never retried.** Found by pointing the app at
+  the national store: four level-0 tiles in one shard came up `error` and left
+  black holes that stayed put — the LOD descent kept resolving them, so they
+  were never re-requested. Nothing was wrong with the data. Every range
+  request returned 206, the shard's 100 codestreams all decode in node, and
+  `refetchTile` on the four keys cleared them immediately. So the failure is
+  transient and downstream of the fetch, it is swallowed without reaching the
+  console, and there is no retry to recover from it. Unrelated to zarr — the
+  v2 path shares the loader — but a zarr store makes it easier to hit, since
+  many chunks arrive as ranges over one object.
 - **Whether a refined chunk should keep its ancestor.** `descend()` replaces a
   coarse chunk with its children outright, on the reasoning that a sparse
   pyramid should show a hole rather than two levels fighting for the same
   ground. The tree's retained pool and coverage mask cover the case where the
-  coarse tile was already drawn, but not a camera jump into cold ground, where
-  the reader emits level-0 descriptors and nothing coarser to stand in while
-  they load. Worth deciding deliberately rather than by which resolver is
-  attached.
+  coarse tile was already drawn, but not a camera jump into cold ground. No
+  artefact was traced to this in a national session — the holes that looked
+  like it were the retry bug above — so it stays a design question rather than
+  a known defect.
 - **Parallelise the codec.** Deferred rather than blocking: the serial national
   run took 2 h 43 min at ~170% CPU on a 12-core machine, and every millisecond
   of it is openjph, so a `worker_threads` pool should take it to well under an

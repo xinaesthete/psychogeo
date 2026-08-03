@@ -12,6 +12,7 @@ import {
   buildEncodingArrayMetadata,
   buildGroupMetadata,
   buildLevelArrayMetadata,
+  buildStoreRootMetadata,
 } from './storeMetadata.ts';
 
 export type TranscodeOptions = {
@@ -189,9 +190,13 @@ async function runTranscode(
   const { byLevel, nodes, missing } = await collectChunks(store, options, source, grids);
 
   const channelDir = path.join(options.outDir, source.channelId);
-  await writeJson(path.join(options.outDir, 'zarr.json'), buildGroupMetadata({
-    psychogeo: { transcodedFrom: source.datasetId, sourceFormat: source.format },
-  }));
+  await writeJson(
+    path.join(options.outDir, 'zarr.json'),
+    buildStoreRootMetadata([source.channelId], {
+      transcodedFrom: source.datasetId,
+      sourceFormat: source.format,
+    }),
+  );
   const usedGrids = [...byLevel.keys()].sort((a, b) => a - b).map((level) => grids.get(level)!);
   await writeJson(path.join(channelDir, 'zarr.json'), buildChannelGroupMetadata(source, usedGrids));
   await writeJson(path.join(channelDir, 'encoding', 'zarr.json'), buildGroupMetadata());

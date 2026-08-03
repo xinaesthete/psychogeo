@@ -25,7 +25,11 @@ import {
 import { ShardReader } from './shardReader.ts';
 import { writeShard, type ShardChunk } from './shardWriter.ts';
 import { nodePath, openSourceStore, readSourceMetadata, type SourceStore } from './sourceStore.ts';
-import { buildGroupMetadata, buildRenormLevelMetadata, buildRenormChannelMetadata } from './storeMetadata.ts';
+import {
+  buildRenormChannelMetadata,
+  buildRenormLevelMetadata,
+  buildStoreRootMetadata,
+} from './storeMetadata.ts';
 import { walkNodes } from './transcode.ts';
 
 /**
@@ -207,9 +211,13 @@ async function runRenormalise(
   const seed = options.ditherSeed ?? 1;
   const channelDir = path.join(options.outDir, source.channelId);
 
-  await writeJson(path.join(options.outDir, 'zarr.json'), buildGroupMetadata({
-    psychogeo: { renormalisedFrom: source.datasetId, sourceFormat: source.format },
-  }));
+  await writeJson(
+    path.join(options.outDir, 'zarr.json'),
+    buildStoreRootMetadata([source.channelId], {
+      renormalisedFrom: source.datasetId,
+      sourceFormat: source.format,
+    }),
+  );
   await writeJson(
     path.join(channelDir, 'zarr.json'),
     buildRenormChannelMetadata(source, levels, encoding, dither),

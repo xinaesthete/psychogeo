@@ -806,11 +806,17 @@ export class TerrainRenderer extends ThreactTrackballBase {
         if (!config) return;
         this.disposePyramid();
         // A store URL ending in zarr.json selects the renormalised zarr
-        // reader; anything else is a v2 manifest tree.
+        // reader; anything else is a v2 manifest tree. Point it at the store
+        // root for its first channel, or at a channel group for that one.
         if (/\/zarr\.json$/.test(config.manifestUrl)) {
             const storeUrl = config.manifestUrl.replace(/\/zarr\.json$/, '');
             const zarrResolver = await ZarrPyramidResolver.load(storeUrl);
-            if (!zarrResolver) throw new Error(`not a renormalised zarr store: ${storeUrl}`);
+            if (!zarrResolver) {
+                throw new Error(
+                    `not a readable renormalised zarr store: ${storeUrl} — the root group must ` +
+                    `declare psychogeo.channels, or the URL must address a channel group directly`,
+                );
+            }
             this.pyramidResolver = zarrResolver;
         } else {
             const catalog = await loadPyramidDataset(config.manifestUrl);

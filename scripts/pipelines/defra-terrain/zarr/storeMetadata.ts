@@ -35,6 +35,23 @@ export function buildGroupMetadata(attributes: Json = {}): Json {
 }
 
 /**
+ * The store root, which names the channel groups under it.
+ *
+ * A Zarr group does not record its children, and a store served as plain
+ * static files has nothing to enumerate — there is no listing to ask for. So a
+ * reader either finds the channels named here or guesses, and a guess is
+ * indistinguishable from working code until a second channel exists. Which is
+ * precisely when this layout is supposed to start paying: DTM, the FZ−LZ
+ * foliage measure and the survey years are all meant to arrive as siblings.
+ */
+export function buildStoreRootMetadata(
+  channels: readonly string[],
+  psychogeo: Json = {},
+): Json {
+  return buildGroupMetadata({ psychogeo: { ...psychogeo, channels: [...channels] } });
+}
+
+/**
  * One level of the height pyramid.
  *
  * When the level is sharded the array's own chunk grid is the *shard* grid and
