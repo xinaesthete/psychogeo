@@ -157,6 +157,63 @@ describe('ZarrPyramidResolver', () => {
     expect(await ZarrPyramidResolver.load(STORE)).toBeUndefined();
   });
 
+  it('prefers a consolidated index, and asks for nothing else', async () => {
+    // The whole point: no zarr.json per level, no suffix read per shard.
+    const header = {
+      psychogeo: { storeIndexVersion: 1 },
+      channels: [{
+        channelId: CHANNEL,
+        encoding: { normalisation: 'globalScaleOffset', scale: SCALE, offset: OFFSET },
+        levels: [{
+          level: 0, path: '0', resolutionMetres: 1, chunkMetres: 1000, chunkPixels: 1000,
+          chunkGrid: [1300, 700], shardChunks: [10, 10], recordCount: 1,
+        }],
+      }],
+    };
+    const body = new Uint8Array(8 + 100 * 8);
+    const bv = new DataView(body.buffer);
+    bv.setUint32(0, 117, true);
+    bv.setUint32(4, 44, true);
+    bv.setUint32(8, 0, true); bv.setUint32(12, 500, true); // slot 0
+    const headerBytes = new TextEncoder().encode(JSON.stringify(header));
+    const bytes = new Uint8Array(12 + headerBytes.length + body.length);
+    const hv = new DataView(bytes.buffer);
+    hv.setUint32(0, 0x497a4750, true);
+    hv.setUint32(4, 1, true);
+    hv.setUint32(8, headerBytes.length, true);
+    bytes.set(headerBytes, 12);
+    bytes.set(body, 12 + headerBytes.length);
+
+    const asked: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      asked.push(url);
+      if (url === `${STORE}/psychogeo-index.bin`) return new Response(bytes, { status: 200 });
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+
+    const resolver = await ZarrPyramidResolver.load(STORE);
+    expect(resolver).toBeDefined();
+    expect(resolver!.levels.map((l) => l.chunkMetres)).toEqual([1000]);
+
+    const chunks = await resolver!.resolveChunksInBounds(
+      { eastMin: 440_000, eastMax: 441_000, northMin: 129_000, northMax: 130_000 },
+      0,
+    );
+    expect(chunks.map((c) => c.url)).toEqual([`${STORE}/${CHANNEL}/0/c/117/44#bytes=0-499`]);
+    expect(asked).toEqual([`${STORE}/psychogeo-index.bin`]);
+  });
+
+  it('falls back to reading the store when there is no index', async () => {
+    const store = mockStore(new Map());
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('psychogeo-index.bin')) return new Response(null, { status: 404 });
+      return store(input, init);
+    }) as unknown as typeof fetch;
+    const resolver = await ZarrPyramidResolver.load(STORE);
+    expect(resolver!.levels.map((l) => l.resolutionMetres)).toEqual([1, 4]);
+  });
+
   it('emits one descriptor per present chunk, with its byte range', async () => {
     // Two 1 km chunks at the north-west of shard (117, 44): slots 0 and 1.
     const present = new Map([

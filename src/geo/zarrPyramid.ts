@@ -1,5 +1,9 @@
 import * as THREE from 'three';
 import type { ChunkFetchDescriptor, EncodingScalars, TerrainManifestV2 } from './pyramidTypes';
+import { parseStoreIndex, type StoreIndexChannelInfo } from './zarrStoreIndex';
+
+/** Written by `pnpm pipeline:defra -- index-zarr`; absent stores still work. */
+const STORE_INDEX_FILENAME = 'psychogeo-index.bin';
 
 type TileExtent = {
   readonly eastMin: number;
@@ -109,6 +113,8 @@ export class ZarrPyramidResolver {
     readonly availableChannels: readonly string[],
     readonly levels: readonly ZarrLevel[],
     readonly encoding: EncodingScalars,
+    /** Present when the store carried a consolidated index; the source of every lookup if so. */
+    private readonly storeIndex?: StoreIndexChannelInfo,
   ) {
     this.meta = {
       // Enough of the v2 shape for the parts of the tree that read it — the
@@ -148,6 +154,13 @@ export class ZarrPyramidResolver {
     storeUrl: string,
     requestedChannel?: string,
   ): Promise<ZarrPyramidResolver | undefined> {
+    // One fetch for the level ladder and every shard index, where the path
+    // below costs a request per level and then one per shard touched. Purely
+    // an optimisation: a store without it, or with a stale or unreadable one,
+    // falls through and reads the store directly.
+    const consolidated = await ZarrPyramidResolver.loadFromStoreIndex(storeUrl, requestedChannel);
+    if (consolidated) return consolidated;
+
     const root = await fetchJson(joinUrl(storeUrl, 'zarr.json'));
     if (!root || typeof root !== 'object') return undefined;
     const rootNode = root as Record<string, unknown>;
@@ -255,6 +268,66 @@ export class ZarrPyramidResolver {
     } as EncodingScalars);
   }
 
+  /**
+   * Build a resolver from the consolidated index, if the store has one.
+   *
+   * A URL addressing a channel group is walked up one segment, because the
+   * index sits at the store root where it can name every channel.
+   */
+  private static async loadFromStoreIndex(
+    storeUrl: string,
+    requestedChannel?: string,
+  ): Promise<ZarrPyramidResolver | undefined> {
+    const trimmed = storeUrl.replace(/\/+$/, '');
+    const roots = [...new Set([trimmed, trimmed.replace(/\/[^/]+$/, '')])].filter(Boolean);
+    for (const root of roots) {
+      let bytes: Uint8Array;
+      try {
+        const response = await fetch(joinUrl(root, STORE_INDEX_FILENAME));
+        if (!response.ok) continue;
+        bytes = new Uint8Array(await response.arrayBuffer());
+      } catch {
+        continue;
+      }
+      const index = parseStoreIndex(bytes);
+      const channel = index?.channel(requestedChannel);
+      if (!index || !channel) continue;
+      if (requestedChannel !== undefined && channel.channelId !== requestedChannel) continue;
+
+      const scale = channel.encoding.scale as number;
+      const offset = channel.encoding.offset as number;
+      if (!Number.isFinite(scale) || !Number.isFinite(offset)) continue;
+      if (
+        channel.encoding.normalisation !== undefined &&
+        channel.encoding.normalisation !== 'globalScaleOffset'
+      ) {
+        continue;
+      }
+
+      const channelUrl = joinUrl(root, channel.channelId);
+      const levels: ZarrLevel[] = channel.levels.map((level) => ({
+        level: level.level,
+        resolutionMetres: level.resolutionMetres,
+        chunkMetres: level.chunkMetres,
+        chunkPixels: level.chunkPixels,
+        chunkGrid: level.chunkGrid,
+        shardChunks: level.shardChunks,
+        baseUrl: joinUrl(channelUrl, level.path),
+      }));
+      if (levels.length === 0) continue;
+
+      return new ZarrPyramidResolver(
+        root,
+        channel.channelId,
+        index.channels,
+        levels,
+        { scale, offset, min: offset + scale, max: offset + scale * 65535 } as EncodingScalars,
+        channel,
+      );
+    }
+    return undefined;
+  }
+
   get catalogRef(): { meta: TerrainManifestV2 } {
     return { meta: this.meta };
   }
@@ -341,6 +414,12 @@ export class ZarrPyramidResolver {
 
   private async shardIndex(level: ZarrLevel, shard: readonly [number, number]): Promise<ShardIndex | undefined> {
     if (!level.shardChunks) return undefined;
+    // Already in hand when the store carried a consolidated index — no suffix
+    // request, and no round trip on first touch of a shard.
+    if (this.storeIndex) {
+      const slots = this.storeIndex.shardSlots(level.level, shard[0], shard[1]);
+      return slots ? slots.map((slot) => (slot ? { ...slot } : null)) : undefined;
+    }
     const url = joinUrl(level.baseUrl, 'c', String(shard[0]), String(shard[1]));
     const cached = this.shardIndices.get(url);
     if (cached) return cached;
@@ -397,8 +476,14 @@ export class ZarrPyramidResolver {
     if (!level.shardChunks) {
       // Unsharded levels have no index to consult, so absence has to be asked
       // about directly — otherwise every coordinate in the national grid looks
-      // present and the tree queues a chunk per 404.
+      // present and the tree queues a chunk per 404. The consolidated index
+      // lists the coordinates that exist, which answers it without asking.
       const url = joinUrl(level.baseUrl, 'c', String(coord[0]), String(coord[1]));
+      if (this.storeIndex) {
+        return this.storeIndex.hasChunk(level.level, coord[0], coord[1])
+          ? { ...common, url }
+          : undefined;
+      }
       return (await this.chunkExists(url)) ? { ...common, url } : undefined;
     }
     const [perY, perX] = level.shardChunks;

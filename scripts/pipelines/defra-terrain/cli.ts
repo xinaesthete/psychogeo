@@ -26,6 +26,7 @@ import { validateDatasetV2 } from './v2/validate.ts';
 import { syncCheckpointsFromDisk } from './v2/syncCheckpoints.ts';
 import { transcodeToZarr, type TranscodeProgressEvent } from './zarr/transcode.ts';
 import { renormaliseToZarr, type RenormaliseProgressEvent } from './zarr/renormalise.ts';
+import { buildStoreIndex } from './zarr/storeIndex.ts';
 
 const startTime = Date.now();
 
@@ -34,6 +35,7 @@ interface CliArgs {
   readonly input?: string;
   readonly out?: string;
   readonly dataset?: string;
+  readonly store?: string;
   readonly datasetId?: string;
   readonly levels?: string;
   readonly dither: boolean;
@@ -79,6 +81,10 @@ function usage(): string {
     '      [--region <gridRef>] [--dither] [--levels <n>] [--progress]',
     '        Re-encodes to one national scale/offset and a 4x pyramid of 1000px chunks.',
     '        Drops the per-chunk encoding arrays; smaller output, but decodes every chunk.',
+    '  pnpm pipeline:defra -- index-zarr --store <zarr-dir>',
+    '        Consolidates the level ladder and every shard index into one object,',
+    '        so a cold reader needs one fetch rather than one per shard touched.',
+    '        Additive and derived: the store reads exactly the same without it.',
     '',
     '        --dataset takes a .zip directly. Preferred at national scale: extracting',
     '        160k files costs far more disk than the data (1 MiB allocation units) and',
@@ -113,6 +119,7 @@ function parseArgs(argv: string[]): CliArgs {
     input: values.get('input'),
     out: values.get('out'),
     dataset: values.get('dataset'),
+    store: values.get('store'),
     datasetId: values.get('dataset-id'),
     levels: values.get('levels'),
     dither: flags.has('dither'),
@@ -434,6 +441,19 @@ async function main(): Promise<void> {
             `${level.objects} objects, ${formatBytes(level.bytes)}`,
         ),
         `total ${formatBytes(summary.totalBytes)} from ${formatBytes(summary.sourceBytes)} of level-0 source — ${saved}`,
+      ].join('\n'),
+    );
+    return;
+  }
+  if (args.command === 'index-zarr') {
+    const storeDir = args.store ?? args.out ?? args.dataset;
+    if (!storeDir) throw new Error('--store is required for index-zarr');
+    const summary = await buildStoreIndex(storeDir);
+    console.log(
+      [
+        `wrote ${summary.path}`,
+        `${formatBytes(summary.bytes)} covering ${summary.chunks} chunks in ${summary.shards} shards` +
+          `, ${summary.channels} channel${summary.channels === 1 ? '' : 's'}`,
       ].join('\n'),
     );
     return;
