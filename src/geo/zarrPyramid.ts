@@ -202,10 +202,23 @@ export class ZarrPyramidResolver {
     const paths = multiscales?.[0]?.datasets?.map((entry) => entry.path).filter(Boolean) as string[] | undefined;
     if (!paths || paths.length === 0) return undefined;
 
+    // One round trip for the whole ladder, not one per level. The levels are
+    // independent and the store is remote: awaiting them in sequence made
+    // opening a store cost a round trip per level before any chunk was asked
+    // for, which is most of the wait on a high-latency origin.
+    const fetched = await Promise.all(
+      paths.map(async (levelPath) => {
+        const baseUrl = joinUrl(channelUrl, levelPath);
+        return {
+          levelPath,
+          baseUrl,
+          arrayMeta: parseArrayMeta(await fetchJson(joinUrl(baseUrl, 'zarr.json'))),
+        };
+      }),
+    );
+
     const levels: ZarrLevel[] = [];
-    for (const levelPath of paths) {
-      const baseUrl = joinUrl(channelUrl, levelPath);
-      const arrayMeta = parseArrayMeta(await fetchJson(joinUrl(baseUrl, 'zarr.json')));
+    for (const { levelPath, baseUrl, arrayMeta } of fetched) {
       if (!arrayMeta) continue;
       const attrs = (arrayMeta.attributes.psychogeo ?? {}) as Record<string, number>;
       const chunkPixels = (arrayMeta.innerChunkShape ?? arrayMeta.chunkShape)[0];
