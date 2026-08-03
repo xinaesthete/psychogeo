@@ -343,10 +343,29 @@ without reading it.
 - **Dither** is settled for normal use (off) — see above. What is not settled is
   whether fine-interval contours are a mode worth supporting, since that is the
   only case where it pays.
-- **Browser loader** — the next thing to do, and now the only thing between
-  this store and using it. Nothing in `src/` reads either store yet;
-  `zarrextra/workers` + `@fideus-labs/fizarrita` is the intended path for
-  off-main-thread decode. The national store is the one to point it at.
+- **Browser loader** — [src/geo/zarrPyramid.ts](../../src/geo/zarrPyramid.ts)
+  reads the renormalised store, and a dataset URL ending in `zarr.json` selects
+  it over the v2 manifest tree. It resolves shard indices by suffix request and
+  hands each chunk to the texture worker as a `#bytes=` range, so it needs no
+  zarr library at runtime. What it has not had is a store bigger than SU42:
+  every coarse level had exactly one chunk there, where the national store has
+  7 at level 4 and 143,185 across 1,503 shards at level 0. The descent and
+  `REFINE_DISTANCE_FACTOR` are untested at that fan-out.
+- **Which channel the reader opens.** The root group records
+  `renormalisedFrom` and `sourceFormat` but no channel, and the reader falls
+  back to a hardcoded `height.dsm.fz`. That fallback is doing real work rather
+  than covering an edge case, and it is the first thing a second channel
+  breaks — which is the layout's whole justification. Either the pass writes
+  the channel list at the root or the reader enumerates the group; neither
+  happens now.
+- **Whether a refined chunk should keep its ancestor.** `descend()` replaces a
+  coarse chunk with its children outright, on the reasoning that a sparse
+  pyramid should show a hole rather than two levels fighting for the same
+  ground. The tree's retained pool and coverage mask cover the case where the
+  coarse tile was already drawn, but not a camera jump into cold ground, where
+  the reader emits level-0 descriptors and nothing coarser to stand in while
+  they load. Worth deciding deliberately rather than by which resolver is
+  attached.
 - **Parallelise the codec.** Deferred rather than blocking: the serial national
   run took 2 h 43 min at ~170% CPU on a 12-core machine, and every millisecond
   of it is openjph, so a `worker_threads` pool should take it to well under an
