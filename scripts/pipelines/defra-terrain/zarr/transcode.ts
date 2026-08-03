@@ -60,7 +60,7 @@ type PendingChunk = {
  * anyway. Numeric directories are the level payload dirs — thousands of `.j2c`
  * files with nothing to read, so they are not descended into.
  */
-async function* walkNodes(
+export async function* walkNodes(
   pyramidDir: string,
   relDir = '',
 ): AsyncGenerator<{ relDir: string; manifest: PyramidNodeManifest }> {

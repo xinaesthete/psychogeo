@@ -1,5 +1,7 @@
 import type { TerrainManifestV2 } from '../v2/types.ts';
+import type { ScaleOffset } from './globalScale.ts';
 import { NATIONAL_EXTENT, type LevelGrid } from './grid.ts';
+import type { RenormLevel } from './levels.ts';
 
 /**
  * Codec id registered by `zarrextra`'s `registerExperimentalHtj2kCodec()`,
@@ -66,6 +68,103 @@ export function buildLevelArrayMetadata(grid: LevelGrid, source: TerrainManifest
       },
     },
   };
+}
+
+/**
+ * A level of the renormalised pyramid.
+ *
+ * The whole point of the global scale is that there is no companion array: the
+ * transform is a pair of numbers in the array's own attributes, which is what a
+ * reader outside this project can act on without knowing anything bespoke.
+ */
+export function buildRenormLevelMetadata(level: RenormLevel, encoding: ScaleOffset): Json {
+  const sharded = level.shardChunks !== null && level.shardShape !== null;
+  return {
+    zarr_format: ZARR_FORMAT,
+    node_type: 'array',
+    shape: level.shape,
+    data_type: 'uint16',
+    chunk_grid: {
+      name: 'regular',
+      configuration: { chunk_shape: sharded ? level.shardShape : level.chunkShape },
+    },
+    chunk_key_encoding: { name: 'default', configuration: { separator: '/' } },
+    fill_value: 0,
+    codecs: sharded
+      ? [
+          {
+            name: 'sharding_indexed',
+            configuration: {
+              chunk_shape: level.chunkShape,
+              codecs: [htj2kCodec()],
+              index_codecs: [
+                { name: 'bytes', configuration: { endian: 'little' } },
+                { name: 'crc32c' },
+              ],
+              index_location: 'end',
+            },
+          },
+        ]
+      : [htj2kCodec()],
+    dimension_names: ['y', 'x'],
+    attributes: {
+      psychogeo: {
+        level: level.level,
+        resolutionMetres: level.resolutionMetres,
+        chunkMetres: level.chunkMetres,
+        // height = raw * scale + offset; raw 0 is nodata.
+        scale: encoding.scale,
+        offset: encoding.offset,
+        nodata: 0,
+      },
+    },
+  };
+}
+
+export function buildRenormChannelMetadata(
+  source: TerrainManifestV2,
+  levels: readonly RenormLevel[],
+  encoding: ScaleOffset,
+  dithered: boolean,
+): Json {
+  return buildGroupMetadata({
+    multiscales: [
+      {
+        name: source.channelId,
+        axes: [
+          { name: 'y', type: 'space', unit: 'metre' },
+          { name: 'x', type: 'space', unit: 'metre' },
+        ],
+        datasets: levels.map((level) => ({
+          path: String(level.level),
+          coordinateTransformations: [
+            { type: 'scale', scale: [level.resolutionMetres, level.resolutionMetres] },
+          ],
+        })),
+      },
+    ],
+    psychogeo: {
+      sourceDatasetId: source.datasetId,
+      channelId: source.channelId,
+      crs: source.crs,
+      encoding: {
+        codecName: HTJ2K_CODEC_NAME,
+        sampleType: 'uint16',
+        normalisation: 'globalScaleOffset',
+        scale: encoding.scale,
+        offset: encoding.offset,
+        nodata: 0,
+        dithered,
+      },
+      grid: {
+        crs: source.crs.horizontal,
+        eastOrigin: NATIONAL_EXTENT.eastMin,
+        northOrigin: NATIONAL_EXTENT.northMax,
+        yAxis: 'south',
+        levelFactor: 4,
+      },
+    },
+  });
 }
 
 /**

@@ -25,6 +25,7 @@ import { parseRegionArg } from './v2/region.ts';
 import { validateDatasetV2 } from './v2/validate.ts';
 import { syncCheckpointsFromDisk } from './v2/syncCheckpoints.ts';
 import { transcodeToZarr, type TranscodeProgressEvent } from './zarr/transcode.ts';
+import { renormaliseToZarr, type RenormaliseProgressEvent } from './zarr/renormalise.ts';
 
 const startTime = Date.now();
 
@@ -34,6 +35,8 @@ interface CliArgs {
   readonly out?: string;
   readonly dataset?: string;
   readonly datasetId?: string;
+  readonly levels?: string;
+  readonly dither: boolean;
   readonly cell?: string;
   readonly region?: string;
   readonly bounds?: string;
@@ -72,6 +75,10 @@ function usage(): string {
     '      [--region <gridRef>] [--progress]',
     '        Repacks the existing HTJ2K chunks into a sharded zarr v3 store.',
     '        No decode or re-encode: the codestreams become zarr chunks as they are.',
+    '  pnpm pipeline:defra -- renormalise-zarr --dataset <dataset-dir> --out <zarr-dir>',
+    '      [--region <gridRef>] [--dither] [--levels <n>] [--progress]',
+    '        Re-encodes to one national scale/offset and a 4x pyramid of 1000px chunks.',
+    '        Drops the per-chunk encoding arrays; smaller output, but decodes every chunk.',
     '',
     'Region examples:',
     '  --region SP51     one 10 km cell',
@@ -103,6 +110,8 @@ function parseArgs(argv: string[]): CliArgs {
     out: values.get('out'),
     dataset: values.get('dataset'),
     datasetId: values.get('dataset-id'),
+    levels: values.get('levels'),
+    dither: flags.has('dither'),
     cell: values.get('cell'),
     region: values.get('region'),
     bounds: values.get('bounds'),
@@ -117,6 +126,17 @@ function parseArgs(argv: string[]): CliArgs {
     noMerge: flags.has('no-merge'),
     skipValidation: flags.has('skip-validation'),
   };
+}
+
+function formatRenormaliseProgress(event: RenormaliseProgressEvent): string {
+  switch (event.kind) {
+    case 'scan':
+      return `[zarr] scanned ${event.chunks} leaf chunks`;
+    case 'chunk':
+      return `[zarr] level ${event.level}: ${event.done}/${event.total} chunks`;
+    case 'level':
+      return `[zarr] level ${event.level} done: ${event.chunks} chunks, ${formatBytes(event.bytes)}`;
+  }
 }
 
 function formatTranscodeProgress(event: TranscodeProgressEvent): string {
@@ -384,6 +404,34 @@ async function main(): Promise<void> {
   if (args.command === 'inspect-v2') {
     if (!args.dataset) throw new Error('--dataset is required for inspect-v2');
     console.log(await inspectDatasetV2(args.dataset));
+    return;
+  }
+  if (args.command === 'renormalise-zarr') {
+    if (!args.dataset) throw new Error('--dataset is required for renormalise-zarr');
+    if (!args.out) throw new Error('--out is required for renormalise-zarr');
+    const summary = await renormaliseToZarr({
+      datasetDir: args.dataset,
+      outDir: args.out,
+      gridRefFilter: args.region ?? args.cell,
+      dither: args.dither,
+      levelCount: args.levels ? Number.parseInt(args.levels, 10) : undefined,
+      onProgress: args.progress ? (event) => console.log(formatRenormaliseProgress(event)) : undefined,
+    });
+    const saved = summary.sourceBytes > 0
+      ? `${((1 - summary.totalBytes / summary.sourceBytes) * 100).toFixed(1)}% smaller than the source chunks`
+      : '';
+    console.log(
+      [
+        `global scale ${(summary.encoding.scale * 1000).toFixed(2)} mm, offset ${summary.encoding.offset.toFixed(3)} m`,
+        `dither ${summary.dithered ? 'on' : 'off'}`,
+        ...summary.levels.map(
+          (level) =>
+            `  level ${level.level} (${level.resolutionMetres} m): ${level.chunks} chunks → ` +
+            `${level.objects} objects, ${formatBytes(level.bytes)}`,
+        ),
+        `total ${formatBytes(summary.totalBytes)} from ${formatBytes(summary.sourceBytes)} of level-0 source — ${saved}`,
+      ].join('\n'),
+    );
     return;
   }
   if (args.command === 'transcode-zarr') {

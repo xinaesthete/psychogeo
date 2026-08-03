@@ -125,6 +125,63 @@ The orientation control matters: byte identity says nothing about which way up
 the array is, and without a control a small seam difference is not evidence of
 anything. A 400× separation is.
 
+## Renormalisation pass (`renormalise-zarr`)
+
+The repack keeps the source encoding. This pass replaces it: one national
+scale/offset, and a rebuilt pyramid.
+
+```bash
+pnpm pipeline:defra -- renormalise-zarr --dataset <v2-dir> --out <zarr-dir> [--region SU42] [--dither] [--progress]
+```
+
+**Encoding.** `height = raw * scale + offset` with `scale = 21.516 mm`,
+`offset = -10.0215 m` over −10..1400 m, raw 0 reserved for nodata. Two numbers
+in the array attributes instead of two companion arrays, so the `encoding/`
+group is gone.
+
+**Levels.** Uniform 1000² chunks, resolution ×4 per level: 1, 4, 16, 64, 256 m,
+chunks covering 1, 4, 16, 64, 256 km. Every coarse chunk is exactly 4×4 of the
+level below, sharing the north-west origin, which removes the 313 px rounding
+and the varying chunk shapes in one go. 4× rather than 2× keeps pyramid
+overhead near 7% instead of 33%.
+
+Level 0→1 reduces by mean-of-block-maxes at a 4 px block — the ~4 m peak
+surface — and every coarser level area-averages that same surface, so adjacent
+levels stay statistically consistent. Level 1 therefore reads about a canopy
+above an area mean, by design.
+
+**Dither** (`--dither`) applies ±1 level TPDF noise, deterministic in
+`(seed, chunk coordinate)`. Off by default; see
+[python/codec-eval](../../python/codec-eval/README.md) for why it is a flag and
+not a decision.
+
+**Result on SU42** — 100 leaf chunks, 5 levels:
+
+| Level | Res | Chunks | Objects | Size |
+|-------|-----|--------|---------|------|
+| 0 | 1 m | 100 | 1 | 66.98 MiB |
+| 1 | 4 m | 9 | 1 | 5.40 MiB |
+| 2 | 16 m | 2 | 1 | 441.1 KiB |
+| 3 | 64 m | 2 | 1 | 39.7 KiB |
+| 4 | 256 m | 1 | 1 | 5.7 KiB |
+
+**72.85 MiB for the whole pyramid, from 119.45 MiB of level-0 source — 39%
+smaller**, with a deeper pyramid and no per-chunk metadata. Level 0 alone is 44%
+down; pyramid overhead is 8.8%.
+
+Verified by [scripts/verify-zarr-renormalise.mjs](../../scripts/verify-zarr-renormalise.mjs):
+
+| Check | Result |
+|-------|--------|
+| Heights vs the source chunk | max 10.76 mm, rms 6.21 mm, bound 11.31 mm |
+| Orientation across a chunk seam | 0.408 m vs 31.875 m control |
+| Level 1 alignment | best shift (0,0) at 1.077 m, nearest wrong shift 12.561 m |
+
+The rms matches `codec-eval`'s independent Python measurement to three
+significant figures. Both the orientation and alignment checks score a
+deliberately wrong alternative alongside the right one, because a shifted
+pyramid level looks entirely plausible on its own.
+
 ## Open
 
 - **zfp was prototyped and lost** — see [python/codec-eval](../../python/codec-eval/README.md).
@@ -132,14 +189,16 @@ anything. A 400× separation is.
   1 km height tile spans ~100–200 m and 16 bits fits that far better than
   float32 with an exponent range zfp cannot exploit. HTJ2K stays, which also
   keeps the codestream's wavelet subbands available for analysis.
-- **Global normalisation is the interesting result.** One national scale/offset
-  instead of per-chunk makes files **31–44% smaller** while deleting the
-  `encoding/` arrays, because a 1.4 mm per-chunk step spends most of its bits
-  encoding sensor noise — DEFRA LIDAR is accurate to ~±150 mm. A national step
-  of ~21 mm is still an order of magnitude inside that. It does **not** need the
-  source TIFFs: requantising the shipped chunks adds only +0.79 mm to the max
-  error and +0.02 mm rms. It does need CPU — a decode and re-encode of every
-  chunk, where this repack was a byte copy.
+- **Dither on or off** — built as a flag; wants looking at in the renderer
+  rather than another statistic.
+- **Browser loader** — nothing in `src/` reads either store yet.
+  `zarrextra/workers` + `@fideus-labs/fizarrita` is the intended path.
+- **National run** — only SU42 has been through either pass.
+- **Nodata** is still the reserved raw 0 rather than a real sentinel; only a
+  re-encode from the source TIFFs could change that.
+- **Which store wins.** The repack and the renormalisation both exist; if the
+  renormalised one holds up in the viewer there is little reason to keep the
+  repack beyond its value as a byte-identity reference.
 - **Browser loader** — nothing in `src/` reads the store yet. `zarrextra/workers`
   + `@fideus-labs/fizarrita` is the intended path for off-main-thread decode.
 - **National run** — only SU42 has been transcoded. 144 GB at I/O speed.

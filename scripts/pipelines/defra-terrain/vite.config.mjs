@@ -29,7 +29,9 @@ export default defineConfig({
   ssr: {
     target: 'node',
     noExternal: true,
-    external: ['webgpu', 'unzipper'],
+    // openjph-wasm resolves its Emscripten glue and .wasm relative to its own
+    // package; bundling it breaks that lookup at runtime.
+    external: ['webgpu', 'unzipper', 'openjph-wasm'],
   },
   test: {
     globals: true,
