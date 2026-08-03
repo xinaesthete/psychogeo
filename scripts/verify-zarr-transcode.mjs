@@ -83,7 +83,10 @@ async function checkByteIdentity() {
     // Grid ref bounds: derive from the leaf file names instead of re-implementing osgb here.
     const files = await readdir(path.join(quadDir, '0'));
     for (const name of files) {
-      if (!name.endsWith('.j2c')) continue;
+      // `._name.j2c` are AppleDouble sidecars, which macOS writes beside every
+      // file on a volume with no native xattrs, such as exFAT. They match the
+      // suffix but are not codestreams.
+      if (!name.endsWith('.j2c') || name.startsWith('._')) continue;
       const [eastMin, northMin] = name.replace('.j2c', '').split('_').map(Number);
       const chunkX = eastMin / 1000;
       const chunkY = (1_300_000 - (northMin + 1000)) / 1000;

@@ -11,7 +11,7 @@
  *      plausible, so the alignment test scores neighbouring shifts as its own
  *      control.
  */
-import { open as openFile, readFile, readdir } from 'node:fs/promises';
+import { open as openFile, readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import * as zarr from 'zarrita';
 import { createOpenJphDecoder, registerExperimentalHtj2kCodec } from 'zarrextra';
@@ -54,35 +54,52 @@ class FileStore {
   }
 }
 
+/**
+ * The leaf chunk with the most data in it, across every quad of the node.
+ *
+ * Not simply the first: a cell on the coast or the border is mostly reserved-0
+ * nodata, and an all-nodata chunk compares zero samples — which every check
+ * below then passes vacuously. Size is a good proxy for how much real surface a
+ * codestream carries, the flat nodata ones compressing to about 2.4 KB.
+ */
 async function findLeaf() {
   const nodeDir = path.join(SOURCE, 'pyramid', REGION);
+  let best;
   for (const entry of await readdir(nodeDir, { withFileTypes: true })) {
     if (!entry.isDirectory() || /^\d+$/.test(entry.name)) continue;
     const quadDir = path.join(nodeDir, entry.name);
     const manifest = JSON.parse(await readFile(path.join(quadDir, 'manifest.json'), 'utf8'));
     if (!manifest.leaf) continue;
-    const files = (await readdir(path.join(quadDir, '0'))).filter((n) => n.endsWith('.j2c'));
-    if (files.length === 0) continue;
-    const name = files[0];
-    const [eastMin, northMin] = name.replace('.j2c', '').split('_').map(Number);
+    // `._name.j2c` are AppleDouble sidecars, which macOS writes beside every
+    // file on a volume with no native xattrs — extract this dataset onto exFAT
+    // and there is one per chunk. They match the suffix but are not
+    // codestreams, and sort first, so an unfiltered readdir picks one and the
+    // decoder fails on the SIZ marker.
+    const files = (await readdir(path.join(quadDir, '0')))
+      .filter((n) => n.endsWith('.j2c') && !n.startsWith('._'));
     const leaf = manifest.leaf;
-    const col = (eastMin - Math.min(...files.map((f) => Number(f.split('_')[0])))) / leaf.stepMetres;
-    void col;
-    // Recover this slot's scalars by matching the file's grid position.
-    const bounds = { eastMin, northMin };
-    const originEast = eastMin - ((eastMin / 1000) % 5) * 1000;
-    const originNorth = northMin - ((northMin / 1000) % 5) * 1000;
-    const slot =
-      ((northMin - originNorth) / leaf.stepMetres) * leaf.cols +
-      (eastMin - originEast) / leaf.stepMetres;
-    return {
-      file: path.join(quadDir, '0', name),
-      bounds,
-      scale: leaf.enc.scale[slot],
-      offset: leaf.enc.offset[slot],
-    };
+    for (const name of files) {
+      const file = path.join(quadDir, '0', name);
+      const { size } = await stat(file);
+      if (best && size <= best.size) continue;
+      const [eastMin, northMin] = name.replace('.j2c', '').split('_').map(Number);
+      // Recover this slot's scalars by matching the file's grid position.
+      const originEast = eastMin - ((eastMin / 1000) % 5) * 1000;
+      const originNorth = northMin - ((northMin / 1000) % 5) * 1000;
+      const slot =
+        ((northMin - originNorth) / leaf.stepMetres) * leaf.cols +
+        (eastMin - originEast) / leaf.stepMetres;
+      best = {
+        file,
+        size,
+        bounds: { eastMin, northMin },
+        scale: leaf.enc.scale[slot],
+        offset: leaf.enc.offset[slot],
+      };
+    }
   }
-  throw new Error('no leaf chunk found');
+  if (!best) throw new Error('no leaf chunk found');
+  return best;
 }
 
 async function main() {
@@ -121,7 +138,10 @@ async function main() {
     `    max ${(maxErr * 1000).toFixed(2)} mm, rms ${(Math.sqrt(sumSq / counted) * 1000).toFixed(2)} mm ` +
       `(bound ${halfStep.toFixed(2)} mm)`,
   );
-  const withinBound = maxErr * 1000 <= halfStep + 1e-6;
+  // A chunk with no overlapping data compares nothing, and "no sample exceeded
+  // the bound" is then true of an empty set. Demand evidence, not the absence
+  // of a counterexample.
+  const withinBound = counted > 0 && maxErr * 1000 <= halfStep + 1e-6;
 
   // 2. Orientation, by continuity across a chunk seam against a 1 km control.
   const rowAt = async (arr, y, xStart, width) =>
@@ -196,7 +216,13 @@ async function main() {
   );
   const aligned = best.sy === 0 && best.sx === 0 && runnerUp.score > best.score * 2;
 
-  console.log(withinBound ? 'REQUANTISATION OK' : 'REQUANTISATION OUT OF BOUND');
+  console.log(
+    withinBound
+      ? 'REQUANTISATION OK'
+      : counted === 0
+        ? 'REQUANTISATION NOT TESTED — no overlapping data'
+        : 'REQUANTISATION OUT OF BOUND',
+  );
   console.log(seam < far / 2 ? 'ORIENTATION OK' : 'ORIENTATION WRONG');
   console.log(aligned ? 'LEVEL ALIGNMENT OK' : 'LEVEL ALIGNMENT SUSPECT');
 }
