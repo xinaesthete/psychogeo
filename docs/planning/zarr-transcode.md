@@ -211,7 +211,18 @@ pyramid level looks entirely plausible on its own.
   only case where it pays.
 - **Browser loader** — nothing in `src/` reads either store yet.
   `zarrextra/workers` + `@fideus-labs/fizarrita` is the intended path.
-- **National run** — only SU42 has been through either pass.
+- **National run** — only SU42 has been through either pass. Two things to
+  settle first:
+  - **Verify the streaming writer.** `renormalise-zarr` now writes shard by
+    shard and skips shards already on disk, so it resumes and its memory is
+    bounded by one shard rather than a whole level — the level-at-a-time
+    version would have needed ~75 GB nationally. That rewrite is typechecked
+    but its output has **not** been compared against the store built before it;
+    do that on one cell before trusting it with 144 GB.
+  - **Parallelise the codec.** Level 0 is ~150k chunks and each one is a
+    decode plus a re-encode on a single thread. Even at half a second a chunk
+    that is a full day; a `worker_threads` pool over the cores would bring it
+    to hours. Nothing else in the pass is a bottleneck — it is all openjph.
 - **Nodata** is still the reserved raw 0 rather than a real sentinel; only a
   re-encode from the source TIFFs could change that.
 - **Which store wins.** The repack and the renormalisation both exist; if the

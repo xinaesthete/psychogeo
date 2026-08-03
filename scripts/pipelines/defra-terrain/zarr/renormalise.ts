@@ -125,42 +125,62 @@ async function writeJson(filePath: string, value: unknown): Promise<void> {
   await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
 }
 
-/** Group encoded chunks by shard and write them out. */
-async function flushLevel(
+/** Which shard a chunk belongs to, and where inside it. */
+function placeInShard(level: RenormLevel, coord: readonly [number, number]) {
+  if (!level.shardChunks) return { key: chunkKey(coord), local: [0, 0] as const };
+  const [perY, perX] = level.shardChunks;
+  return {
+    key: chunkKey([Math.floor(coord[0] / perY), Math.floor(coord[1] / perX)]),
+    local: [coord[0] % perY, coord[1] % perX] as const,
+  };
+}
+
+function groupByShard<T>(
+  level: RenormLevel,
+  items: readonly T[],
+  coordOf: (item: T) => readonly [number, number],
+): Map<string, T[]> {
+  const shards = new Map<string, T[]>();
+  for (const item of items) {
+    const { key } = placeInShard(level, coordOf(item));
+    const list = shards.get(key);
+    if (list) list.push(item);
+    else shards.set(key, [item]);
+  }
+  return shards;
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await stat(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Write one shard's chunks and let them go.
+ *
+ * Deliberately per shard rather than per level: holding a whole level's
+ * encoded chunks would be ~50 MB for one cell but ~75 GB nationally, which is
+ * the difference between a run that finishes and one that dies overnight.
+ */
+async function writeOneShard(
   levelDir: string,
   level: RenormLevel,
-  encoded: Map<string, Uint8Array>,
-): Promise<{ objects: number; bytes: number }> {
-  const shards = new Map<string, ShardChunk[]>();
-  for (const [key, bytes] of encoded) {
-    const [y, x] = key.split(',').map(Number);
-    if (!level.shardChunks) {
-      shards.set(chunkKey([y, x]), [{ local: [0, 0], load: async () => bytes }]);
-      continue;
-    }
-    const [perY, perX] = level.shardChunks;
-    const shardCoord: readonly [number, number] = [Math.floor(y / perY), Math.floor(x / perX)];
-    const entry: ShardChunk = { local: [y % perY, x % perX], load: async () => bytes };
-    const shardKey = chunkKey(shardCoord);
-    const list = shards.get(shardKey);
-    if (list) list.push(entry);
-    else shards.set(shardKey, [entry]);
+  key: string,
+  entries: ShardChunk[],
+): Promise<number> {
+  const target = path.join(levelDir, key);
+  if (level.shardChunks) {
+    const stats = await writeShard(target, level.shardChunks, entries);
+    return stats.payloadBytes + stats.indexBytes;
   }
-
-  let bytes = 0;
-  for (const [key, entries] of shards) {
-    const target = path.join(levelDir, key);
-    if (level.shardChunks) {
-      const stats = await writeShard(target, level.shardChunks, entries);
-      bytes += stats.payloadBytes + stats.indexBytes;
-    } else {
-      const payload = await entries[0].load();
-      await mkdir(path.dirname(target), { recursive: true });
-      await writeFile(target, payload);
-      bytes += payload.length;
-    }
-  }
-  return { objects: shards.size, bytes };
+  const payload = await entries[0].load();
+  await mkdir(path.dirname(target), { recursive: true });
+  await writeFile(target, payload);
+  return payload.length;
 }
 
 export async function renormaliseToZarr(options: RenormaliseOptions): Promise<RenormaliseSummary> {
@@ -187,39 +207,47 @@ export async function renormaliseToZarr(options: RenormaliseOptions): Promise<Re
   const leaves = await scanLeaves(options, levels[0]);
   const levelDir0 = path.join(channelDir, '0');
   await writeJson(path.join(levelDir0, 'zarr.json'), buildRenormLevelMetadata(levels[0], encoding));
-  const encoded0 = new Map<string, Uint8Array>();
+
+  const shards0 = groupByShard(levels[0], leaves, (leaf) => leaf.coord);
+  let writtenCoords: Array<readonly [number, number]> = [];
+  let level0Bytes = 0;
   let done = 0;
-  for (const leaf of leaves) {
-    const codestream = new Uint8Array(await readFile(leaf.sourcePath));
-    sourceBytes += codestream.length;
-    const decoded = await decodeChunk(codestream);
-    const heights = dequantiseToHeights(decoded.raw, leaf.encoding);
-    const raw = quantiseHeights(heights, {
-      encoding,
-      dither: ditherFor(dither, seed, leaf.coord),
-    });
-    encoded0.set(
-      `${leaf.coord[0]},${leaf.coord[1]}`,
-      await encodeChunk(raw, decoded.width, decoded.height),
-    );
-    done += 1;
-    if (done % 25 === 0) {
+  for (const [key, group] of shards0) {
+    for (const leaf of group) writtenCoords.push(leaf.coord);
+    // Resume: a shard already on disk is complete, since it is renamed into
+    // place only after every chunk in it is written.
+    if (await fileExists(path.join(levelDir0, key))) {
+      done += group.length;
       options.onProgress?.({ kind: 'chunk', level: 0, done, total: leaves.length });
+      continue;
     }
+    const entries: ShardChunk[] = [];
+    for (const leaf of group) {
+      const codestream = new Uint8Array(await readFile(leaf.sourcePath));
+      sourceBytes += codestream.length;
+      const decoded = await decodeChunk(codestream);
+      const heights = dequantiseToHeights(decoded.raw, leaf.encoding);
+      const raw = quantiseHeights(heights, { encoding, dither: ditherFor(dither, seed, leaf.coord) });
+      const bytes = await encodeChunk(raw, decoded.width, decoded.height);
+      entries.push({ local: placeInShard(levels[0], leaf.coord).local, load: async () => bytes });
+      done += 1;
+      if (done % 100 === 0) {
+        options.onProgress?.({ kind: 'chunk', level: 0, done, total: leaves.length });
+      }
+    }
+    level0Bytes += await writeOneShard(levelDir0, levels[0], key, entries);
   }
-  const flushed0 = await flushLevel(levelDir0, levels[0], encoded0);
   summary.push({
     level: 0,
     resolutionMetres: levels[0].resolutionMetres,
-    chunks: encoded0.size,
-    objects: flushed0.objects,
-    bytes: flushed0.bytes,
+    chunks: writtenCoords.length,
+    objects: shards0.size,
+    bytes: level0Bytes,
   });
-  totalBytes += flushed0.bytes;
-  options.onProgress?.({ kind: 'level', level: 0, chunks: encoded0.size, bytes: flushed0.bytes });
+  totalBytes += level0Bytes;
+  options.onProgress?.({ kind: 'level', level: 0, chunks: writtenCoords.length, bytes: level0Bytes });
 
   // Coarser levels, each built from the 4x4 block below it.
-  let previousCoords = [...encoded0.keys()].map((key) => key.split(',').map(Number) as [number, number]);
   for (let index = 1; index < levels.length; index += 1) {
     const level = levels[index];
     const child = levels[index - 1];
@@ -227,71 +255,80 @@ export async function renormaliseToZarr(options: RenormaliseOptions): Promise<Re
     await writeJson(path.join(levelDir, 'zarr.json'), buildRenormLevelMetadata(level, encoding));
     const reader = new ShardReader(path.join(channelDir, String(child.level)), child.shardChunks);
 
-    const parents = new Set<string>();
-    for (const coord of previousCoords) {
+    const parentKeys = new Set<string>();
+    for (const coord of writtenCoords) {
       const parent = parentChunkCoord(coord);
-      parents.add(`${parent[0]},${parent[1]}`);
+      parentKeys.add(`${parent[0]},${parent[1]}`);
     }
+    const parents = [...parentKeys].map((key) => key.split(',').map(Number) as [number, number]);
+    const shards = groupByShard(level, parents, (coord) => coord);
 
     const block = CHUNK_PIXELS * LEVEL_FACTOR;
-    const encodedLevel = new Map<string, Uint8Array>();
+    const nextCoords: Array<readonly [number, number]> = [];
+    let levelBytes = 0;
     let processed = 0;
-    for (const key of parents) {
-      const coord = key.split(',').map(Number) as [number, number];
-      const pixels = new Float32Array(block * block).fill(Number.NaN);
-      let anyChild = false;
-      for (const childCoord of childChunkCoords(coord)) {
-        const bytes = await reader.read(childCoord);
-        if (!bytes) continue;
-        anyChild = true;
-        const decoded = await decodeChunk(bytes);
-        const heights = dequantiseToHeights(decoded.raw, encoding);
-        const originY = (childCoord[0] % LEVEL_FACTOR) * CHUNK_PIXELS;
-        const originX = (childCoord[1] % LEVEL_FACTOR) * CHUNK_PIXELS;
-        for (let y = 0; y < decoded.height; y += 1) {
-          pixels.set(
-            heights.subarray(y * decoded.width, (y + 1) * decoded.width),
-            (originY + y) * block + originX,
-          );
+    for (const [key, group] of shards) {
+      const existing = await fileExists(path.join(levelDir, key));
+      const entries: ShardChunk[] = [];
+      for (const coord of group) {
+        if (existing) {
+          nextCoords.push(coord);
+          continue;
+        }
+        const pixels = new Float32Array(block * block).fill(Number.NaN);
+        let anyChild = false;
+        for (const childCoord of childChunkCoords(coord)) {
+          const bytes = await reader.read(childCoord);
+          if (!bytes) continue;
+          anyChild = true;
+          const decoded = await decodeChunk(bytes);
+          const heights = dequantiseToHeights(decoded.raw, encoding);
+          const originY = (childCoord[0] % LEVEL_FACTOR) * CHUNK_PIXELS;
+          const originX = (childCoord[1] % LEVEL_FACTOR) * CHUNK_PIXELS;
+          for (let y = 0; y < decoded.height; y += 1) {
+            pixels.set(
+              heights.subarray(y * decoded.width, (y + 1) * decoded.width),
+              (originY + y) * block + originX,
+            );
+          }
+        }
+        if (!anyChild) continue;
+
+        const { blockSize, bias } = reductionFor(child.level);
+        const downsampleSource: DownsampleSource = {
+          pixels,
+          width: block,
+          height: block,
+          resolutionMetres: child.resolutionMetres,
+          // Only used to derive the output extent, which this pass ignores —
+          // placement comes from the chunk coordinate, not the raster extent.
+          extent: { eastMin: 0, eastMax: block, northMin: 0, northMax: block },
+        };
+        const reduced = downsampleReduce(downsampleSource, level.resolutionMetres, blockSize, bias);
+        const raw = quantiseHeights(reduced.pixels, { encoding, dither: ditherFor(dither, seed, coord) });
+        const bytes = await encodeChunk(raw, reduced.width, reduced.height);
+        entries.push({ local: placeInShard(level, coord).local, load: async () => bytes });
+        nextCoords.push(coord);
+        processed += 1;
+        if (processed % 25 === 0) {
+          options.onProgress?.({ kind: 'chunk', level: level.level, done: processed, total: parents.length });
         }
       }
-      if (!anyChild) continue;
-
-      const { blockSize, bias } = reductionFor(child.level);
-      const downsampleSource: DownsampleSource = {
-        pixels,
-        width: block,
-        height: block,
-        resolutionMetres: child.resolutionMetres,
-        // Only used to derive the output extent, which this pass ignores —
-        // placement comes from the chunk coordinate, not the raster extent.
-        extent: { eastMin: 0, eastMax: block, northMin: 0, northMax: block },
-      };
-      const reduced = downsampleReduce(downsampleSource, level.resolutionMetres, blockSize, bias);
-      const raw = quantiseHeights(reduced.pixels, {
-        encoding,
-        dither: ditherFor(dither, seed, coord),
-      });
-      encodedLevel.set(key, await encodeChunk(raw, reduced.width, reduced.height));
-      processed += 1;
-      if (processed % 10 === 0) {
-        options.onProgress?.({ kind: 'chunk', level: level.level, done: processed, total: parents.size });
-      }
+      if (entries.length > 0) levelBytes += await writeOneShard(levelDir, level, key, entries);
     }
     reader.clear();
 
-    const flushed = await flushLevel(levelDir, level, encodedLevel);
     summary.push({
       level: level.level,
       resolutionMetres: level.resolutionMetres,
-      chunks: encodedLevel.size,
-      objects: flushed.objects,
-      bytes: flushed.bytes,
+      chunks: nextCoords.length,
+      objects: shards.size,
+      bytes: levelBytes,
     });
-    totalBytes += flushed.bytes;
-    options.onProgress?.({ kind: 'level', level: level.level, chunks: encodedLevel.size, bytes: flushed.bytes });
-    previousCoords = [...encodedLevel.keys()].map((entry) => entry.split(',').map(Number) as [number, number]);
-    if (previousCoords.length === 0) break;
+    totalBytes += levelBytes;
+    options.onProgress?.({ kind: 'level', level: level.level, chunks: nextCoords.length, bytes: levelBytes });
+    writtenCoords = nextCoords;
+    if (writtenCoords.length === 0) break;
   }
 
   return { encoding, dithered: dither, levels: summary, sourceBytes, totalBytes };
