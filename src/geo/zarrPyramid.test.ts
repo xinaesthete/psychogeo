@@ -165,6 +165,75 @@ describe('ZarrPyramidResolver', () => {
     expect(indexFetches).toHaveLength(1);
   });
 
+  it('refines near the camera and leaves distant ground coarse', async () => {
+    // Both levels fully populated, so the only thing deciding the level is
+    // distance. A single level for the whole viewport would return one or the
+    // other, never both — which is what an oblique view actually needs, since
+    // its ground footprint runs to the horizon.
+    const full = new Map(Array.from({ length: 100 }, (_, i) => [i, { offset: i * 10, length: 10 }] as const));
+    const shards = new Map<string, ArrayBuffer>();
+    for (let y = 116; y <= 118; y += 1) {
+      for (let x = 43; x <= 45; x += 1) shards.set(`${STORE}/${CHANNEL}/0/c/${y}/${x}`, shardIndex(full));
+    }
+    for (let y = 28; y <= 30; y += 1) {
+      for (let x = 10; x <= 12; x += 1) shards.set(`${STORE}/${CHANNEL}/1/c/${y}/${x}`, shardIndex(full));
+    }
+    globalThis.fetch = mockStore(shards) as unknown as typeof fetch;
+    const resolver = await ZarrPyramidResolver.load(STORE);
+
+    const camera = { position: { x: 445_000, y: 125_000, z: 200 } } as never;
+    const chunks = await resolver!.resolveChunksInBoundsAdaptive(
+      { eastMin: 440_000, eastMax: 452_000, northMin: 118_000, northMax: 130_000 },
+      camera,
+    );
+    const levels = new Set(chunks.map((chunk) => chunk.level));
+    expect(levels.has(0)).toBe(true);
+    expect(levels.has(1)).toBe(true);
+
+    // The finest chunks are the ones under the camera, the coarse ones further off.
+    const distance = (chunk: (typeof chunks)[number]) =>
+      Math.hypot(chunk.eastMin + chunk.extentMetres / 2 - 445_000, chunk.northMin + chunk.extentMetres / 2 - 125_000);
+    const fine = chunks.filter((chunk) => chunk.level === 0);
+    const coarse = chunks.filter((chunk) => chunk.level === 1);
+    expect(Math.min(...fine.map(distance))).toBeLessThan(Math.min(...coarse.map(distance)));
+  });
+
+  it('checks an unsharded level for presence instead of assuming it', async () => {
+    // Level 4 has no shard index to consult, so without a probe every national
+    // grid coordinate looks present and the tree queues a chunk per 404.
+    const seen: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === 'HEAD') {
+        seen.push(url);
+        return new Response(null, { status: url.endsWith('/c/4/1') ? 200 : 404 });
+      }
+      if (url === `${STORE}/zarr.json`) {
+        return new Response(JSON.stringify({ zarr_format: 3, node_type: 'group', attributes: { psychogeo: { channelId: CHANNEL } } }));
+      }
+      if (url === `${STORE}/${CHANNEL}/zarr.json`) {
+        return new Response(JSON.stringify({
+          zarr_format: 3,
+          node_type: 'group',
+          attributes: {
+            multiscales: [{ datasets: [{ path: '4' }] }],
+            psychogeo: { encoding: { normalisation: 'globalScaleOffset', scale: SCALE, offset: OFFSET } },
+          },
+        }));
+      }
+      if (/\/4\/zarr\.json$/.test(url)) return new Response(JSON.stringify(levelArray(4, false)));
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+
+    const resolver = await ZarrPyramidResolver.load(STORE);
+    const chunks = await resolver!.resolveChunksInBounds(
+      { eastMin: 260_000, eastMax: 700_000, northMin: 20_000, northMax: 800_000 },
+      4,
+    );
+    expect(seen.length).toBeGreaterThan(1);
+    expect(chunks.map((chunk) => chunk.url)).toEqual([`${STORE}/${CHANNEL}/4/c/4/1`]);
+  });
+
   it('refuses a store that still carries per-chunk scalars', async () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);

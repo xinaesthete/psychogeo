@@ -25,6 +25,8 @@ const EAST_ORIGIN = 0;
 const SHARD_INDEX_ENTRY_BYTES = 16;
 const CRC32C_BYTES = 4;
 const EMPTY_SLOT = 0xffffffffffffffffn;
+/** Refine while the chunk is nearer than this many chunk-widths (see shouldRefine). */
+const REFINE_DISTANCE_FACTOR = 2;
 
 type ZarrArrayMeta = {
   readonly shape: readonly number[];
@@ -97,6 +99,7 @@ function parseArrayMeta(raw: unknown): ZarrArrayMeta | undefined {
 
 export class ZarrPyramidResolver {
   private readonly shardIndices = new Map<string, Promise<ShardIndex | undefined>>();
+  private readonly presence = new Map<string, Promise<boolean>>();
   private readonly meta: TerrainManifestV2;
 
   private constructor(
@@ -208,6 +211,7 @@ export class ZarrPyramidResolver {
 
   clearCache(): void {
     this.shardIndices.clear();
+    this.presence.clear();
   }
 
   private levelFor(viewportMetres: number): ZarrLevel {
@@ -218,6 +222,71 @@ export class ZarrPyramidResolver {
       if (level.level > 0 && viewportMetres >= level.chunkMetres) return level;
     }
     return this.levels[0];
+  }
+
+  /**
+   * Refine while a chunk would cover more than roughly the whole viewport.
+   *
+   * A chunk is 1000 px however coarse it is, so the useful test is angular:
+   * at distance d a chunk of side S subtends about S/d, and the projection
+   * turns that into ~S/d * focalPx pixels. Refining at S/d > 1 keeps chunks
+   * near their native resolution and lets distant ground stay coarse, which is
+   * what a viewport-wide level choice cannot do on an oblique view — there the
+   * ground footprint runs to the horizon and drags everything to the coarsest
+   * level.
+   */
+  private shouldRefine(level: ZarrLevel, coord: readonly [number, number], camera: THREE.Vector3): boolean {
+    const eastMin = EAST_ORIGIN + coord[1] * level.chunkMetres;
+    const northMin = NORTH_ORIGIN - (coord[0] + 1) * level.chunkMetres;
+    // Distance to the nearest point of the chunk, not its centre: a chunk the
+    // camera sits on top of must refine however far its centre is.
+    const dx = Math.max(eastMin - camera.x, 0, camera.x - (eastMin + level.chunkMetres));
+    const dy = Math.max(northMin - camera.y, 0, camera.y - (northMin + level.chunkMetres));
+    const distance = Math.sqrt(dx * dx + dy * dy + camera.z * camera.z);
+    return distance < level.chunkMetres * REFINE_DISTANCE_FACTOR;
+  }
+
+  private chunkRangeFor(level: ZarrLevel, bounds: TileExtent) {
+    return {
+      xStart: Math.max(0, Math.floor((bounds.eastMin - EAST_ORIGIN) / level.chunkMetres)),
+      xEnd: Math.min(level.chunkGrid[1] - 1, Math.floor((bounds.eastMax - EAST_ORIGIN) / level.chunkMetres)),
+      yStart: Math.max(0, Math.floor((NORTH_ORIGIN - bounds.northMax) / level.chunkMetres)),
+      yEnd: Math.min(level.chunkGrid[0] - 1, Math.floor((NORTH_ORIGIN - bounds.northMin) / level.chunkMetres)),
+    };
+  }
+
+  /**
+   * Emit this chunk, or its four-by-four children if the camera is close
+   * enough to want them. Refining replaces the coarse chunk outright rather
+   * than drawing under it — children that hold no data leave a hole, which is
+   * correct for a sparse pyramid and avoids two levels fighting for the same
+   * ground.
+   */
+  private async descend(
+    level: ZarrLevel,
+    coord: readonly [number, number],
+    bounds: TileExtent,
+    camera: THREE.Vector3,
+    out: ChunkFetchDescriptor[],
+  ): Promise<void> {
+    const finer = this.levels.find((entry) => entry.level === level.level - 1);
+    if (finer && this.shouldRefine(level, coord, camera)) {
+      const factor = Math.round(level.chunkMetres / finer.chunkMetres);
+      const children: Array<readonly [number, number]> = [];
+      const range = this.chunkRangeFor(finer, bounds);
+      for (let dy = 0; dy < factor; dy += 1) {
+        for (let dx = 0; dx < factor; dx += 1) {
+          const child: readonly [number, number] = [coord[0] * factor + dy, coord[1] * factor + dx];
+          if (child[0] < range.yStart || child[0] > range.yEnd) continue;
+          if (child[1] < range.xStart || child[1] > range.xEnd) continue;
+          children.push(child);
+        }
+      }
+      await Promise.all(children.map((child) => this.descend(finer, child, bounds, camera, out)));
+      return;
+    }
+    const descriptor = await this.descriptorFor(level, coord);
+    if (descriptor) out.push(descriptor);
   }
 
   private async shardIndex(level: ZarrLevel, shard: readonly [number, number]): Promise<ShardIndex | undefined> {
@@ -247,6 +316,17 @@ export class ZarrPyramidResolver {
     return request;
   }
 
+  private chunkExists(url: string): Promise<boolean> {
+    const cached = this.presence.get(url);
+    if (cached) return cached;
+    const probe = fetch(url, { method: 'HEAD' }).then(
+      (response) => response.ok,
+      () => false,
+    );
+    this.presence.set(url, probe);
+    return probe;
+  }
+
   private async descriptorFor(
     level: ZarrLevel,
     coord: readonly [number, number],
@@ -265,7 +345,11 @@ export class ZarrPyramidResolver {
     };
 
     if (!level.shardChunks) {
-      return { ...common, url: joinUrl(level.baseUrl, 'c', String(coord[0]), String(coord[1])) };
+      // Unsharded levels have no index to consult, so absence has to be asked
+      // about directly — otherwise every coordinate in the national grid looks
+      // present and the tree queues a chunk per 404.
+      const url = joinUrl(level.baseUrl, 'c', String(coord[0]), String(coord[1]));
+      return (await this.chunkExists(url)) ? { ...common, url } : undefined;
     }
     const [perY, perX] = level.shardChunks;
     const shard: readonly [number, number] = [Math.floor(coord[0] / perY), Math.floor(coord[1] / perX)];
@@ -302,10 +386,29 @@ export class ZarrPyramidResolver {
     return resolved.filter((entry): entry is ChunkFetchDescriptor => entry !== undefined);
   }
 
+  /**
+   * Chunks for a viewport, each at the level its distance warrants.
+   *
+   * Descends the pyramid from the coarsest level rather than picking one level
+   * for the whole viewport: on an oblique view the ground footprint reaches the
+   * horizon, so a single choice is either far too coarse underfoot or far too
+   * fine at the skyline.
+   */
   async resolveChunksInBoundsAdaptive(
     bounds: TileExtent,
-    _camera: THREE.Camera,
+    camera: THREE.Camera,
   ): Promise<ChunkFetchDescriptor[]> {
-    return this.resolveChunksInBounds(bounds);
+    const coarsest = this.levels.reduce((a, b) => (a.level > b.level ? a : b));
+    const range = this.chunkRangeFor(coarsest, bounds);
+    if (range.xEnd < range.xStart || range.yEnd < range.yStart) return [];
+
+    const out: ChunkFetchDescriptor[] = [];
+    const seeds: Array<readonly [number, number]> = [];
+    for (let y = range.yStart; y <= range.yEnd; y += 1) {
+      for (let x = range.xStart; x <= range.xEnd; x += 1) seeds.push([y, x]);
+    }
+    const position = camera.position;
+    await Promise.all(seeds.map((coord) => this.descend(coarsest, coord, bounds, position, out)));
+    return out;
   }
 }
