@@ -81,6 +81,30 @@ Caveats: five windows from two 5 km tiles, all 100% valid, both in England /
 southern Scotland. Nodata behaviour under global normalisation is untested, and
 a wider sample would firm up the percentages.
 
+## Dithering
+
+`uv run codec-dither --zip <...>` asks whether the coarser global step needs
+dither, measured where it shows: the shading normal, not the height.
+
+| | size | rms | normal err mean | p95 | flat 3×3 |
+|---|---|---|---|---|---|
+| per-chunk (1.4 mm step) | 1.020 MB | 0.48 mm | 0.02° | 0.04° | 0.000% |
+| global plain (21.5 mm) | 0.574 MB | 6.21 mm | 0.27° | 0.55° | 0.025% |
+| global + TPDF dither | 0.589 MB | 10.76 mm | 0.46° | 0.99° | 0.006% |
+
+The surface is often smoother than the step — 24–59% of samples have less than
+one step of local roughness, and the 1st percentile is a quarter of a
+millimetre — so the data does **not** reliably dither itself. But actual
+terraces are rare: 0.02–0.05% of 3×3 neighbourhoods quantise flat, and dither
+cuts that by 4–8× for +0.4–2.6% in size.
+
+The trade is structure against magnitude. Dither roughly doubles the normal
+error while decorrelating it, and structured banding is perceptually worse than
+noise at equal amplitude. At a p95 of 0.5° undithered, both are close enough to
+the visibility threshold that no further statistic will settle it — it wants an
+eyeball test in the renderer, which is why the renormalisation pass takes dither
+as a flag rather than a decision.
+
 ## Caveat
 
 The lossless J2K baseline is encoded here with OpenJPEG rather than the

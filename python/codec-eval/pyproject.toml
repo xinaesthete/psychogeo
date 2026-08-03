@@ -13,6 +13,7 @@ dependencies = [
 
 [project.scripts]
 codec-eval = "codec_eval.compare:main"
+codec-dither = "codec_eval.dither:main"
 
 [build-system]
 requires = ["hatchling"]
