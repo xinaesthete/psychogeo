@@ -151,9 +151,26 @@ levels stay statistically consistent. Level 1 therefore reads about a canopy
 above an area mean, by design.
 
 **Dither** (`--dither`) applies ±1 level TPDF noise, deterministic in
-`(seed, chunk coordinate)`. Off by default; see
-[python/codec-eval](../../python/codec-eval/README.md) for why it is a flag and
-not a decision.
+`(seed, chunk coordinate)`, and costs +1.8% in size (74.18 MiB against
+72.85 MiB on SU42).
+
+Whether it earns that depends entirely on the contour interval, which the
+statistics in [python/codec-eval](../../python/codec-eval/README.md) could not
+have told us:
+
+| Contour interval | Quantisation steps per contour | Visible difference |
+|------------------|-------------------------------|--------------------|
+| 2 m (typical) | ~93 | none — the two renders are indistinguishable |
+| 0.1 m | ~5 | large — undithered contours break into axis-aligned staircase segments; dithered stay smooth curves |
+
+So it is still a flag, but the rule is now concrete: **off for normal use**,
+on if fine-interval contours are wanted. The undithered store is the default
+because at 2–5 m intervals the +1.8% buys nothing visible.
+
+Worth knowing that the artefact is in the *contours*, not the shading. Shaded
+relief over open farmland shows no terracing at the 21.5 mm step at any camera
+tried; it is the contour shader, differentiating the height field, that turns a
+sub-visible height step into a visible line.
 
 **Result on SU42** — 100 leaf chunks, 5 levels:
 
@@ -189,8 +206,9 @@ pyramid level looks entirely plausible on its own.
   1 km height tile spans ~100–200 m and 16 bits fits that far better than
   float32 with an exponent range zfp cannot exploit. HTJ2K stays, which also
   keeps the codestream's wavelet subbands available for analysis.
-- **Dither on or off** — built as a flag; wants looking at in the renderer
-  rather than another statistic.
+- **Dither** is settled for normal use (off) — see above. What is not settled is
+  whether fine-interval contours are a mode worth supporting, since that is the
+  only case where it pays.
 - **Browser loader** — nothing in `src/` reads either store yet.
   `zarrextra/workers` + `@fideus-labs/fizarrita` is the intended path.
 - **National run** — only SU42 has been through either pass.
