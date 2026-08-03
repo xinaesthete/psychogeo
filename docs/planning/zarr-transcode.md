@@ -347,6 +347,54 @@ Selecting a channel needs no new syntax, because a group carrying
 /terra-cognita.zarr/height.dsm.fz/zarr.json   that channel, no root fetch
 ```
 
+### Hosting
+
+What the store is, as a hosting problem:
+
+| | |
+|---|---|
+| Objects | 1,655 |
+| Total | 74.58 GiB |
+| Level-0 shards | 1,503, mean 46.4 MiB, max 88.3 MiB |
+| Largest object | 97.2 MiB (a level-1 shard) |
+| Per level-0 chunk | ~499 KiB |
+| Whole shard-index layer | 2.4 MiB |
+
+**Range requests are not optional.** Reading one chunk is a suffix request for
+the shard index (`bytes=-1604`) and then a ranged read inside the shard. A host
+that does not serve `Range` on static objects cannot serve this store at all,
+and one that does not serve *suffix* ranges cannot either. `express.static`
+does both, which is what the local dev proxy relies on. CORS is needed if the
+store is not same-origin.
+
+Object count and size rule out the git-adjacent options — GitHub Pages and
+Releases, Netlify, Vercel — on size before anything else.
+
+**Storage is nothing; egress is the bill.** 75 GiB costs a couple of pounds a
+month anywhere. A user flying around at 1 m pulls tens of MiB per view, and
+that is the number that scales with interest. So the choice is mostly about the
+egress model: **Cloudflare R2** (zero egress, S3 API) or **Backblaze B2 behind
+Cloudflare** (free egress via the Bandwidth Alliance) if traffic is
+unpredictable; **S3 + CloudFront** if per-byte billing is acceptable;
+**Source Cooperative** if the data can be public, since it exists for exactly
+this shape of open geospatial data; a plain box running **nginx** if flat-rate
+bandwidth and full control are preferred. Verify pricing directly — it moves.
+
+**The gotcha to test first.** Several CDNs satisfy a range request by fetching
+and caching the *whole* object, and cap the size of object they will cache. At
+46–97 MiB per shard this store may sit near or above that cap, which would turn
+every chunk read into an origin fetch and quietly undo the caching. Test one
+real level-0 shard against the chosen CDN before committing to it.
+
+Everything here is write-once, so `Cache-Control: public, max-age=31536000,
+immutable` is honest.
+
+**The cheap win.** The entire shard-index layer — every `bytes=-1604` suffix
+read in the store — is **2.4 MiB nationally**. Bundling those into one sidecar
+would remove ~1,500 cold round trips and shorten first paint over a
+high-latency origin considerably. That is a better lever than switching
+`index_location` to `start`, and it leaves the 74 GiB of chunk data untouched.
+
 ### The streaming writer
 
 The open question was whether the shard-at-a-time rewrite still produced the
@@ -376,24 +424,17 @@ without reading it.
 - **Dither** is settled for normal use (off) — see above. What is not settled is
   whether fine-interval contours are a mode worth supporting, since that is the
   only case where it pays.
-- **A tile that fails to load is never retried.** Found by pointing the app at
-  the national store: four level-0 tiles in one shard came up `error` and left
-  black holes that stayed put — the LOD descent kept resolving them, so they
-  were never re-requested. Nothing was wrong with the data. Every range
-  request returned 206, the shard's 100 codestreams all decode in node, and
-  `refetchTile` on the four keys cleared them immediately. So the failure is
-  transient and downstream of the fetch, it is swallowed without reaching the
-  console, and there is no retry to recover from it. Unrelated to zarr — the
-  v2 path shares the loader — but a zarr store makes it easier to hit, since
-  many chunks arrive as ranges over one object.
+- **Why a load fails in the first place.** Retrying recovers it, but nothing
+  yet says what the transient failure *is*. A terminal failure now warns with
+  the URL, so the next occurrence should name itself.
 - **Whether a refined chunk should keep its ancestor.** `descend()` replaces a
   coarse chunk with its children outright, on the reasoning that a sparse
   pyramid should show a hole rather than two levels fighting for the same
   ground. The tree's retained pool and coverage mask cover the case where the
   coarse tile was already drawn, but not a camera jump into cold ground. No
-  artefact was traced to this in a national session — the holes that looked
-  like it were the retry bug above — so it stays a design question rather than
-  a known defect.
+  artefact has been traced to this — the holes that looked like it were the
+  retry bug, and the coarse-over-fine that looked like it was the mask
+  resolution — so it stays a design question rather than a known defect.
 - **Parallelise the codec.** Deferred rather than blocking: the serial national
   run took 2 h 43 min at ~170% CPU on a 12-core machine, and every millisecond
   of it is openjph, so a `worker_threads` pool should take it to well under an
