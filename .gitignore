@@ -22,6 +22,11 @@ scripts/pipelines/defra-terrain/dist
 rust/shp_processor_wasm/pkg
 rust/shp_processor_wasm/target
 
+# python subpackages (uv)
+.venv
+__pycache__
+*.egg-info
+
 npm-debug.log*
 pnpm-debug.log*
 yarn-debug.log*

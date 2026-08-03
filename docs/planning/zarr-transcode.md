@@ -127,10 +127,17 @@ anything. A 400× separation is.
 
 ## Open
 
-- **zfp** as a second codec to prototype. It compresses floats directly, so it
-  would delete the `encoding/` companion arrays rather than work around them —
-  the per-chunk normalisation exists only because uint16 needs a range. Cost is
-  the HTJ2K investment and the compression experiment's subject.
+- **zfp was prototyped and lost** — see [python/codec-eval](../../python/codec-eval/README.md).
+  At matched error it is 30–40% larger than uint16 + lossless J2K, because a
+  1 km height tile spans ~100–200 m and 16 bits fits that far better than
+  float32 with an exponent range zfp cannot exploit. HTJ2K stays, which also
+  keeps the codestream's wavelet subbands available for analysis.
+- **Global normalisation is the interesting result.** One national scale/offset
+  instead of per-chunk makes files **31–44% smaller** while deleting the
+  `encoding/` arrays, because a 1.4 mm per-chunk step spends most of its bits
+  encoding sensor noise — DEFRA LIDAR is accurate to ~±150 mm. A national step
+  of ~21 mm is still an order of magnitude inside that. Needs a re-encode from
+  the source TIFFs, so it belongs with a full transcode rather than this repack.
 - **Browser loader** — nothing in `src/` reads the store yet. `zarrextra/workers`
   + `@fideus-labs/fizarrita` is the intended path for off-main-thread decode.
 - **National run** — only SU42 has been transcoded. 144 GB at I/O speed.
