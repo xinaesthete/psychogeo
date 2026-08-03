@@ -24,7 +24,10 @@ export default defineConfig({
     },
   },
   server: {
-    port: 3000,
+    // 3000 unless the launcher assigns one. `dev.mjs` pins the proxy to 8082
+    // explicitly for this reason, so an inherited PORT reaches Vite and only
+    // Vite.
+    port: Number(process.env.PORT) || 3000,
     strictPort: true,
     proxy: {
       '/tile': 'http://localhost:8082',
