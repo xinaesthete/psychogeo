@@ -17,6 +17,8 @@ Two goals, in order:
    which 150,474 are `.j2c` and 8,772 are `manifest.json`. A full directory walk
    takes 134 s. Every one of those files is an object to host, an HTTP request
    to make, and an allocation unit to waste.
+
+   Settled: the renormalised national store is **1,655 objects / 74.58 GiB**.
 2. **Somewhere to put the other channels.** DTM, an FZ−LZ foliage measure and
    temporal survey years are all coming. Adding each as another bespoke
    directory tree multiplies the problem above; adding each as another array in
@@ -268,6 +270,50 @@ was no error to find. It now picks the largest leaf across the node's quads
 and reports `NOT TESTED` rather than `OK` when nothing overlaps. A check that
 cannot fail is worse than no check, because it reads as evidence.
 
+### The national store
+
+Built from the archive in place, serial, no dither:
+
+```bash
+pnpm pipeline:defra -- renormalise-zarr \
+  --dataset /Volumes/CrucialOx9/terra-cognita-winchester.zip \
+  --out /Volumes/CrucialOx9/terra-cognita.zarr --progress
+```
+
+| Level | Res | Chunks | Objects | Size |
+|-------|-----|--------|---------|------|
+| 0 | 1 m | 143,185 | 1,503 | 68.14 GiB |
+| 1 | 4 m | 9,232 | 119 | 5.92 GiB |
+| 2 | 16 m | 641 | 16 | 492.23 MiB |
+| 3 | 64 m | 59 | 3 | 35.98 MiB |
+| 4 | 256 m | 7 | 7 | 2.63 MiB |
+
+**74.58 GiB in 1,655 objects, from 141.12 GiB of level-0 source — 47.2%
+smaller.** Pyramid overhead is 9.4%. 2 h 43 min after the scan, on one thread.
+
+That is the file-count goal met: **160,750 files becomes 1,655**, a 97×
+reduction, and on this volume's 1 MiB allocation unit the 239 GiB an extracted
+tree would occupy becomes 76 GiB. Level 0 comes out at exactly one shard per
+OSGB 10 km cell — 1,503 of them, matching the 1,503 cells in the source.
+
+The dataset is not the Winchester of its name: 143,185 level-0 tiles across 26
+hundred-km squares, `NT` and `NU` among them, so the store already reaches the
+Scottish border. Sizing the arrays to the whole sheet rather than the ingested
+extent is doing real work here.
+
+Verified at three widely separated cells, against source chunks extracted from
+the archive:
+
+| Cell | Samples | Heights | Orientation | Level 1 alignment |
+|------|---------|---------|-------------|-------------------|
+| SU42 Hampshire | 1,000,000 | max 10.76 mm, rms 6.21 mm (bound 11.32) | 2.752 m vs 11.868 m | (0,0) 5.543 m vs 13.845 m |
+| NT60 Borders | 1,000,000 | max 10.78 mm, rms 6.21 mm (bound 11.11) | 0.131 m vs 7.249 m | (0,0) 0.231 m vs 14.925 m |
+| SY08 Dorset | 1,000,000 | max 10.76 mm, rms 6.21 mm (bound 11.26) | 3.084 m vs 31.193 m | (0,0) 3.926 m vs 23.011 m |
+
+The same 6.21 mm rms in all three is the point of renormalising to one national
+scale: the error is now a property of the encoding rather than of whatever
+range a particular chunk happened to span.
+
 ### The streaming writer
 
 The open question was whether the shard-at-a-time rewrite still produced the
@@ -297,24 +343,30 @@ without reading it.
 - **Dither** is settled for normal use (off) — see above. What is not settled is
   whether fine-interval contours are a mode worth supporting, since that is the
   only case where it pays.
-- **Browser loader** — nothing in `src/` reads either store yet.
+- **Browser loader** — the next thing to do, and now the only thing between
+  this store and using it. Nothing in `src/` reads either store yet;
   `zarrextra/workers` + `@fideus-labs/fizarrita` is the intended path for
-  off-main-thread decode.
-- **Parallelise the codec.** Deferred rather than blocking, now that a serial
-  national run is ~3 h rather than a day. The pass sits at ~170% CPU on a
-  12-core machine and every millisecond of it is openjph, so a
-  `worker_threads` pool should take it to well under an hour. That matters
-  once DTM, the FZ−LZ foliage measure and the survey years each want a run of
-  their own.
+  off-main-thread decode. The national store is the one to point it at.
+- **Parallelise the codec.** Deferred rather than blocking: the serial national
+  run took 2 h 43 min at ~170% CPU on a 12-core machine, and every millisecond
+  of it is openjph, so a `worker_threads` pool should take it to well under an
+  hour. That matters once DTM, the FZ−LZ foliage measure and the survey years
+  each want a run of their own — this pass is going to be run several more
+  times, not once.
+- **The other channels.** The store has one array group and the layout was
+  chosen so DTM, foliage and survey years become siblings rather than parallel
+  directory trees. Nothing has tested that claim yet; the second channel is
+  what will.
 - **Nodata** is still the reserved raw 0 rather than a real sentinel; only a
   re-encode from the source TIFFs could change that.
 - **Which store wins.** The repack and the renormalisation both exist; if the
   renormalised one holds up in the viewer there is little reason to keep the
   repack beyond its value as a byte-identity reference.
 - **AppleDouble sidecars.** macOS writes a `._` file beside every object
-  written to exFAT, which doubles the store's file count and costs a 1 MiB
-  allocation unit each. `dot_clean` removes them; a store destined for object
-  hosting should not carry them.
+  written to exFAT. The national run accumulated 1,759 of them against 1,655
+  real objects, each costing a 1 MiB allocation unit. `dot_clean -m <store>`
+  clears them in about a second and has been run; anything that copies the
+  store onward should run it again.
 - **Retiring the bespoke index** was not a goal of this pass, so
   `metadata.json` and the 8,772 node manifests remain the source of truth.
   Most of what `derive.ts` computes is chunk-key arithmetic in this layout.
