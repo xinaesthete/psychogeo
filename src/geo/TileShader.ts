@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import { globalUniforms } from '../threact/threact';
 import { glsl } from '../threact/threexample';
 import { advanceCompressionTransitions, ensureCompressionShaderUniforms } from './compressionExperiment';
+import { advanceContourPhases, contourFragmentGlsl, ensureContourUniforms } from './contourSets';
 import {
     emptyCoverageMaskTexture,
     installTileShaderModule,
@@ -24,16 +25,15 @@ function ensureUniform(
 
 /** Add missing keys only — preserves Leva tweaks and contourPhase across HMR. */
 function ensureUniforms(shared: Record<string, THREE.IUniform>): void {
-    ensureUniform(shared, 'contourPhase', () => ({ value: 0 }));
-    ensureUniform(shared, 'contourSpeed', () => ({ value: 3.0 }));
-    ensureUniform(shared, 'contourInterval', () => ({ value: 5.0 }));
-    ensureUniform(shared, 'contourEmissive', () => ({ value: new THREE.Vector3(0.3, 0.5, 0.7) }));
-    ensureUniform(shared, 'majorContourInterval', () => ({ value: 10.0 }));
-    ensureUniform(shared, 'majorContourEmissive', () => ({ value: new THREE.Vector3(0.8, 0.5, 0.7) }));
+    ensureContourUniforms(shared);
+    // Half-float terms by default: tiles that upload lossless codes override
+    // both per-tile. Materials with no height texture of their own never reach
+    // the contour path, so the values only need to be valid, not right.
+    ensureUniform(shared, 'heightQuantumAbs', () => ({ value: 0 }));
+    ensureUniform(shared, 'heightQuantumRel', () => ({ value: 2 ** -11 }));
     ensureUniform(shared, 'heightEmissiveScale', () => ({ value: 0 / 2000 }));
     ensureUniform(shared, 'lodSat', () => ({ value: 0.8 }));
     ensureUniform(shared, 'lodVal', () => ({ value: 0.0 }));
-    ensureUniform(shared, 'contourStrength', () => ({ value: 0.3 }));
     // Defaults so every patched material has a valid sampler; tiles that can
     // act as fallbacks override both with their own per-tile uniforms.
     ensureUniform(shared, 'coverageMask', () => ({ value: emptyCoverageMaskTexture() }));
@@ -42,11 +42,7 @@ function ensureUniforms(shared: Record<string, THREE.IUniform>): void {
 }
 
 function updateFrame({ uniforms, dt }: TileShaderFrameContext): void {
-    const phase = uniforms.contourPhase;
-    const speed = uniforms.contourSpeed;
-    if (phase && speed) {
-        phase.value += speed.value * dt;
-    }
+    advanceContourPhases(uniforms, dt);
     advanceCompressionTransitions(dt);
 }
 
@@ -196,6 +192,48 @@ const heightSamplingGlsl = glsl`
     }
 `;
 
+/**
+ * How the height field's own resolution limits reach the contour code.
+ * Exported so it can be exercised against a synthetic quantised heightfield
+ * without standing up a tile — see the contour probes.
+ */
+export const heightDerivativeGlsl = glsl`
+    /**
+     * Elevation change per pixel, in metres, differenced over a texel-wide
+     * stencil.
+     *
+     * dFdx(getHeight(vUv)) looks like the same thing and is not. The height
+     * field is a half float and the hardware rounds each filtered sample back
+     * to half precision, so on gentle ground the height reaches the fragment as
+     * a staircase whose treads are several pixels wide. Its screen-space
+     * derivative is then zero across a tread and a spike at the riser between
+     * two — useless for sizing anything, and the reason contours drawn at that
+     * width broke into rows of separate marks. Differencing whole texels steps
+     * over the quantisation; vUv is a plain varying, so its own derivative is
+     * exact.
+     */
+    float heightSlopePerPixel(vec2 uv) {
+        vec2 texel = 1. / vec2(textureSize(heightFeild, 0));
+        float du = getHeight(uv + vec2(texel.x, 0.)) - getHeight(uv - vec2(texel.x, 0.));
+        float dv = getHeight(uv + vec2(0., texel.y)) - getHeight(uv - vec2(0., texel.y));
+        vec2 gradUv = vec2(du, dv) / (2. * texel); // metres per unit uv
+        return length(vec2(dot(gradUv, dFdx(uv)), dot(gradUv, dFdy(uv))));
+    }
+
+    /**
+     * The step the height arrives quantised to, in metres.
+     *
+     * R16 unorm carries the ingest's 16-bit codes untouched, so the step is a
+     * constant fraction of the tile's range — all in the absolute term. A half
+     * float loses the bottom 5 bits of the code and loses more the larger the
+     * value, so its step scales with height above the tile's floor: ~1mm near
+     * the bottom of a 33m tile against ~16mm near the top.
+     */
+    float heightQuantum(float h) {
+        return max(heightQuantumAbs + abs(h - heightMin) * heightQuantumRel, 1e-6);
+    }
+`;
+
 const vertexPreamble = glsl`
 #define USE_UV
     uniform float iTime;
@@ -273,8 +311,7 @@ const coverageMask_fragmentChunk = glsl`
 const emissivemap_fragmentChunk = glsl`
     float h = getHeight(vUv);
     totalEmissiveRadiance.rgb += vec3(h) * heightEmissiveScale;
-    totalEmissiveRadiance.rgb += computeContour(h) * contourEmissive * contourStrength;
-    totalEmissiveRadiance.rgb += contour(h, 0., majorContourInterval) * majorContourEmissive * contourStrength;
+    totalEmissiveRadiance.rgb += contourRadiance(h, heightSlopePerPixel(vUv), heightQuantum(h));
     vec3 lodCol = vec3(LOD, lodSat, lodVal); // hue from per-tile LOD; sat/val from Leva
     totalEmissiveRadiance.rgb += hsv2rgb(lodCol);
     if (compressionEnabled > 0.5 && compressionBlendMode > 2.5) {
@@ -308,17 +345,12 @@ function patchFragmentShader(fragmentShader: string) {
     uniform sampler2D heightFeildLossyNext;
     //uniform vec2 EPS; //! don't use in fragment — fragments can be finer than the grid
     uniform float heightMin, heightMax;
+    uniform float heightQuantumAbs, heightQuantumRel;
     uniform float iTime;
     uniform float LOD;
-    uniform float contourPhase;
-    uniform float contourInterval;
-    uniform float contourStrength;
-    uniform float majorContourInterval;
     uniform float heightEmissiveScale;
     uniform float lodSat;
     uniform float lodVal;
-    uniform vec3 contourEmissive;
-    uniform vec3 majorContourEmissive;
     uniform float compressionEnabled;
     uniform float heightBlend;
     uniform float compressionWaveAmp;
@@ -375,37 +407,8 @@ function patchFragmentShader(fragmentShader: string) {
         vec3 dy = normalize(computePos(uv + vec2(0., d.y)).xyz - p);
         return normalize(cross(dx, dy)).xyz;
     }
-    float computeContour(float h) {
-        float afwidth = length(vec2(dFdx(h), dFdy(h))) * 0.70710678118654757;
-        // contourPhase advanced in JS from contourSpeed; interval from Leva
-        h = mod(h + contourPhase, contourInterval) / contourInterval;
-        float sm = 0.2*afwidth;
-        h = max(smoothstep(1.-sm, 1.0, h), smoothstep(sm, 0., h));
-        return h;
-    }
-    float contour(in float h, float speed, float interval) {
-        float afwidth = length(vec2(dFdx(h), dFdy(h))) * 0.70710678118654757;
-        float t = iTime*speed*interval;
-        float c = h = mod(h+t, interval)/interval;
-        float sm = .2*afwidth;
-        c = mod(c, interval);
-        c = max(smoothstep(1.-sm, 1.0, c), smoothstep(sm, 0., c));
-        return c;
-    }
-    float fallOff(in float h, float interval) {
-        float c = mod(h, interval)/interval;
-        return 1.-c;
-    }
-    float contour(in float h, float speed, float interval, float majorInterval, float falloff) {
-        float afwidth = length(vec2(dFdx(h), dFdy(h))) * 0.70710678118654757;
-        float t = iTime*speed*interval;
-        float c = mod(h+t, interval)/interval;
-        float sm = afwidth;
-        float fall = fallOff(h, majorInterval);
-        c = max(smoothstep(1.-sm, 1.0, c), smoothstep(sm, 0., c));
-        c *= max(0.,1.-fall*falloff);
-        return c;
-    }
+    ${heightDerivativeGlsl}
+    ${contourFragmentGlsl}
     // Good for surfacing artefacts; vNormal undefined in depth/distance passes if copied blindly
     float computeSteepness() {
         float h = getHeight(vUv);

@@ -10,6 +10,7 @@ import {
   chunkKey,
   type PyramidCatalogResolver,
 } from './pyramidCatalog';
+import { HEIGHT_CODE_MAX } from './heightTextureFormat';
 import { finestLeafLevel } from './pyramidDerive';
 import type { ChunkFetchDescriptor, EncodingScalars } from './pyramidTypes';
 import {
@@ -110,8 +111,9 @@ function encodingHeightMin(encoding: EncodingScalars): number {
   return encoding.offset;
 }
 
+/** See pyramidCatalog: codes run to HEIGHT_CODE_MAX, and both formats normalise by it. */
 function encodingHeightMax(encoding: EncodingScalars): number {
-  return encoding.offset + encoding.scale * 65536;
+  return encoding.offset + encoding.scale * HEIGHT_CODE_MAX;
 }
 
 function gridStepForLevel(level: number, resolver: PyramidCatalogResolver): number {

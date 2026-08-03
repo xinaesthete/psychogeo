@@ -7,6 +7,11 @@ import {
   type CompressionTileHandle,
 } from './compressionExperiment';
 import { GeoLOD } from './GeoLod';
+import {
+  HEIGHT_CODE_MAX,
+  heightQuantumTerms,
+  type HeightTextureFormat,
+} from './heightTextureFormat';
 import type { EncodingScalars } from './pyramidTypes';
 import {
   getTileLodGeometry,
@@ -34,8 +39,13 @@ function encodingHeightMin(encoding: EncodingScalars): number {
   return encoding.offset;
 }
 
+/** See pyramidCatalog: codes run to HEIGHT_CODE_MAX, and both formats normalise by it. */
 function encodingHeightMax(encoding: EncodingScalars): number {
-  return encoding.offset + encoding.scale * 65536;
+  return encoding.offset + encoding.scale * HEIGHT_CODE_MAX;
+}
+
+function textureHeightFormat(texture: THREE.Texture): HeightTextureFormat {
+  return texture.userData.heightTextureFormat === 'r16' ? 'r16' : 'half';
 }
 
 function textureWidthOf(texture: THREE.Texture): number | undefined {
@@ -87,11 +97,18 @@ export function buildGeoLodMesh(
   const coverageMask: THREE.IUniform = { value: emptyCoverageMaskTexture() };
   const coverageMaskEnabled: THREE.IUniform = { value: 0 };
 
+  // How coarsely height reaches the fragment shader, which decides how thin a
+  // contour line can honestly be drawn. Fixed point is uniform over the range,
+  // a half float's step grows with the value; see heightTextureFormat.
+  const quantum = heightQuantumTerms(textureHeightFormat(texture), heightMin, heightMax);
+
   for (const level of levels) {
     const uniforms: TileUniformBag = {
       heightFeild: { value: texture },
       heightMin: { value: heightMin },
       heightMax: { value: heightMax },
+      heightQuantumAbs: { value: quantum.abs },
+      heightQuantumRel: { value: quantum.rel },
       ...tileLodUniforms(level),
       uvTransform: { value: new THREE.Matrix3() },
       iTime: globalUniforms.iTime,

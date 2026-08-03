@@ -1,5 +1,13 @@
-import { useControls } from 'leva';
+import { folder, useControls } from 'leva';
+import type { Schema } from 'leva/plugin';
 import * as THREE from 'three';
+import {
+  CONTOUR_SET_COUNT,
+  CONTOUR_SET_DEFAULTS,
+  readContourColour,
+  readContourNumber,
+  writeContourNumber,
+} from './contourSets';
 import { tileShaderUniforms } from './tileShaderRuntime';
 
 function vec3ToColor(v: THREE.Vector3): string {
@@ -11,51 +19,92 @@ function setVec3FromColor(v: THREE.Vector3, hex: string): void {
   v.set(c.r, c.g, c.b);
 }
 
-/**
- * Leva panel for shared terrain shader uniforms (live, no recompile).
- */
-export function TileShaderControls() {
-  const u = tileShaderUniforms;
-  const contourEmissive = u.contourEmissive.value;
-  const majorContourEmissive = u.majorContourEmissive.value;
+type SliderSpec = { key: string; label: string; min: number; max: number; step: number };
 
-  useControls('Terrain shader', {
-    contourSpeed: {
-      value: u.contourSpeed.value,
-      min: 0,
-      max: 20,
-      step: 0.1,
+/**
+ * Per-set contour controls. Every set is independent: give two of them
+ * different speeds and they slide through each other, which is the interference
+ * look rather than a fault to be locked out.
+ */
+const CONTOUR_SLIDERS: SliderSpec[] = [
+  { key: 'contourGain', label: 'gain', min: 0, max: 2, step: 0.01 },
+  // 0 is a meaningful interval — one line, at the anchor.
+  { key: 'contourInterval', label: 'interval (m)', min: 0, max: 200, step: 0.5 },
+  { key: 'contourAnchor', label: 'anchor (m)', min: -100, max: 1400, step: 0.5 },
+  { key: 'contourSpeed', label: 'speed (m/s)', min: -20, max: 20, step: 0.1 },
+  { key: 'contourWidthPx', label: 'width (px)', min: 0, max: 12, step: 0.1 },
+  { key: 'contourFalloff', label: 'falloff (m)', min: 0, max: 100, step: 0.5 },
+  // Two ends of the same thing: lines too crowded to separate, and lines whose
+  // own position the height field cannot pin down.
+  { key: 'contourFadeCrowded', label: 'fade crowded', min: 0, max: 1, step: 0.01 },
+  { key: 'contourFadeFlat', label: 'fade flat', min: 0, max: 1, step: 0.01 },
+];
+
+function contourSetSchema(index: number): Schema {
+  const u = tileShaderUniforms;
+  const schema: Schema = {};
+  // Leva needs keys unique across the whole store, folders included, so the
+  // set index goes in the key and the readable name in the label.
+  for (const spec of CONTOUR_SLIDERS) {
+    schema[`${spec.key}${index}`] = {
+      value: readContourNumber(u, spec.key, index),
+      label: spec.label,
+      min: spec.min,
+      max: spec.max,
+      step: spec.step,
       onChange: (v: number) => {
-        u.contourSpeed.value = v;
+        writeContourNumber(u, spec.key, index, v);
       },
+    };
+  }
+  schema[`contourFollowPick${index}`] = {
+    value: readContourNumber(u, 'contourFollowPick', index) > 0,
+    label: 'follow pick',
+    onChange: (v: boolean) => {
+      writeContourNumber(u, 'contourFollowPick', index, v ? 1 : 0);
     },
-    contourInterval: {
-      value: u.contourInterval.value,
-      min: 0.5,
-      max: 50,
-      step: 0.5,
-      onChange: (v: number) => {
-        u.contourInterval.value = v;
+  };
+  const colour = readContourColour(u, index);
+  if (colour) {
+    schema[`contourEmissive${index}`] = {
+      value: vec3ToColor(colour),
+      label: 'colour',
+      onChange: (hex: string) => {
+        setVec3FromColor(colour, hex);
       },
-    },
-    majorContourInterval: {
-      value: u.majorContourInterval.value,
-      min: 1,
-      max: 100,
-      step: 0.5,
-      onChange: (v: number) => {
-        u.majorContourInterval.value = v;
-      },
-    },
+    };
+  }
+  return schema;
+}
+
+function contourSchema(): Schema {
+  const u = tileShaderUniforms;
+  const schema: Schema = {
     contourStrength: {
       value: u.contourStrength.value,
       min: 0,
       max: 1,
       step: 0.01,
+      label: 'strength (all)',
       onChange: (v: number) => {
         u.contourStrength.value = v;
       },
     },
+  };
+  for (let i = 0; i < CONTOUR_SET_COUNT; i++) {
+    const label = CONTOUR_SET_DEFAULTS[i]?.label ?? `set ${i}`;
+    schema[`${i} ${label}`] = folder(contourSetSchema(i), { collapsed: i > 1 });
+  }
+  return schema;
+}
+
+/**
+ * Leva panel for shared terrain shader uniforms (live, no recompile).
+ */
+export function TileShaderControls() {
+  const u = tileShaderUniforms;
+
+  useControls('Terrain shader', {
     heightEmissiveScale: {
       value: u.heightEmissiveScale.value,
       min: 0,
@@ -84,19 +133,9 @@ export function TileShaderControls() {
         u.lodVal.value = v;
       },
     },
-    contourEmissive: {
-      value: vec3ToColor(contourEmissive),
-      onChange: (hex: string) => {
-        setVec3FromColor(contourEmissive, hex);
-      },
-    },
-    majorContourEmissive: {
-      value: vec3ToColor(majorContourEmissive),
-      onChange: (hex: string) => {
-        setVec3FromColor(majorContourEmissive, hex);
-      },
-    },
   });
+
+  useControls('Contours', contourSchema);
 
   return null;
 }

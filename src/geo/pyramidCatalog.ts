@@ -1,5 +1,6 @@
 import type * as THREE from 'three';
 import { mapWithConcurrency } from '../util/concurrency';
+import { HEIGHT_CODE_MAX } from './heightTextureFormat';
 import type { DsmCatItem } from './TileLoaderUK';
 import {
   cameraDistanceToExtent,
@@ -110,8 +111,14 @@ function encodingHeightMin(encoding: EncodingScalars): number {
   return encoding.offset;
 }
 
+/**
+ * Top of the encoded range. Ingest writes `height = offset + code * scale` with
+ * codes up to HEIGHT_CODE_MAX, so this is the true maximum height — and it is
+ * what keeps the shader exact, since it reconstructs `heightMin + h * range`
+ * from a sample both texture formats normalise by that same code maximum.
+ */
 function encodingHeightMax(encoding: EncodingScalars): number {
-  return encoding.offset + encoding.scale * 65536;
+  return encoding.offset + encoding.scale * HEIGHT_CODE_MAX;
 }
 
 export function chunkToDsmCatItem(descriptor: ChunkFetchDescriptor): DsmCatItem {

@@ -27,6 +27,8 @@ import {
 } from './tileShaderRuntime';
 import { loadGpxGeometry } from './TrackVis';
 import { syncCompressionExperiment } from './compressionExperiment';
+import { setContourPickElevation } from './contourSets';
+import { configureHeightTextureFormat } from './heightTextureFormat';
 import {
     collectGeoLodDebugSnapshot,
     geoLodShadowStateKey,
@@ -848,6 +850,9 @@ export class TerrainRenderer extends ThreactTrackballBase {
         marker.poleMaterial.color.setHex(colour);
         marker.group.position.copy(point);
         marker.group.visible = true;
+        // World Z is metres above datum, the same scale the contour shader
+        // works in, so a follow-pick set can take it straight as its anchor.
+        setContourPickElevation(point.z);
         this.lastPivotMarkerSource = source;
         this.updatePivotMarkerScale();
     }
@@ -1164,6 +1169,10 @@ export class TerrainRenderer extends ThreactTrackballBase {
     }
 
     render(renderer: THREE.WebGLRenderer) {
+        // Before anything can upload a height chunk: the R16 path needs its
+        // extension enabled on this context, and three needs to be able to
+        // name the internal format.
+        configureHeightTextureFormat(renderer);
         this.syncTerrainDebugGlobal();
         this.mapCtrl?.setWorldPickProvider((clientX, clientY) =>
             this.pickTerrainWorldAtClient(renderer, clientX, clientY),

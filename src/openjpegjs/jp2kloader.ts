@@ -9,6 +9,11 @@
  */
 
 import * as THREE from 'three'
+import {
+  applyHeightTextureFormat,
+  heightTextureFormat,
+  type HeightTextureFormat,
+} from '../geo/heightTextureFormat';
 import { TimingStats, type TimingSnapshot } from '../util/timingStats';
 import { TextureLruCache } from './textureLruCache';
 import { WorkerPool, defaultDecodeWorkerCount } from './workerPool';
@@ -97,6 +102,8 @@ export interface PixFrame {
 export interface TexFrame {
   frameInfo: FrameInfo;
   texData: Uint16Array;
+  /** How texData is encoded; absent means half float, as it always used to be. */
+  texFormat?: HeightTextureFormat;
   recodeStats?: RecodeStats;
   heightRange?: HeightRange;
 }
@@ -243,8 +250,11 @@ async function getTexData(
     };
 
     const workerUrl = workerHeightUrl(url);
-    if (compressionRatio === 1) worker.postMessage({ cmd: 'tex', url: workerUrl, fullFloat });
-    else worker.postMessage({ cmd: 'recode', url: workerUrl, compressionRatio, fullFloat, heightRangeMetres });
+    if (compressionRatio === 1) {
+      worker.postMessage({ cmd: 'tex', url: workerUrl, fullFloat, texFormat: heightTextureFormat() });
+    } else {
+      worker.postMessage({ cmd: 'recode', url: workerUrl, compressionRatio, fullFloat, heightRangeMetres });
+    }
   });
   return promise;
 }
@@ -252,8 +262,9 @@ async function getTexData(
 function texFrameToTexture(result: TexFrame): TextureTile {
   const { frameInfo, recodeStats, heightRange } = result;
   const format = THREE.RedFormat;
-  const type = THREE.HalfFloatType;
-  const texture = new THREE.DataTexture(result.texData, frameInfo.width, frameInfo.height, format, type);
+  const texture = new THREE.DataTexture(result.texData, frameInfo.width, frameInfo.height, format);
+  applyHeightTextureFormat(texture, result.texFormat ?? 'half');
+  texture.userData.heightTextureFormat = result.texFormat ?? 'half';
   texture.minFilter = texture.magFilter = THREE.LinearFilter;
   texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
   texture.flipY = false;

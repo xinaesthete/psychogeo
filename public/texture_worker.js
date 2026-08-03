@@ -277,10 +277,31 @@ async function decodeTexToRGB(url) {
     return { texData: splitData, frameInfo: frameInfo };
 }
 
-async function decodeTex(url, fullFloat) {
+/**
+ * Highest code the ingest emits: `height = offset + code * scale`, codes 1…65535
+ * (see scripts/pipelines/defra-terrain/encoding.ts). Normalising by this rather
+ * than 65536 is what makes `code / HEIGHT_CODE_MAX` reconstruct exactly, and it
+ * matches how GL normalises a unorm texture.
+ */
+const HEIGHT_CODE_MAX = 65535;
+
+/**
+ * Codes straight through, for upload as R16 unorm. Nothing is lost: the codec
+ * decodes 16-bit codes and the texture stores 16-bit codes. The half-float
+ * branch below is the lossy fallback — 11 bits of mantissa against 16 bits of
+ * code, worse the higher the value sits in the tile's range.
+ */
+async function decodeTex(url, texFormat) {
     const { pixelData, frameInfo } = await decodeFromURL(url);
-    const texData = pixelData.map(v => toHalf(v / (1 << 16)));
-    return { texData, frameInfo };
+    const texData = new Uint16Array(pixelData.length);
+    if (texFormat === 'r16') {
+        for (let i = 0; i < pixelData.length; i++) texData[i] = normSampleU16(pixelData, i);
+    } else {
+        for (let i = 0; i < pixelData.length; i++) {
+            texData[i] = toHalf(normSampleU16(pixelData, i) / HEIGHT_CODE_MAX);
+        }
+    }
+    return { texData, frameInfo, texFormat: texFormat === 'r16' ? 'r16' : 'half' };
 }
 
 function computeHeightError(full, lossy) {
@@ -398,6 +419,7 @@ async function recode(url, q, heightRangeMetres) {
         return {
             texData,
             frameInfo: outFrameInfo,
+            texFormat: 'half',
             recodeStats: {
                 quality: q,
                 sourceBytes,
@@ -420,10 +442,16 @@ async function recode(url, q, heightRangeMetres) {
     const encodedBytes = encoded.byteLength;
     const recoded = (await decodeData(encoded)).pixelData;
     const heightError = computeHeightError(fullSamples, recoded);
-    const texData = recoded.map(v => toHalf(v / (1 << 16)));
+    // Half float regardless of what the reference chunk uploaded as: this is the
+    // compression experiment's comparison texture, not the terrain of record.
+    const texData = new Uint16Array(recoded.length);
+    for (let i = 0; i < recoded.length; i++) {
+        texData[i] = toHalf(normSampleU16(recoded, i) / HEIGHT_CODE_MAX);
+    }
     return {
         texData,
         frameInfo,
+        texFormat: 'half',
         recodeStats: {
             quality: q,
             sourceBytes,
@@ -472,7 +500,7 @@ onmessage = async m => {
     try {
         switch (m.data.cmd) {
             case "tex":
-                const r = await decodeTex(m.data.url, m.data.fullFloat);
+                const r = await decodeTex(m.data.url, m.data.texFormat);
                 postMessage(r, [r.texData.buffer]);
                 break;
             case "recode":
