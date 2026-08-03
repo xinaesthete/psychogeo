@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { PyramidTileNode } from './PyramidTileTree';
-import { COVERAGE_MASK_RESOLUTION } from './tileRetention';
+import { MAX_COVERAGE_MASK_RESOLUTION } from './tileRetention';
 
 const descriptor = {
   gridRef: 'SU40',
@@ -31,7 +31,7 @@ function attachMesh(node: PyramidTileNode): {
 }
 
 function fullMask(): Uint8Array {
-  const mask = new Uint8Array(COVERAGE_MASK_RESOLUTION * COVERAGE_MASK_RESOLUTION);
+  const mask = new Uint8Array(MAX_COVERAGE_MASK_RESOLUTION * MAX_COVERAGE_MASK_RESOLUTION);
   mask.fill(255);
   return mask;
 }
@@ -75,7 +75,7 @@ describe('PyramidTileNode.setCoverageMask', () => {
   it('carries the mask contents through to the bound texture', () => {
     const node = new PyramidTileNode(descriptor as never);
     const uniforms = attachMesh(node);
-    const mask = new Uint8Array(COVERAGE_MASK_RESOLUTION * COVERAGE_MASK_RESOLUTION);
+    const mask = new Uint8Array(MAX_COVERAGE_MASK_RESOLUTION * MAX_COVERAGE_MASK_RESOLUTION);
     mask[7] = 255;
     node.setCoverageMask(mask);
     const data = (uniforms.coverageMask.value as THREE.DataTexture).image.data as Uint8Array;

@@ -25,7 +25,8 @@ import { extentsIntersect } from './pyramidOsgb';
 import { chunkExtent, TileLayerManagerImpl } from './tileLayerManager';
 import {
   DEFAULT_RETAINED_BUDGET_BYTES,
-  COVERAGE_MASK_RESOLUTION,
+  coverageMaskResolution,
+  MAX_COVERAGE_MASK_RESOLUTION,
   FALLBACK_POLYGON_OFFSET_FACTOR,
   FALLBACK_POLYGON_OFFSET_UNITS,
   isPinnedTier,
@@ -269,7 +270,7 @@ export class PyramidTileNode extends THREE.Group implements TileNode {
    * Publish which parts of this tile are already covered by ready terrain.
    * Passing null clears the mask, so the whole tile draws again.
    */
-  setCoverageMask(mask: Uint8Array | null): void {
+  setCoverageMask(mask: Uint8Array | null, resolution = MAX_COVERAGE_MASK_RESOLUTION): void {
     const uniforms = (this.userData.geoLod as THREE.Object3D | undefined)?.userData
       .coverageMaskUniforms as CoverageMaskUniforms | undefined;
     if (!uniforms) return;
@@ -278,11 +279,18 @@ export class PyramidTileNode extends THREE.Group implements TileNode {
       uniforms.coverageMaskEnabled.value = 0;
       return;
     }
+    // Resolution is chosen per tile from the finest thing covering it, so a
+    // tile whose covers got smaller needs a new texture, not a reinterpreted
+    // one.
+    if (this.maskTexture && this.maskTexture.image.width !== resolution) {
+      this.maskTexture.dispose();
+      this.maskTexture = null;
+    }
     if (!this.maskTexture) {
       this.maskTexture = new THREE.DataTexture(
-        new Uint8Array(mask.length),
-        COVERAGE_MASK_RESOLUTION,
-        COVERAGE_MASK_RESOLUTION,
+        new Uint8Array(resolution * resolution),
+        resolution,
+        resolution,
         THREE.RedFormat,
         THREE.UnsignedByteType,
       );
@@ -354,7 +362,7 @@ export class PyramidTileTree {
   private retireCounter = 0;
   private lastVisibilityRevision = -1;
   private readonly maskScratch = new Uint8Array(
-    COVERAGE_MASK_RESOLUTION * COVERAGE_MASK_RESOLUTION,
+    MAX_COVERAGE_MASK_RESOLUTION * MAX_COVERAGE_MASK_RESOLUTION,
   );
   private lastBounds: ReturnType<typeof groundViewportBounds> | null = null;
   private lastQueryBounds: ReturnType<typeof groundViewportBounds> | null = null;
@@ -858,10 +866,18 @@ export class PyramidTileTree {
         target.node.setCoverageMask(null);
         continue;
       }
+      // Per tile, from the finest cover it has: a 256 km chunk covered by 1 km
+      // leaves needs 256 cells, where a 4 km one needs 4.
+      const resolution = coverageMaskResolution(target.entry.extent, finer);
+      const masked = rasteriseCoverageMask(
+        target.entry.extent,
+        finer,
+        this.maskScratch,
+        resolution,
+      );
       target.node.setCoverageMask(
-        rasteriseCoverageMask(target.entry.extent, finer, this.maskScratch)
-          ? this.maskScratch
-          : null,
+        masked ? this.maskScratch.subarray(0, resolution * resolution) : null,
+        resolution,
       );
     }
   }

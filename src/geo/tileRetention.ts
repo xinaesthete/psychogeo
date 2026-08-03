@@ -33,15 +33,52 @@ export const FALLBACK_POLYGON_OFFSET_FACTOR = 4;
 export const FALLBACK_POLYGON_OFFSET_UNITS = 16;
 
 /**
- * Mask resolution across a fallback tile, per axis.
+ * Largest mask resolution per axis, and the size the scratch buffer is cut to.
  *
- * Has to be fine enough that the smallest replacement can fill whole cells: a
- * 100 km square is replaced by 1 km leaves, so anything coarser than 100 cells
- * leaves that case unmaskable. 100 is also divisible by every tier ratio in
- * play (2, 5, 10, 20, 100), so cover edges land exactly on cell edges and the
- * mask is exact rather than approximate. 10 KB per masked tile.
+ * 256 covers the widest ratio any pyramid here reaches: the renormalised zarr
+ * store's level 4 is a 256 km chunk over 1 km leaves. 64 KB per masked tile at
+ * full size, and only tiles that span that far are given it.
  */
-export const COVERAGE_MASK_RESOLUTION = 100;
+export const MAX_COVERAGE_MASK_RESOLUTION = 256;
+
+/**
+ * Cells per axis for masking `extent` with `covers`.
+ *
+ * A cell is only masked when a cover fills it completely — under-masking shows
+ * a coarse tile through, over-masking punches a hole in one, and a hole is
+ * worse. So the resolution has to be fine enough that the *smallest* cover
+ * fills whole cells, and this derives it rather than assuming a number.
+ *
+ * A fixed 100 was right for the v2 pyramid by arithmetic accident: its top
+ * tier is 100 km over 1 km leaves, exactly 100 cells of exactly one leaf. The
+ * zarr pyramid runs 4× per level to a 256 km chunk, where 100 cells are
+ * 2.56 km each — wider than the 1 km leaves meant to cover them, so every one
+ * of them rounded away to nothing and the level-4 tile drew over ready 1 m
+ * terrain.
+ */
+export function coverageMaskResolution(
+  extent: TileExtent,
+  covers: readonly CoverageEntry[],
+  max = MAX_COVERAGE_MASK_RESOLUTION,
+): number {
+  const width = extent.eastMax - extent.eastMin;
+  const height = extent.northMax - extent.northMin;
+  let finest = Infinity;
+  for (const cover of covers) {
+    if (!cover.ready) continue;
+    finest = Math.min(
+      finest,
+      cover.extent.eastMax - cover.extent.eastMin,
+      cover.extent.northMax - cover.extent.northMin,
+    );
+  }
+  if (!Number.isFinite(finest) || finest <= 0) return 1;
+  // Ratios in a pyramid are whole numbers, so this lands on cover edges
+  // exactly; ceil only matters for a ragged extent, where erring finer keeps
+  // the full-cell rule conservative.
+  const needed = Math.ceil(Math.max(width, height) / finest);
+  return Math.min(max, Math.max(1, needed));
+}
 
 /** An active tile competing to replace retained coverage. */
 export type CoverageEntry = {
@@ -111,7 +148,7 @@ export function rasteriseCoverageMask(
   extent: TileExtent,
   covers: readonly CoverageEntry[],
   out: Uint8Array,
-  resolution = COVERAGE_MASK_RESOLUTION,
+  resolution = MAX_COVERAGE_MASK_RESOLUTION,
 ): boolean {
   out.fill(0);
   const stepEast = (extent.eastMax - extent.eastMin) / resolution;

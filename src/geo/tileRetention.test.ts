@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  COVERAGE_MASK_RESOLUTION,
+  coverageMaskResolution,
+  MAX_COVERAGE_MASK_RESOLUTION,
   isPinnedTier,
   rasteriseCoverageMask,
   retainedShouldDrop,
@@ -98,7 +99,10 @@ describe('retainedStillNeeded', () => {
 });
 
 describe('rasteriseCoverageMask', () => {
-  const R = COVERAGE_MASK_RESOLUTION;
+  // Pinned rather than defaulted: these cases are about the geometry rule —
+  // which cells a cover fills — so they fix the grid and vary the cover.
+  // Choosing the grid is coverageMaskResolution's job, tested separately.
+  const R = 100;
   const mask = () => new Uint8Array(R * R);
   const ready = (e: ReturnType<typeof extent>) => ({
     extent: e,
@@ -108,11 +112,25 @@ describe('rasteriseCoverageMask', () => {
   });
   const cellAt = (out: Uint8Array, col: number, row: number) => out[row * R + col];
 
+  it('picks a grid the finest cover can fill, and caps it', () => {
+    const leaf = (e: ReturnType<typeof extent>) => ready(e);
+    // Every zarr level, covered by 1 km leaves.
+    expect(coverageMaskResolution(extent(0, 0, 4_000), [leaf(extent(0, 0, 1_000))])).toBe(4);
+    expect(coverageMaskResolution(extent(0, 0, 64_000), [leaf(extent(0, 0, 1_000))])).toBe(64);
+    expect(coverageMaskResolution(extent(0, 0, 256_000), [leaf(extent(0, 0, 1_000))])).toBe(256);
+    // v2's 100 km square over 1 km leaves, which the old fixed 100 got right.
+    expect(coverageMaskResolution(extent(0, 0, 100_000), [leaf(extent(0, 0, 1_000))])).toBe(100);
+    // Beyond the cap the grid stops growing rather than allocating unboundedly.
+    expect(coverageMaskResolution(extent(0, 0, 1_000_000), [leaf(extent(0, 0, 1_000))])).toBe(256);
+    // Nothing ready to cover with is not a grid question.
+    expect(coverageMaskResolution(extent(0, 0, 10_000), [])).toBe(1);
+  });
+
   it('masks nothing when no cover is ready', () => {
     const out = mask();
     const covered = rasteriseCoverageMask(extent(0, 0, 10_000), [
       { extent: extent(0, 0, 5_000), ready: false, settled: false, awaited: true },
-    ], out);
+    ], out, R);
     expect(covered).toBe(false);
     expect(out.every((v) => v === 0)).toBe(true);
   });
@@ -120,7 +138,7 @@ describe('rasteriseCoverageMask', () => {
   it('masks exactly the quadrant a ready 5 km tile covers of a 10 km fallback', () => {
     const out = mask();
     // South-west quadrant: cover edges land on cell edges at this resolution.
-    expect(rasteriseCoverageMask(extent(0, 0, 10_000), [ready(extent(0, 0, 5_000))], out)).toBe(
+    expect(rasteriseCoverageMask(extent(0, 0, 10_000), [ready(extent(0, 0, 5_000))], out, R)).toBe(
       true,
     );
     expect(cellAt(out, 0, 0)).toBe(255);
@@ -146,7 +164,7 @@ describe('rasteriseCoverageMask', () => {
 
   it('aligns exactly for 1 km leaves under a 10 km fallback', () => {
     const out = mask();
-    rasteriseCoverageMask(extent(0, 0, 10_000), [ready(extent(3_000, 4_000, 1_000))], out);
+    rasteriseCoverageMask(extent(0, 0, 10_000), [ready(extent(3_000, 4_000, 1_000))], out, R);
     // 1 km is ten cells at 100 m; columns 30-39, rows 40-49.
     expect(out.reduce((n, v) => n + (v ? 1 : 0), 0)).toBe(100);
     expect(cellAt(out, 30, 40)).toBe(255);
@@ -159,7 +177,7 @@ describe('rasteriseCoverageMask', () => {
     const out = mask();
     rasteriseCoverageMask(extent(400_000, 100_000, 100_000), [
       ready(extent(430_000, 150_000, 10_000)),
-    ], out);
+    ], out, R);
     // 10 km is ten cells at 1 km; columns 30-39, rows 50-59.
     expect(out.reduce((n, v) => n + (v ? 1 : 0), 0)).toBe(100);
     expect(cellAt(out, 30, 50)).toBe(255);
@@ -176,7 +194,7 @@ describe('rasteriseCoverageMask', () => {
         leaves.push(ready(extent(470_000 + i * 1_000, 120_000 + j * 1_000, 1_000)));
       }
     }
-    expect(rasteriseCoverageMask(extent(400_000, 100_000, 100_000), leaves, out)).toBe(true);
+    expect(rasteriseCoverageMask(extent(400_000, 100_000, 100_000), leaves, out, R)).toBe(true);
     expect(out.reduce((n, v) => n + (v ? 1 : 0), 0)).toBe(25);
     expect(cellAt(out, 70, 20)).toBe(255);
     expect(cellAt(out, 74, 24)).toBe(255);
@@ -186,7 +204,7 @@ describe('rasteriseCoverageMask', () => {
   it('leaves partially covered cells drawing rather than punching a hole', () => {
     const out = mask();
     // Smaller than one 100 m cell and misaligned, so it fills nothing.
-    const covered = rasteriseCoverageMask(extent(0, 0, 10_000), [ready(extent(150, 150, 50))], out);
+    const covered = rasteriseCoverageMask(extent(0, 0, 10_000), [ready(extent(150, 150, 50))], out, R);
     expect(covered).toBe(false);
     expect(out.every((v) => v === 0)).toBe(true);
   });
@@ -194,16 +212,40 @@ describe('rasteriseCoverageMask', () => {
   it('masks only the interior cells of a cover straddling cell edges', () => {
     const out = mask();
     // Spans 150..450 m; whole cells are 200..400, i.e. columns/rows 2-3.
-    rasteriseCoverageMask(extent(0, 0, 10_000), [ready(extent(150, 150, 300))], out);
+    rasteriseCoverageMask(extent(0, 0, 10_000), [ready(extent(150, 150, 300))], out, R);
     expect(out.reduce((n, v) => n + (v ? 1 : 0), 0)).toBe(4);
     expect(cellAt(out, 2, 2)).toBe(255);
     expect(cellAt(out, 1, 2)).toBe(0);
   });
 
+  it('masks a 256 km chunk with 1 km leaves at the resolution they need', () => {
+    // The orbit bug. At a fixed 100 cells a 256 km chunk has 2.56 km cells,
+    // so a 1 km leaf fills none of one and rounds away — every cover dropped,
+    // and the level-4 tile drew over ready 1 m terrain. The v2 pyramid never
+    // showed it because its 100 km top tier put exactly one leaf per cell.
+    const tile = extent(0, 1_044_000, 256_000);
+    const leaves = [];
+    for (let i = 0; i < 4; i += 1) {
+      for (let j = 0; j < 4; j += 1) {
+        leaves.push(ready(extent(10_000 + i * 1_000, 1_050_000 + j * 1_000, 1_000)));
+      }
+    }
+    const resolution = coverageMaskResolution(tile, leaves);
+    expect(resolution).toBe(256);
+
+    const out = new Uint8Array(resolution * resolution);
+    expect(rasteriseCoverageMask(tile, leaves, out, resolution)).toBe(true);
+    expect(out.reduce((n, v) => n + (v ? 1 : 0), 0)).toBe(16);
+
+    // At the old fixed grid the same covers vanish entirely.
+    const old = new Uint8Array(100 * 100);
+    expect(rasteriseCoverageMask(tile, leaves, old, 100)).toBe(false);
+  });
+
   it('clears stale bits from a reused buffer', () => {
     const out = mask();
     out.fill(255);
-    rasteriseCoverageMask(extent(0, 0, 10_000), [ready(extent(0, 0, 5_000))], out);
+    rasteriseCoverageMask(extent(0, 0, 10_000), [ready(extent(0, 0, 5_000))], out, R);
     expect(cellAt(out, R - 1, R - 1)).toBe(0);
   });
 });
