@@ -69,9 +69,12 @@ function App() {
   });
   const { terrainDatasetManifestUrl } = useControls('Terrain dataset', {
     terrainDatasetManifestUrl: {
-      value: '/terrain-datasets/terra-cognita-winchester/metadata.json',
-      // A URL ending in zarr.json selects the renormalised zarr store instead
-      // of the v2 manifest tree — see docs/planning/zarr-transcode.md.
+      // The renormalised zarr store: 1,655 objects against the v2 tree's
+      // 160,750, one national scale, and a 4x pyramid to 256 m. A URL ending in
+      // zarr.json selects the zarr reader, anything else the v2 manifest tree —
+      // see docs/planning/zarr-transcode.md. Point it at a channel group
+      // (.../height.dsm.fz/zarr.json) to open that channel specifically.
+      value: '/terrain-datasets/terra-cognita.zarr/zarr.json',
       label: 'dataset URL (metadata.json or zarr.json)',
     },
   });
