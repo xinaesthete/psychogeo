@@ -389,11 +389,58 @@ real level-0 shard against the chosen CDN before committing to it.
 Everything here is write-once, so `Cache-Control: public, max-age=31536000,
 immutable` is honest.
 
-**The cheap win.** The entire shard-index layer — every `bytes=-1604` suffix
-read in the store — is **2.4 MiB nationally**. Bundling those into one sidecar
-would remove ~1,500 cold round trips and shorten first paint over a
-high-latency origin considerably. That is a better lever than switching
-`index_location` to `start`, and it leaves the 74 GiB of chunk data untouched.
+**One object answers the metadata.** See _The consolidated index_ below: the
+level ladder and all 1,641 shard indices in a single 1.01 MiB gzipped file, so
+a cold reader makes one request rather than one per level plus one per shard
+touched. It is the same bytes to serve however far a viewer roams, and being
+immutable it caches once.
+
+### The consolidated index
+
+```bash
+pnpm pipeline:defra -- index-zarr --store <zarr-dir>
+```
+
+Everything a reader needs to know before it can ask for a chunk, in one
+object: the channel list, the level ladder, the encoding, and the slot table
+of every shard.
+
+| | |
+|---|---|
+| Size | 1.27 MiB, **1.01 MiB gzipped** |
+| Covers | 153,124 chunks in 1,641 shards |
+| Build time | under 2 s, reading the store |
+
+Without it a cold reader pays a request per level and then a suffix request
+for each shard's index before the first chunk in it. Against the national
+store that is **16 requests down to 1** for the same 130 tiles, and the
+per-shard round trip disappears for the rest of the session. Unsharded levels
+list their present coordinates, which also retires the HEAD probe the reader
+used to make per absent chunk.
+
+Two things keep it honest:
+
+**It is additive.** The per-node `zarr.json` and the trailing shard indices are
+untouched, so zarrita and any other Zarr reader see the store exactly as
+before. Every parse failure — missing, truncated, wrong version, unknown magic
+— falls back to reading the store directly, which is also the path for a store
+that was never indexed. Verified by hiding the file: 16 requests, same 130
+tiles.
+
+**It is derived.** It is built by reading what is on disk rather than
+remembering what was written, so a resumed or partially rebuilt store still
+indexes correctly, and a stale one is fixed by running the command again.
+
+`uint32` pairs rather than the `uint64` the shard format uses, which halves
+it — the largest shard is 97 MiB and the largest chunk 1.3 MB. The offsets
+have to be carried rather than derived from a running total: chunks are written
+in scan order, and only 3 of 1,641 shards happen to come out in slot order.
+
+That last fact is worth keeping in mind. Because spatial neighbours are not
+adjacent inside a shard, a viewport of nine neighbouring chunks is nine
+scattered ranges rather than one coalesced read. Writing chunks in slot order
+would fix that and make the index more compressible, but it changes the shard
+bytes and so costs a full re-run.
 
 ### The streaming writer
 
@@ -455,6 +502,10 @@ without reading it.
   real objects, each costing a 1 MiB allocation unit. `dot_clean -m <store>`
   clears them in about a second and has been run; anything that copies the
   store onward should run it again.
+- **Chunks are not written in slot order**, so spatially adjacent chunks are
+  scattered through their shard and a viewport cannot coalesce its reads into
+  one range. Sorting shard entries by slot before writing would fix it and
+  shrink the consolidated index, at the cost of a full re-run.
 - **Retiring the bespoke index** was not a goal of this pass, so
   `metadata.json` and the 8,772 node manifests remain the source of truth.
   Most of what `derive.ts` computes is chunk-key arithmetic in this layout.
