@@ -1,8 +1,7 @@
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { downsampleReduce, type DownsampleSource } from '../raster.ts';
 import { leafSlotBounds, leafSlotIndex } from '../v2/derive.ts';
-import { readMetadata } from '../v2/layout.ts';
 import { gridRefToBounds, normalizeGridRef } from '../v2/osgb.ts';
 import type { TerrainManifestV2 } from '../v2/types.ts';
 import { decodeChunk, encodeChunk } from './chunkCodec.ts';
@@ -25,6 +24,7 @@ import {
 } from './levels.ts';
 import { ShardReader } from './shardReader.ts';
 import { writeShard, type ShardChunk } from './shardWriter.ts';
+import { nodePath, openSourceStore, readSourceMetadata, type SourceStore } from './sourceStore.ts';
 import { buildGroupMetadata, buildRenormLevelMetadata, buildRenormChannelMetadata } from './storeMetadata.ts';
 import { walkNodes } from './transcode.ts';
 
@@ -42,7 +42,8 @@ function reductionFor(sourceLevel: number): { blockSize: number; bias: number } 
 }
 
 export type RenormaliseOptions = {
-  readonly datasetDir: string;
+  /** An extracted v2 dataset directory, or the `.zip` holding one. */
+  readonly datasetPath: string;
   readonly outDir: string;
   readonly gridRefFilter?: string;
   readonly dither?: boolean;
@@ -72,6 +73,8 @@ export type RenormaliseSummary = {
 
 type SourceChunk = {
   readonly sourcePath: string;
+  /** Known from the scan, so the summary totals the source even when a resume skips reading it. */
+  readonly sourceBytes: number;
   readonly coord: readonly [number, number];
   readonly encoding: ScaleOffset;
 };
@@ -84,17 +87,19 @@ function ditherFor(dither: boolean, seed: number, coord: readonly [number, numbe
 }
 
 /** Level-0 leaves of the v2 pyramid, with the scalars needed to undo their normalisation. */
-async function scanLeaves(options: RenormaliseOptions, level: RenormLevel): Promise<SourceChunk[]> {
-  const pyramidDir = path.join(options.datasetDir, 'pyramid');
+async function scanLeaves(
+  store: SourceStore,
+  options: RenormaliseOptions,
+  level: RenormLevel,
+): Promise<SourceChunk[]> {
   const chunks: SourceChunk[] = [];
-  for await (const { relDir, manifest } of walkNodes(pyramidDir)) {
+  for await (const { relDir, manifest } of walkNodes(store)) {
     if (options.gridRefFilter) {
       const filter = normalizeGridRef(options.gridRefFilter);
       if (!normalizeGridRef(manifest.gridRef).startsWith(filter)) continue;
     }
     const leaf = manifest.leaf;
     if (!leaf) continue;
-    const nodeDir = path.join(pyramidDir, relDir);
     const nodeBounds = gridRefToBounds(manifest.gridRef);
     const absent = new Set(leaf.missing ?? []);
     for (let row = 0; row < leaf.rows; row += 1) {
@@ -102,13 +107,12 @@ async function scanLeaves(options: RenormaliseOptions, level: RenormLevel): Prom
         const slot = leafSlotIndex(col, row, leaf.cols);
         if (absent.has(slot)) continue;
         const bounds = leafSlotBounds(nodeBounds, col, row, leaf.stepMetres);
-        const sourcePath = path.join(nodeDir, '0', `${bounds.eastMin}_${bounds.northMin}.j2c`);
-        try {
-          await stat(sourcePath);
-        } catch {
-          continue;
-        }
+        const sourcePath = nodePath(relDir, '0', `${bounds.eastMin}_${bounds.northMin}.j2c`);
+        // A manifest can outlive its payload if an ingest was interrupted.
+        const sourceBytes = await store.size(sourcePath);
+        if (sourceBytes === undefined) continue;
         chunks.push({
+          sourceBytes,
           sourcePath,
           coord: chunkCoordFor(level, bounds.eastMin, bounds.northMax),
           encoding: { scale: leaf.enc.scale[slot], offset: leaf.enc.offset[slot] },
@@ -150,12 +154,12 @@ function groupByShard<T>(
   return shards;
 }
 
-async function fileExists(filePath: string): Promise<boolean> {
+/** Size of an already-written object, or undefined if it is not there yet. */
+async function fileSize(filePath: string): Promise<number | undefined> {
   try {
-    await stat(filePath);
-    return true;
+    return (await stat(filePath)).size;
   } catch {
-    return false;
+    return undefined;
   }
 }
 
@@ -184,7 +188,19 @@ async function writeOneShard(
 }
 
 export async function renormaliseToZarr(options: RenormaliseOptions): Promise<RenormaliseSummary> {
-  const source: TerrainManifestV2 = await readMetadata(options.datasetDir);
+  const store = await openSourceStore(options.datasetPath);
+  try {
+    return await runRenormalise(store, options);
+  } finally {
+    await store.close();
+  }
+}
+
+async function runRenormalise(
+  store: SourceStore,
+  options: RenormaliseOptions,
+): Promise<RenormaliseSummary> {
+  const source: TerrainManifestV2 = await readSourceMetadata(store);
   const levels = renormalisedLevels(options.levelCount);
   const encoding = globalScaleOffset();
   const dither = options.dither ?? false;
@@ -204,9 +220,14 @@ export async function renormaliseToZarr(options: RenormaliseOptions): Promise<Re
   let totalBytes = 0;
 
   // Level 0: decode, undo the per-chunk normalisation, requantise nationally.
-  const leaves = await scanLeaves(options, levels[0]);
+  const leaves = await scanLeaves(store, options, levels[0]);
   const levelDir0 = path.join(channelDir, '0');
   await writeJson(path.join(levelDir0, 'zarr.json'), buildRenormLevelMetadata(levels[0], encoding));
+
+  // Totalled from the scan rather than as chunks are read, so that a resumed
+  // run reports the whole source behind the store and not just this
+  // invocation's share of it.
+  for (const leaf of leaves) sourceBytes += leaf.sourceBytes;
 
   const shards0 = groupByShard(levels[0], leaves, (leaf) => leaf.coord);
   let writtenCoords: Array<readonly [number, number]> = [];
@@ -215,16 +236,19 @@ export async function renormaliseToZarr(options: RenormaliseOptions): Promise<Re
   for (const [key, group] of shards0) {
     for (const leaf of group) writtenCoords.push(leaf.coord);
     // Resume: a shard already on disk is complete, since it is renamed into
-    // place only after every chunk in it is written.
-    if (await fileExists(path.join(levelDir0, key))) {
+    // place only after every chunk in it is written. Its size still counts
+    // towards the level, or a resumed run would under-report the store.
+    const existingBytes = await fileSize(path.join(levelDir0, key));
+    if (existingBytes !== undefined) {
+      level0Bytes += existingBytes;
       done += group.length;
       options.onProgress?.({ kind: 'chunk', level: 0, done, total: leaves.length });
       continue;
     }
     const entries: ShardChunk[] = [];
     for (const leaf of group) {
-      const codestream = new Uint8Array(await readFile(leaf.sourcePath));
-      sourceBytes += codestream.length;
+      const codestream = await store.readBytes(leaf.sourcePath);
+      if (!codestream) throw new Error(`${leaf.sourcePath} vanished from ${store.label}`);
       const decoded = await decodeChunk(codestream);
       const heights = dequantiseToHeights(decoded.raw, leaf.encoding);
       const raw = quantiseHeights(heights, { encoding, dither: ditherFor(dither, seed, leaf.coord) });
@@ -268,10 +292,11 @@ export async function renormaliseToZarr(options: RenormaliseOptions): Promise<Re
     let levelBytes = 0;
     let processed = 0;
     for (const [key, group] of shards) {
-      const existing = await fileExists(path.join(levelDir, key));
+      const existingBytes = await fileSize(path.join(levelDir, key));
+      if (existingBytes !== undefined) levelBytes += existingBytes;
       const entries: ShardChunk[] = [];
       for (const coord of group) {
-        if (existing) {
+        if (existingBytes !== undefined) {
           nextCoords.push(coord);
           continue;
         }
