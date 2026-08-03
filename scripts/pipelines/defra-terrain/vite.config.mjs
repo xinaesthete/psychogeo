@@ -45,6 +45,7 @@ export default defineConfig({
       'src/geo/LodUtils.test.ts',
       'src/geo/tileGeometry.test.ts',
       'src/geo/tileRetention.test.ts',
+      'src/geo/tileLayerManager.test.ts',
       'src/geo/pyramidTileNode.test.ts',
       'src/geo/zarrPyramid.test.ts',
       'src/geo/compressionFormat.test.ts',

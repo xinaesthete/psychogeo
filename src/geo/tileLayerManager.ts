@@ -6,7 +6,9 @@ import type {
   ChannelReconciliation,
   RasterChannel,
   RasterChannelState,
+  RasterPayload,
   TileLayerManager,
+  TileLoadContext,
   TileLayerManagerDebugStats,
   TileNode,
   TileRetentionMode,
@@ -97,6 +99,62 @@ function tileWorldBox(tile: TileNode, target: THREE.Box3): THREE.Box3 {
     maxZ + VERTICAL_CULL_PADDING_METRES,
   );
   return target;
+}
+
+/**
+ * How many times a channel load is attempted before the tile is left in error.
+ *
+ * A tile that fails once used to stay black for the rest of the session: the
+ * LOD descent keeps resolving it, so nothing re-requests it, and the failure
+ * never reaches the console. Observed against the national zarr store as four
+ * permanent holes in one shard, where every byte range served 206 and all 100
+ * of that shard's codestreams decode — so the failure was transient and the
+ * absence of a retry was the whole of the bug.
+ */
+const MAX_LOAD_ATTEMPTS = 3;
+const RETRY_BASE_DELAY_MS = 150;
+
+export function retryDelay(attempt: number): number {
+  return RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
+}
+
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener('abort', () => {
+      clearTimeout(timer);
+      resolve();
+    }, { once: true });
+  });
+}
+
+/**
+ * Run `load`, retrying a transient failure up to `maxAttempts` times.
+ *
+ * Split out from the manager because the policy is the part worth pinning, and
+ * it is decided entirely by three things — the load, whether the work is still
+ * wanted, and how long to wait — none of which need the manager's state
+ * machine to express.
+ *
+ * `isCancelled` is what keeps a retry from resurrecting abandoned work: an
+ * aborted, superseded or off-screen load is not a failure to recover from, and
+ * rethrows at once.
+ */
+export async function attemptWithRetries<T>(
+  load: () => Promise<T>,
+  isCancelled: () => boolean,
+  wait: (ms: number) => Promise<void>,
+  maxAttempts: number = MAX_LOAD_ATTEMPTS,
+): Promise<T> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await load();
+    } catch (error) {
+      if (isCancelled() || attempt >= maxAttempts) throw error;
+      await wait(retryDelay(attempt));
+      if (isCancelled()) throw error;
+    }
+  }
 }
 
 export class TileLayerManagerImpl implements TileLayerManager {
@@ -355,6 +413,31 @@ export class TileLayerManagerImpl implements TileLayerManager {
     }
   }
 
+  /**
+   * Attempt a channel load, retrying a transient failure.
+   *
+   * Only genuine failures are retried. A cancelled load — aborted, superseded
+   * by a newer generation, or scrolled out of frustum — is not a failure and
+   * rethrows immediately, so this cannot keep work alive that the tree has
+   * already moved on from.
+   */
+  private loadWithRetry(
+    channel: RasterChannel,
+    ctx: TileLoadContext,
+    abortController: AbortController,
+    managed: ManagedTile,
+    generation: number,
+  ): Promise<RasterPayload> {
+    return attemptWithRetries(
+      () => channel.load(ctx),
+      () =>
+        abortController.signal.aborted ||
+        generation !== managed.generation ||
+        !managed.inFrustum,
+      (ms) => sleep(ms, abortController.signal),
+    );
+  }
+
   private async loadChannel(managed: ManagedTile, channelId: string): Promise<void> {
     const channel = this.channels.get(channelId);
     if (!channel || !managed.inFrustum) return;
@@ -386,7 +469,7 @@ export class TileLayerManagerImpl implements TileLayerManager {
     };
 
     try {
-      const payload = await channel.load(ctx);
+      const payload = await this.loadWithRetry(channel, ctx, abortController, managed, generation);
       if (
         abortController.signal.aborted ||
         generation !== managed.generation ||
@@ -413,13 +496,24 @@ export class TileLayerManagerImpl implements TileLayerManager {
         clearLoadingIfOwned(managed, channelId, generation, abortController);
         return;
       }
+      const failure = error instanceof Error ? error : new Error(String(error));
       managed.channelStates.set(channelId, {
         channelId,
         status: 'error',
         generation,
-        error: error instanceof Error ? error : new Error(String(error)),
+        error: failure,
       });
       syncTileDebugLabel(managed.tile);
+      // Say so. A silent error is why this took a store-sized render to notice:
+      // the tile just stayed black and nothing anywhere said why.
+      console.warn(
+        `[tile] ${channelId} failed after ${MAX_LOAD_ATTEMPTS} attempts: ${payloadUrl}`,
+        failure,
+      );
+      // A failed tile is settled, not pending. Without this the retained
+      // fallback covering it is never re-evaluated, because only readiness
+      // notifies.
+      this.channelReadyListener?.(managed.tile, channelId);
     } finally {
       if (managed.abortController === abortController) {
         managed.abortController = null;
