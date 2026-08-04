@@ -432,15 +432,31 @@ remembering what was written, so a resumed or partially rebuilt store still
 indexes correctly, and a stale one is fixed by running the command again.
 
 `uint32` pairs rather than the `uint64` the shard format uses, which halves
-it — the largest shard is 97 MiB and the largest chunk 1.3 MB. The offsets
-have to be carried rather than derived from a running total: chunks are written
-in scan order, and only 3 of 1,641 shards happen to come out in slot order.
+it — the largest shard is 97 MiB and the largest chunk 1.3 MB.
 
-That last fact is worth keeping in mind. Because spatial neighbours are not
-adjacent inside a shard, a viewport of nine neighbouring chunks is nine
-scattered ranges rather than one coalesced read. Writing chunks in slot order
-would fix that and make the index more compressible, but it changes the shard
-bytes and so costs a full re-run.
+### Slot order
+
+Building the index turned up something worth fixing. The offsets could not be
+derived from a running total, because chunks were written in the order the pass
+produced them — source-node order, which bears no relation to the shard's own
+grid — and only **3 of 1,641** shards happened to come out in slot order.
+
+The consequence is not really the index. It is that spatial neighbours are not
+adjacent inside a shard, so a viewport of nine neighbouring chunks is nine
+scattered ranges rather than a coalesced read, however clever the client is.
+
+`writeShard` now sorts by slot before writing, which fixes every future run for
+one line. The store already on disk did **not** need a re-run: the payload is
+opaque HTJ2K, and a chunk's bytes do not depend on where in the file they sit,
+so putting a shard in order is a permutation of byte ranges plus a fresh index —
+disk speed rather than codec speed. `resort-zarr` does exactly that, shard by
+shard, and is idempotent, so an interrupted pass resumes by being run again.
+
+Each rewrite goes to a sibling temp file and is checked before it replaces the
+original: the new file's own trailing index is read back and compared against
+what the pass intended, and with `--verify` every chunk is read out through that
+new index and checksummed against what went in. A bug in the offset arithmetic
+costs a failed run rather than a corrupted store.
 
 ### The streaming writer
 
@@ -502,10 +518,15 @@ without reading it.
   real objects, each costing a 1 MiB allocation unit. `dot_clean -m <store>`
   clears them in about a second and has been run; anything that copies the
   store onward should run it again.
-- **Chunks are not written in slot order**, so spatially adjacent chunks are
-  scattered through their shard and a viewport cannot coalesce its reads into
-  one range. Sorting shard entries by slot before writing would fix it and
-  shrink the consolidated index, at the cost of a full re-run.
+- **Coalescing the reads slot order now allows.** The store is in slot order, so
+  a run of adjacent chunks is a run of adjacent bytes, but the reader still asks
+  for each chunk as its own `Range`. Merging neighbouring ranges within a shard
+  is the payoff and has not been written yet.
+- **Deriving shard offsets from lengths.** In an ordered, gap-free shard the
+  offset of a slot is the sum of the lengths before it, so the consolidated
+  index could carry lengths alone and halve again. Left as it is because storing
+  offsets keeps the index able to describe *any* store, ordered or not, and the
+  saving is under a megabyte.
 - **Retiring the bespoke index** was not a goal of this pass, so
   `metadata.json` and the 8,772 node manifests remain the source of truth.
   Most of what `derive.ts` computes is chunk-key arithmetic in this layout.

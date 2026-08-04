@@ -59,9 +59,23 @@ export function encodeShardIndex(
   return out;
 }
 
+export function slotOf(
+  local: readonly [number, number],
+  shardChunks: readonly [number, number],
+): number {
+  return local[0] * shardChunks[1] + local[1];
+}
+
 /**
- * Write one shard: inner chunk bytes back to back, then the index
- * (`index_location: "end"`).
+ * Write one shard: inner chunk bytes back to back in slot order, then the
+ * index (`index_location: "end"`).
+ *
+ * Slot order matters to the reader, not to this pass. Callers supply chunks in
+ * whatever order they happen to produce them — for the renormalise pass that is
+ * source-node order, which bears no relation to the shard's own grid — and a
+ * shard laid out that way scatters spatial neighbours through the file. Sorting
+ * here makes a run of adjacent chunks a run of adjacent bytes, so a viewport can
+ * be fetched as one coalesced range rather than one request per chunk.
  *
  * Streamed rather than assembled in memory — a 1 m shard is ~100 MB of
  * codestreams and there are thousands of them. Nothing is decoded or
@@ -74,14 +88,17 @@ export async function writeShard(
 ): Promise<ShardStats> {
   const slots = shardChunks[0] * shardChunks[1];
   const entries = new Map<number, { offset: number; length: number }>();
+  const ordered = [...chunks].sort(
+    (a, b) => slotOf(a.local, shardChunks) - slotOf(b.local, shardChunks),
+  );
 
   await mkdir(path.dirname(filePath), { recursive: true });
   const tempPath = `${filePath}.${process.pid}.tmp`;
   const handle = await open(tempPath, 'w');
   let offset = 0;
   try {
-    for (const chunk of chunks) {
-      const slot = chunk.local[0] * shardChunks[1] + chunk.local[1];
+    for (const chunk of ordered) {
+      const slot = slotOf(chunk.local, shardChunks);
       if (slot < 0 || slot >= slots) {
         throw new Error(`chunk ${chunk.local} is outside a ${shardChunks} shard`);
       }

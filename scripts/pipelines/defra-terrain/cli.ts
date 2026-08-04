@@ -27,6 +27,7 @@ import { syncCheckpointsFromDisk } from './v2/syncCheckpoints.ts';
 import { transcodeToZarr, type TranscodeProgressEvent } from './zarr/transcode.ts';
 import { renormaliseToZarr, type RenormaliseProgressEvent } from './zarr/renormalise.ts';
 import { buildStoreIndex } from './zarr/storeIndex.ts';
+import { resortStore, type ResortProgressEvent } from './zarr/shardResort.ts';
 
 const startTime = Date.now();
 
@@ -52,6 +53,8 @@ interface CliArgs {
   readonly progress: boolean;
   readonly noMerge: boolean;
   readonly skipValidation: boolean;
+  readonly verify: boolean;
+  readonly dryRun: boolean;
 }
 
 function usage(): string {
@@ -81,6 +84,10 @@ function usage(): string {
     '      [--region <gridRef>] [--dither] [--levels <n>] [--progress]',
     '        Re-encodes to one national scale/offset and a 4x pyramid of 1000px chunks.',
     '        Drops the per-chunk encoding arrays; smaller output, but decodes every chunk.',
+    '  pnpm pipeline:defra -- resort-zarr --store <zarr-dir> [--verify] [--dry-run] [--progress]',
+    '        Rewrites shards written before the writer sorted, so inner chunks sit in',
+    '        slot order and a run of neighbours is a run of bytes. Permutes byte ranges',
+    '        at disk speed — no decode. Idempotent; re-run index-zarr afterwards.',
     '  pnpm pipeline:defra -- index-zarr --store <zarr-dir>',
     '        Consolidates the level ladder and every shard index into one object,',
     '        so a cold reader needs one fetch rather than one per shard touched.',
@@ -136,7 +143,18 @@ function parseArgs(argv: string[]): CliArgs {
     progress: flags.has('progress'),
     noMerge: flags.has('no-merge'),
     skipValidation: flags.has('skip-validation'),
+    verify: flags.has('verify'),
+    dryRun: flags.has('dry-run'),
   };
+}
+
+function formatResortProgress(event: ResortProgressEvent): string {
+  switch (event.kind) {
+    case 'level':
+      return `[zarr] ${event.channelId}/${event.levelPath}: ${event.shards} shards`;
+    case 'shard':
+      return `[zarr] ${event.done}/${event.total} shards, ${event.sorted} rewritten, ${formatBytes(event.bytes)}`;
+  }
 }
 
 function formatRenormaliseProgress(event: RenormaliseProgressEvent): string {
@@ -454,6 +472,31 @@ async function main(): Promise<void> {
         `wrote ${summary.path}`,
         `${formatBytes(summary.bytes)} covering ${summary.chunks} chunks in ${summary.shards} shards` +
           `, ${summary.channels} channel${summary.channels === 1 ? '' : 's'}`,
+      ].join('\n'),
+    );
+    return;
+  }
+  if (args.command === 'resort-zarr') {
+    const storeDir = args.store ?? args.out ?? args.dataset;
+    if (!storeDir) throw new Error('--store is required for resort-zarr');
+    const summary = await resortStore({
+      storeDir,
+      verify: args.verify,
+      dryRun: args.dryRun,
+      onProgress: args.progress ? (event) => console.log(formatResortProgress(event)) : undefined,
+    });
+    console.log(
+      [
+        args.dryRun ? 'dry run — nothing written' : `rewrote ${summary.sorted} shards`,
+        ...summary.levels.map(
+          (level) =>
+            `  ${level.channelId}/${level.levelPath}: ${level.shards} shards, ` +
+            `${level.sorted} out of order, ${level.alreadyOrdered} already sorted, ${formatBytes(level.bytes)}`,
+        ),
+        `${summary.sorted + summary.alreadyOrdered} sharded objects, ${formatBytes(summary.bytes)} of payload`,
+        summary.sorted > 0 && !args.dryRun
+          ? 'shard offsets changed — re-run index-zarr'
+          : 'nothing moved',
       ].join('\n'),
     );
     return;
