@@ -28,6 +28,7 @@ import { transcodeToZarr, type TranscodeProgressEvent } from './zarr/transcode.t
 import { renormaliseToZarr, type RenormaliseProgressEvent } from './zarr/renormalise.ts';
 import { buildStoreIndex } from './zarr/storeIndex.ts';
 import { resortStore, type ResortProgressEvent } from './zarr/shardResort.ts';
+import { buildDzChannel, type DzProgressEvent } from './zarr/dzChannel.ts';
 
 const startTime = Date.now();
 
@@ -84,6 +85,11 @@ function usage(): string {
     '      [--region <gridRef>] [--dither] [--levels <n>] [--progress]',
     '        Re-encodes to one national scale/offset and a 4x pyramid of 1000px chunks.',
     '        Drops the per-chunk encoding arrays; smaller output, but decodes every chunk.',
+    '  pnpm pipeline:defra -- dz-zarr --input <composite-zips-dir> --store <zarr-dir>',
+    '      [--region <gridRef>] [--levels <n>] [--dither] [--progress]',
+    '        Adds height.aux.dz beside the existing channels: first return minus last',
+    '        return, taken from the FZ/LZ source pair since the v2 archive holds FZ only.',
+    '        Quantised at 10 cm, and negative where the surveys disagree.',
     '  pnpm pipeline:defra -- resort-zarr --store <zarr-dir> [--verify] [--dry-run] [--progress]',
     '        Rewrites shards written before the writer sorted, so inner chunks sit in',
     '        slot order and a run of neighbours is a run of bytes. Permutes byte ranges',
@@ -146,6 +152,19 @@ function parseArgs(argv: string[]): CliArgs {
     verify: flags.has('verify'),
     dryRun: flags.has('dry-run'),
   };
+}
+
+function formatDzProgress(event: DzProgressEvent): string {
+  switch (event.kind) {
+    case 'scan':
+      return `[dz] ${event.quads} quads with both returns, ${event.skipped} skipped for want of LZ`;
+    case 'quad':
+      return `[dz] ${event.done}/${event.total} ${event.tileRef}`;
+    case 'chunk':
+      return `[dz] level ${event.level}: ${event.done}/${event.total} chunks`;
+    case 'level':
+      return `[dz] level ${event.level} done: ${event.chunks} chunks, ${formatBytes(event.bytes)}`;
+  }
 }
 
 function formatResortProgress(event: ResortProgressEvent): string {
@@ -472,6 +491,36 @@ async function main(): Promise<void> {
         `wrote ${summary.path}`,
         `${formatBytes(summary.bytes)} covering ${summary.chunks} chunks in ${summary.shards} shards` +
           `, ${summary.channels} channel${summary.channels === 1 ? '' : 's'}`,
+      ].join('\n'),
+    );
+    return;
+  }
+  if (args.command === 'dz-zarr') {
+    if (!args.input) throw new Error('--input is required for dz-zarr');
+    const storeDir = args.store ?? args.out;
+    if (!storeDir) throw new Error('--store is required for dz-zarr');
+    const summary = await buildDzChannel({
+      sourceDir: args.input,
+      storeDir,
+      gridRefFilter: args.region ?? args.cell,
+      levelCount: args.levels ? Number.parseInt(args.levels, 10) : undefined,
+      dither: args.dither,
+      onProgress: args.progress ? (event) => console.log(formatDzProgress(event)) : undefined,
+    });
+    console.log(
+      [
+        `dz step ${(summary.encoding.scale * 100).toFixed(1)} cm, offset ${summary.encoding.offset.toFixed(2)} m`,
+        `${summary.quads} quads paired, ${summary.skippedNoLz} skipped for want of LZ`,
+        ...summary.levels.map(
+          (level) =>
+            `  level ${level.level} (${level.resolutionMetres} m): ${level.chunks} chunks → ` +
+            `${level.objects} objects, ${formatBytes(level.bytes)}`,
+        ),
+        `total ${formatBytes(summary.totalBytes)}`,
+        summary.clampedSamples > 0
+          ? `${summary.clampedSamples} samples clamped to the dz range`
+          : 'no samples hit the dz range limits',
+        'channel registered — re-run index-zarr',
       ].join('\n'),
     );
     return;

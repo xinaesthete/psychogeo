@@ -138,21 +138,36 @@ export function buildRenormLevelMetadata(level: RenormLevel, encoding: ScaleOffs
   };
 }
 
-export function buildRenormChannelMetadata(
-  source: TerrainManifestV2,
-  levels: readonly RenormLevel[],
-  encoding: ScaleOffset,
-  dithered: boolean,
-): Json {
+export type ChannelMetadataOptions = {
+  readonly channelId: string;
+  readonly sourceDatasetId: string;
+  readonly crs: TerrainManifestV2['crs'];
+  readonly levels: readonly RenormLevel[];
+  readonly encoding: ScaleOffset;
+  readonly dithered: boolean;
+  /** What the samples mean, when it is not simply height above datum. */
+  readonly measure?: string;
+  readonly description?: string;
+};
+
+/**
+ * A channel group: the multiscale ladder plus everything a reader needs to turn
+ * a raw sample into a number in metres.
+ *
+ * Channels differ in what they measure but not in how they are stored, so this
+ * takes the few fields that vary rather than a source manifest — dz is derived
+ * from a pair of source rasters and has no v2 manifest behind it.
+ */
+export function buildChannelMetadata(options: ChannelMetadataOptions): Json {
   return buildGroupMetadata({
     multiscales: [
       {
-        name: source.channelId,
+        name: options.channelId,
         axes: [
           { name: 'y', type: 'space', unit: 'metre' },
           { name: 'x', type: 'space', unit: 'metre' },
         ],
-        datasets: levels.map((level) => ({
+        datasets: options.levels.map((level) => ({
           path: String(level.level),
           coordinateTransformations: [
             { type: 'scale', scale: [level.resolutionMetres, level.resolutionMetres] },
@@ -161,26 +176,44 @@ export function buildRenormChannelMetadata(
       },
     ],
     psychogeo: {
-      sourceDatasetId: source.datasetId,
-      channelId: source.channelId,
-      crs: source.crs,
+      sourceDatasetId: options.sourceDatasetId,
+      channelId: options.channelId,
+      crs: options.crs,
+      ...(options.measure ? { measure: options.measure } : {}),
+      ...(options.description ? { description: options.description } : {}),
       encoding: {
         codecName: HTJ2K_CODEC_NAME,
         sampleType: 'uint16',
         normalisation: 'globalScaleOffset',
-        scale: encoding.scale,
-        offset: encoding.offset,
+        scale: options.encoding.scale,
+        offset: options.encoding.offset,
         nodata: 0,
-        dithered,
+        dithered: options.dithered,
       },
       grid: {
-        crs: source.crs.horizontal,
+        crs: options.crs.horizontal,
         eastOrigin: NATIONAL_EXTENT.eastMin,
         northOrigin: NATIONAL_EXTENT.northMax,
         yAxis: 'south',
         levelFactor: 4,
       },
     },
+  });
+}
+
+export function buildRenormChannelMetadata(
+  source: TerrainManifestV2,
+  levels: readonly RenormLevel[],
+  encoding: ScaleOffset,
+  dithered: boolean,
+): Json {
+  return buildChannelMetadata({
+    channelId: source.channelId,
+    sourceDatasetId: source.datasetId,
+    crs: source.crs,
+    levels,
+    encoding,
+    dithered,
   });
 }
 
