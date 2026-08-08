@@ -144,7 +144,12 @@ export type SourceChannelOptions = {
 };
 
 export type SourceChannelProgressEvent =
-  | { readonly kind: 'scan'; readonly quads: number; readonly skipped: number }
+  | {
+      readonly kind: 'scan';
+      readonly quads: number;
+      readonly skipped: number;
+      readonly unplaceable: readonly string[];
+    }
   | { readonly kind: 'quad'; readonly tileRef: string; readonly done: number; readonly total: number }
   | PyramidProgressEvent;
 
@@ -153,31 +158,54 @@ export type SourceChannelSummary = {
   readonly encoding: ScaleOffset;
   readonly quads: number;
   readonly skippedIncomplete: number;
+  readonly unplaceable: readonly string[];
   readonly levels: readonly LevelSummary[];
   readonly totalBytes: number;
   readonly clampedSamples: number;
 };
 
-/** Quads carrying every product the channel needs. */
+/**
+ * Quads carrying every product the channel needs, and placeable on the sheet.
+ *
+ * Both rejections are reported rather than thrown. A national run walks ~5,900
+ * source quads and the set is not curated: one file the pipeline cannot place
+ * must not take down nine hours of work, and it must not vanish silently
+ * either.
+ */
 export function quadsWith(
   groups: readonly DefraTileGroup[],
   needs: readonly DefraReturnKind[],
   gridRefFilter?: string,
-): { readonly usable: DefraTileGroup[]; readonly skippedIncomplete: number } {
+): {
+  readonly usable: DefraTileGroup[];
+  readonly skippedIncomplete: number;
+  readonly unplaceable: string[];
+} {
   const filter = gridRefFilter ? normalizeGridRef(gridRefFilter) : undefined;
   const usable: DefraTileGroup[] = [];
+  const unplaceable: string[] = [];
   let skippedIncomplete = 0;
   for (const group of groups) {
     if (filter && !normalizeGridRef(group.tileRef).startsWith(filter)) continue;
     const present = needs.filter((kind) => group.sources[kind] !== undefined);
-    if (present.length === needs.length) {
-      usable.push(group);
+    if (present.length !== needs.length) {
+      // Nothing at all is not a gap worth reporting; a partial set is.
+      if (present.length > 0) skippedIncomplete += 1;
       continue;
     }
-    // Nothing at all is not a gap worth reporting; a partial set is.
-    if (present.length > 0) skippedIncomplete += 1;
+    // The OSGB squares the grid library knows do not quite cover the sheet —
+    // the bottom row of O (OU, OV, OW) is rejected, and DEFRA ships an OV00
+    // quad. Offshore and near enough all nodata, but the failure is what
+    // matters: an unparseable ref is a skip with a name attached, not a crash.
+    try {
+      gridRefToBounds(group.tileRef);
+    } catch {
+      unplaceable.push(group.tileRef);
+      continue;
+    }
+    usable.push(group);
   }
-  return { usable, skippedIncomplete };
+  return { usable, skippedIncomplete, unplaceable };
 }
 
 /** The store-grid chunks a quad's extent covers, at level 0. */
@@ -290,8 +318,17 @@ export async function buildSourceChannel(
   const channelDir = path.join(options.storeDir, spec.channelId);
 
   const groups = await scanDefraZips(options.sourceDir);
-  const { usable: paired, skippedIncomplete } = quadsWith(groups, spec.needs, options.gridRefFilter);
-  options.onProgress?.({ kind: 'scan', quads: paired.length, skipped: skippedIncomplete });
+  const { usable: paired, skippedIncomplete, unplaceable } = quadsWith(
+    groups,
+    spec.needs,
+    options.gridRefFilter,
+  );
+  options.onProgress?.({
+    kind: 'scan',
+    quads: paired.length,
+    skipped: skippedIncomplete,
+    unplaceable,
+  });
   if (paired.length === 0) {
     throw new Error(
       `no quads with ${spec.needs.join(' and ')} under ${options.sourceDir}` +
@@ -422,6 +459,7 @@ export async function buildSourceChannel(
     encoding,
     quads: paired.length,
     skippedIncomplete,
+    unplaceable,
     levels: summary,
     totalBytes: summary.reduce((total, level) => total + level.bytes, 0),
     clampedSamples,

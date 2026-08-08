@@ -164,7 +164,12 @@ function parseArgs(argv: string[]): CliArgs {
 function formatSourceChannelProgress(event: SourceChannelProgressEvent): string {
   switch (event.kind) {
     case 'scan':
-      return `[channel] ${event.quads} quads usable, ${event.skipped} skipped for a missing product`;
+      return (
+        `[channel] ${event.quads} quads usable, ${event.skipped} skipped for a missing product` +
+        (event.unplaceable.length > 0
+          ? `, ${event.unplaceable.length} unplaceable (${event.unplaceable.join(', ')})`
+          : '')
+      );
     case 'quad':
       return `[channel] ${event.done}/${event.total} ${event.tileRef}`;
     case 'chunk':
@@ -523,6 +528,9 @@ async function main(): Promise<void> {
         `${summary.channelId}: step ${(summary.encoding.scale * 1000).toFixed(2)} mm, ` +
           `offset ${summary.encoding.offset.toFixed(3)} m`,
         `${summary.quads} quads, ${summary.skippedIncomplete} skipped for a missing product`,
+        ...(summary.unplaceable.length > 0
+          ? [`${summary.unplaceable.length} unplaceable on the sheet: ${summary.unplaceable.join(', ')}`]
+          : []),
         ...summary.levels.map(
           (level) =>
             `  level ${level.level} (${level.resolutionMetres} m): ${level.chunks} chunks → ` +

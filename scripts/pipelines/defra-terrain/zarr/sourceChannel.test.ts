@@ -159,6 +159,18 @@ describe('quadsWith', () => {
     );
     expect(usable.map((entry) => entry.tileRef)).toEqual(['SU42ne']);
   });
+
+  it('names a quad it cannot place instead of throwing', () => {
+    // DEFRA ships OV00sw, and the grid library rejects the bottom row of the O
+    // square. A national run walks ~5,900 uncurated quads, so one it cannot
+    // place has to be a reported skip — throwing would lose nine hours.
+    const { usable, unplaceable } = quadsWith(
+      [group('OV00sw', ['LZ']), group('SU42ne', ['LZ'])],
+      ['LZ'],
+    );
+    expect(usable.map((entry) => entry.tileRef)).toEqual(['SU42ne']);
+    expect(unplaceable).toEqual(['OV00sw']);
+  });
 });
 
 describe('channel specs', () => {
