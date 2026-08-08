@@ -477,8 +477,87 @@ disk was 533.21 MiB from 959.97 MiB. Skipped shards now count towards the
 level, and the source total comes from the scan, which knows every leaf's size
 without reading it.
 
+## The dz channel (`dz-zarr`)
+
+The second channel, and so the first real test of the claim that this layout
+makes siblings rather than parallel directory trees. It holds `height.aux.dz`,
+first return minus last return.
+
+It cannot be transcoded like the heights: the v2 archive is FZ only — 150,474
+codestreams, one channel — so the difference has to be taken back at the DEFRA
+source, from the matched FZ/LZ composite zips. All 5,735 FZ quads have an LZ
+partner, so dz coverage will equal height coverage exactly. Each quad is a 5 km
+1 m GeoTIFF, which divides into exactly 25 store chunks, and since the sheet
+origin is a multiple of 10 km a quad never straddles two shards — checked at run
+time rather than assumed, because half a quad written into the wrong shard would
+look like nothing at all.
+
+Levels 1 upward are the same pyramid the heights use, so that half moved into
+`pyramidBuild.ts` and both passes share it. The extraction is proved
+byte-identical: NT60 renormalised before and after, `diff -r` clean.
+
+**dz is not a canopy height model**, and the numbers say so plainly. A fifth to
+a third of samples are negative, down to −30 m, because the composite merges
+surveys flown at different times and LZ can sit above FZ over the same ground.
+Those negatives are kept rather than clamped, so survey disagreement stays
+visible instead of reading as flat bare ground. Coarse levels use plain area
+mean, not the peak-preserving reduction the heights use: the mean of a
+difference is the difference of the means, which keeps a coarse dz readable as
+mean structure height, and peak-preserving would amplify exactly those outliers.
+
+Verified on SU42 by reading 2M samples back out of the store and comparing
+against FZ − LZ recomputed from the source rasters — which checks placement and
+encoding together, since a chunk written to the wrong coordinate still decodes
+perfectly. RMSE 1.4–2.0 cm per quad, worst case exactly half a step, nodata
+agreeing exactly.
+
+### Lossy encoding is not worth it here
+
+The v1 manifest always described dz as low-precision and gave it
+`lossyQuality: 0.2`, so irreversible coding was the obvious lever once dz turned
+out to cost nearly as much as the heights. Measured on six real chunks — two
+wooded, two mixed, two mostly nodata — it is the wrong lever.
+
+Matched on accuracy, plain lossless at a coarser scalar step beats irreversible
+HTJ2K on every axis:
+
+| RMSE | lossless step | size | p99.9 | lossy | size | p99.9 |
+|---|---|---|---|---|---|---|
+| ~1.0 cm | 5 cm | **427 KiB** | **2.5 cm** | 1 cm @ 5e-5 | 479 KiB | 4.3 cm |
+| ~1.8 cm | 10 cm | **366 KiB** | **5.0 cm** | 2 cm @ 5e-5 | 409 KiB | 8.1 cm |
+| ~3.5 cm | 20 cm | **306 KiB** | **10.0 cm** | 2 cm @ 1e-4 | 340 KiB | 16.2 cm |
+| ~8.6 cm | 50 cm | **229 KiB** | **25.0 cm** | 20 cm @ 2e-5 | 272 KiB | 40.5 cm |
+
+Consistently 10–16% smaller with a tail 1.6–2× tighter. Three reasons, and the
+third is on its own decisive:
+
+- The reversible 5/3 integer transform simply costs fewer bits than
+  irreversible 9/7 at fine quantisation. Below qstep 2e-5 the lossy codestream
+  is *larger* than the lossless one — 126% of it at 5e-6 — while still being
+  less accurate.
+- Scalar pre-quantisation has a bounded, uniform error of exactly half a step.
+  Lossy has a long tail: p99.9 runs 4–8× the RMSE, and the ringing concentrates
+  at building edges, which is precisely where dz carries its signal.
+- **Nodata is a reserved code and the codec has no idea.** Raw 0 means "no
+  measurement"; irreversible coding smears it. At the mildest useful setting
+  that is already ~250 pixels per chunk with their nodata status wrong, rising
+  to thousands. There is no quality setting that fixes this, because the
+  problem is categorical rather than numerical.
+
+So dz stays lossless, and the size knob is the step. At the current 10 cm the
+national projection is ~58 GiB and ~14 h serial; 20 cm would take it to ~48 GiB
+with a bounded 10 cm worst case, still comfortably inside the composite's own
+~±15 cm vertical accuracy. 50 cm is where the error starts to exceed the
+accuracy of the source and stops being free.
+
 ## Open
 
+- **What step dz should ship at.** 10 cm is what SU42 was built with; the
+  measurement above argues for 20 cm. Not changed unilaterally because it is a
+  quality decision about the data rather than a correctness one, and it costs a
+  re-run.
+- **dz nationally.** Only SU42 exists so far. ~14 h serial, which is the same
+  argument for the worker pool the height pass already makes.
 - **zfp was prototyped and lost** — see [python/codec-eval](../../python/codec-eval/README.md).
   At matched error it is 30–40% larger than uint16 + lossless J2K, because a
   1 km height tile spans ~100–200 m and 16 bits fits that far better than
