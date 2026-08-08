@@ -15,6 +15,7 @@ import {
   ditherFor,
   fileSize,
   groupByShard,
+  heightReduction,
   placeInShard,
   writeJson,
   writeOneShard,
@@ -29,19 +30,6 @@ import {
   buildStoreRootMetadata,
 } from './storeMetadata.ts';
 import { walkNodes } from './transcode.ts';
-
-/**
- * Peak-preserving sub-block edge, in pixels of the *source* level.
- *
- * The peak surface has to be extracted at a fixed ground scale — roughly one
- * tree crown — and every coarser level then area-averages that same surface.
- * Mixing the two makes adjacent levels statistically inconsistent, which is
- * what makes LOD transitions pop. At 1 m a 4 px block is ~4 m; above that the
- * source is already a peak surface, so plain area mean is correct.
- */
-function reductionFor(sourceLevel: number): { blockSize: number; bias: number } {
-  return sourceLevel === 0 ? { blockSize: LEVEL_FACTOR, bias: 1 } : { blockSize: 1, bias: 0 };
-}
 
 export type RenormaliseOptions = {
   /** An extracted v2 dataset directory, or the `.zip` holding one. */
@@ -206,7 +194,7 @@ async function runRenormalise(
     levels,
     encoding,
     baseCoords: writtenCoords,
-    reduction: reductionFor,
+    reduction: heightReduction,
     levelMetadata: (level) => buildRenormLevelMetadata(level, encoding),
     dither,
     ditherSeed: seed,

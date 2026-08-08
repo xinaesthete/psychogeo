@@ -8,11 +8,15 @@ import {
   chunkFromRaster,
   chunksForExtent,
   differenceRasters,
+  dzChannelSpec,
   DZ_MAX_METRES,
   DZ_MIN_METRES,
   dzScaleOffset,
-  pairedQuads,
-} from './dzChannel.ts';
+  lzChannelSpec,
+  passThrough,
+  quadsWith,
+} from './sourceChannel.ts';
+import { globalScaleOffset } from './globalScale.ts';
 
 const LEVEL0 = renormalisedLevel(0);
 
@@ -131,24 +135,72 @@ describe('chunkFromRaster', () => {
   });
 });
 
-describe('pairedQuads', () => {
-  it('needs both returns and reports what it dropped', () => {
-    const { paired, skippedNoLz } = pairedQuads([
-      group('SU42ne', ['FZ', 'LZ']),
-      group('SU42nw', ['FZ']),
-      group('SU42se', ['LZ']),
-    ]);
-    expect(paired.map((entry) => entry.tileRef)).toEqual(['SU42ne']);
-    // FZ-without-LZ is a gap in dz coverage worth reporting; LZ-without-FZ is
-    // not, since there is no height there either.
-    expect(skippedNoLz).toBe(1);
+describe('quadsWith', () => {
+  const quads = [group('SU42ne', ['FZ', 'LZ']), group('SU42nw', ['FZ']), group('SU42se', ['LZ'])];
+
+  it('takes only quads carrying every product the channel needs', () => {
+    const both = quadsWith(quads, ['FZ', 'LZ']);
+    expect(both.usable.map((entry) => entry.tileRef)).toEqual(['SU42ne']);
+    expect(both.skippedIncomplete).toBe(2);
+  });
+
+  it('accepts more quads for a single-product channel than for a difference', () => {
+    // The whole point of storing LZ rather than dz is that it needs less: a
+    // quad with LZ but no FZ still contributes a surface.
+    const lzOnly = quadsWith(quads, ['LZ']);
+    expect(lzOnly.usable.map((entry) => entry.tileRef)).toEqual(['SU42ne', 'SU42se']);
   });
 
   it('filters on a grid-ref prefix', () => {
-    const { paired } = pairedQuads(
+    const { usable } = quadsWith(
       [group('SU42ne', ['FZ', 'LZ']), group('SU43ne', ['FZ', 'LZ'])],
+      ['FZ', 'LZ'],
       'SU42',
     );
-    expect(paired.map((entry) => entry.tileRef)).toEqual(['SU42ne']);
+    expect(usable.map((entry) => entry.tileRef)).toEqual(['SU42ne']);
+  });
+});
+
+describe('channel specs', () => {
+  it('puts LZ on exactly the height channel encoding', () => {
+    // Load-bearing: dz is recovered as (fz_raw - lz_raw) * scale, which is only
+    // exact while the two surfaces share a scale and their offsets cancel.
+    expect(lzChannelSpec().encoding).toEqual(globalScaleOffset());
+  });
+
+  it('recovers dz from two height-encoded surfaces within two half-steps', () => {
+    const encoding = globalScaleOffset();
+    const fz = new Float32Array([120.31, 45.02, 8.5]);
+    const lz = new Float32Array([118.02, 45.02, 3.25]);
+    const fzRaw = quantiseHeights(fz, { encoding });
+    const lzRaw = quantiseHeights(lz, { encoding });
+    for (let i = 0; i < fz.length; i += 1) {
+      const derived = (fzRaw[i] - lzRaw[i]) * encoding.scale;
+      expect(Math.abs(derived - (fz[i] - lz[i]))).toBeLessThanOrEqual(encoding.scale + 1e-9);
+    }
+    // Tighter than the stored dz layer's own half-step, which is the argument.
+    expect(encoding.scale).toBeLessThan(dzScaleOffset().scale / 2);
+  });
+
+  it('passes LZ through untouched but maps its nodata sentinel to NaN', () => {
+    const { values, clamped } = lzChannelSpec().combine([new Float32Array([12.5, -9999, 0])]);
+    expect(values[0]).toBeCloseTo(12.5);
+    expect(values[1]).toBeNaN();
+    expect(values[2]).toBe(0);
+    expect(clamped).toBe(0);
+  });
+
+  it('needs one product for LZ and two for dz', () => {
+    expect(lzChannelSpec().needs).toEqual(['LZ']);
+    expect(dzChannelSpec().needs).toEqual(['FZ', 'LZ']);
+  });
+});
+
+describe('passThrough', () => {
+  it('turns every nodata sentinel the composite uses into NaN', () => {
+    const out = passThrough(new Float32Array([1.5, -9999, -3.4028234663852886e38, Number.NaN, 0]));
+    expect(out[0]).toBeCloseTo(1.5);
+    expect([out[1], out[2], out[3]].every(Number.isNaN)).toBe(true);
+    expect(out[4]).toBe(0);
   });
 });

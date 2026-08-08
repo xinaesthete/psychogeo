@@ -477,11 +477,10 @@ disk was 533.21 MiB from 959.97 MiB. Skipped shards now count towards the
 level, and the source total comes from the scan, which knows every leaf's size
 without reading it.
 
-## The dz channel (`dz-zarr`)
+## Channels from the source rasters (`channel-zarr`)
 
 The second channel, and so the first real test of the claim that this layout
-makes siblings rather than parallel directory trees. It holds `height.aux.dz`,
-first return minus last return.
+makes siblings rather than parallel directory trees.
 
 It cannot be transcoded like the heights: the v2 archive is FZ only — 150,474
 codestreams, one channel — so the difference has to be taken back at the DEFRA
@@ -510,6 +509,57 @@ against FZ − LZ recomputed from the source rasters — which checks placement 
 encoding together, since a chunk written to the wrong coordinate still decodes
 perfectly. RMSE 1.4–2.0 cm per quad, worst case exactly half a step, nodata
 agreeing exactly.
+
+### Store LZ, not dz
+
+dz was predicated on a difference being cheap to store. It is not — it costs
+~58% of what the heights cost, because a difference of two surfaces is
+noise-dominated where terrain is not. That premise gone, the question becomes
+whether to store the last-return *surface* instead and let dz be derived.
+
+The answer is yes, and not marginally. Because both surfaces sit on the height
+channel's scale and offset, the offset cancels:
+
+```
+fz − lz = (fz_raw − lz_raw) × scale
+```
+
+so dz comes back in raw code space with no extra machinery. Measured on SU42,
+against dz recomputed from the float source:
+
+| | RMSE | worst | nodata |
+|---|---|---|---|
+| stored `height.aux.dz` @ 10 cm | 1.56–2.03 cm | 5.00 cm | exact |
+| derived from FZ and LZ | **0.66–0.72 cm** | **2.18–2.22 cm** | exact |
+
+Derived dz is **2.3× more accurate than the layer built to hold it**, bounded by
+two half-steps of 10.8 mm rather than one half-step of 50 mm. Nodata is exactly
+right because each surface carries its own reserved code and the intersection
+falls out. So LZ does not merely replace dz — it strictly dominates it, and adds
+a real surface that renders and can be analysed in its own right.
+
+Same 100 chunks of SU42, level 0:
+
+| | size |
+|---|---|
+| `height.dsm.fz` | 66.98 MiB |
+| `height.dsm.lz` | **56.76 MiB** |
+| `height.aux.dz` | 38.68 MiB |
+
+LZ costs 47% more than dz, and 85% of what FZ costs — it is a terrain-like
+surface and compresses like one. Nationally that projects to ~63 GiB against
+~43 GiB for dz. It also runs faster, 22 s against 35 s for the same cell, since
+it reads one raster per quad rather than two, and it covers more ground: 5,875
+quads carry LZ against the 5,735 that carry both.
+
+One constraint this creates. FZ and LZ **must** be reduced identically going up
+the pyramid, or their difference stops meaning anything above level 0 — a
+peak-reduced FZ measured against a mean-reduced LZ is not a canopy height. Both
+use `heightReduction`, and that sharing is the reason it lives in
+`pyramidBuild.ts` rather than in either pass.
+
+`height.aux.dz` is kept as an option in the pass because the comparison is the
+argument, but it is not the one to build.
 
 ### Lossy encoding is not worth it here
 
@@ -552,12 +602,14 @@ accuracy of the source and stops being free.
 
 ## Open
 
-- **What step dz should ship at.** 10 cm is what SU42 was built with; the
-  measurement above argues for 20 cm. Not changed unilaterally because it is a
-  quality decision about the data rather than a correctness one, and it costs a
-  re-run.
-- **dz nationally.** Only SU42 exists so far. ~14 h serial, which is the same
-  argument for the worker pool the height pass already makes.
+- **LZ nationally.** Only SU42 exists so far, ~22 s for a 10 km cell, so roughly
+  9 h serial for 5,875 quads — the same argument for the worker pool the height
+  pass already makes.
+- **Whether to keep the stored dz layer at all.** SU42 has one, 42 MiB, now
+  superseded by derived dz. Left in place rather than deleted because it is the
+  evidence for the comparison and rebuilds in 35 s.
+- **Deriving dz in the reader.** The subtraction is exact and cheap but nothing
+  in the browser does it yet; the tile pipeline fetches one channel per tile.
 - **zfp was prototyped and lost** — see [python/codec-eval](../../python/codec-eval/README.md).
   At matched error it is 30–40% larger than uint16 + lossless J2K, because a
   1 km height tile spans ~100–200 m and 16 bits fits that far better than

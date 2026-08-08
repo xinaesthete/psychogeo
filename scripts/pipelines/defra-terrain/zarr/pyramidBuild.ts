@@ -38,6 +38,24 @@ export type LevelSummary = {
 /** How a level is reduced from the one below it. */
 export type Reduction = { readonly blockSize: number; readonly bias: number };
 
+/**
+ * Peak-preserving sub-block edge, in pixels of the *source* level.
+ *
+ * The peak surface has to be extracted at a fixed ground scale — roughly one
+ * tree crown — and every coarser level then area-averages that same surface.
+ * Mixing the two makes adjacent levels statistically inconsistent, which is
+ * what makes LOD transitions pop. At 1 m a 4 px block is ~4 m; above that the
+ * source is already a peak surface, so plain area mean is correct.
+ *
+ * Shared by every height-like channel, and that sharing is load-bearing: FZ and
+ * LZ have to be reduced identically or their difference stops meaning anything
+ * above level 0, where a peak-reduced FZ would be measured against a
+ * mean-reduced LZ.
+ */
+export function heightReduction(sourceLevel: number): Reduction {
+  return sourceLevel === 0 ? { blockSize: LEVEL_FACTOR, bias: 1 } : { blockSize: 1, bias: 0 };
+}
+
 export function ditherFor(dither: boolean, seed: number, coord: readonly [number, number]) {
   if (!dither) return undefined;
   // Vary by chunk so a single pattern does not tile across the country, but

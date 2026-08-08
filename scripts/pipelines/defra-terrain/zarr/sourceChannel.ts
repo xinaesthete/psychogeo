@@ -1,10 +1,11 @@
 import path from 'node:path';
 import { readRasterSource } from '../raster.ts';
 import { scanDefraZips, type DefraTileGroup } from '../scan.ts';
+import type { DefraReturnKind } from '../types.ts';
 import { gridRefToBounds, normalizeGridRef } from '../v2/osgb.ts';
 import type { TerrainManifestV2 } from '../v2/types.ts';
 import { encodeChunk } from './chunkCodec.ts';
-import { quantiseHeights, type ScaleOffset } from './globalScale.ts';
+import { globalScaleOffset, quantiseHeights, type ScaleOffset } from './globalScale.ts';
 import { NATIONAL_EXTENT } from './grid.ts';
 import { CHUNK_PIXELS, renormalisedLevels, type RenormLevel } from './levels.ts';
 import {
@@ -12,6 +13,7 @@ import {
   ditherFor,
   fileSize,
   groupByShard,
+  heightReduction,
   placeInShard,
   writeJson,
   writeOneShard,
@@ -27,30 +29,32 @@ import {
 } from './storeMetadata.ts';
 
 /**
- * dz — first return minus last return — as a sibling channel of the heights.
+ * Channels built from the DEFRA source rasters rather than from the v2 archive.
  *
- * Where the height channel is transcoded from the v2 pyramid, dz cannot be:
- * the archive holds FZ only, so the difference has to be taken back at the
- * source, from the FZ and LZ composite rasters. Everything above level 0 is
- * then the same pyramid the heights use.
+ * The archive holds first return only, so anything involving the last return
+ * has to be taken back at the source, from the FZ/LZ composite zips. Everything
+ * above level 0 is then the same pyramid the heights use.
  *
- * What the numbers mean is worth stating plainly, because "canopy height" is
- * the obvious reading and it is not quite right. The composite merges surveys
- * flown at different times, so LZ can sit above FZ over the same ground and a
- * fifth to a third of samples come out negative. Vegetation and buildings are
- * the signal; the negatives are survey disagreement, and they are kept rather
- * than clamped so that disagreement stays visible instead of looking like flat
- * ground.
+ * Two channels are available and they are not equals. `height.dsm.lz` stores
+ * the last-return surface itself; `height.aux.dz` stores the difference. dz was
+ * the original plan on the theory that a difference is cheap, and measurement
+ * did not bear that out — see the plan doc. Storing LZ costs ~34% more than
+ * storing dz, but dz then comes back exactly, and *more* accurately, as
+ * `(fz_raw - lz_raw) * scale`, because both surfaces share the height channel's
+ * scale and the offset cancels. LZ is the one to build.
  */
 
+export const LZ_CHANNEL_ID = 'height.dsm.lz';
 export const DZ_CHANNEL_ID = 'height.aux.dz';
 
 /**
  * Deliberately coarse. Quantisation error at a 10 cm step measures ~1 cm RMSE
  * against the float source with a 5 cm worst case, an order of magnitude inside
- * the composite's own ~±15 cm vertical accuracy — so the finer steps the height
- * channel uses would be spending bits on survey noise. Range covers the
- * observed −30..+68 m with room for tall structures.
+ * the composite's own ~±15 cm vertical accuracy. Range covers the observed
+ * −30..+68 m with room for tall structures.
+ *
+ * Only used by the stored dz channel. Derived dz is bounded at 2.15 cm — twice
+ * as tight — by the two half-steps of the height encoding.
  */
 export const DZ_STEP_METRES = 0.1;
 export const DZ_MIN_METRES = -40;
@@ -61,50 +65,119 @@ export function dzScaleOffset(): ScaleOffset {
   return { scale: DZ_STEP_METRES, offset: DZ_MIN_METRES - DZ_STEP_METRES };
 }
 
-export type DzOptions = {
-  /** Directory of DEFRA composite zips, holding matched FZ and LZ products. */
+export type SourceChannelSpec = {
+  readonly channelId: string;
+  /** Source products needed per quad; all must be present or the quad is skipped. */
+  readonly needs: readonly DefraReturnKind[];
+  readonly encoding: ScaleOffset;
+  /** Combine the needed rasters into one field of metres, NaN for absent. */
+  readonly combine: (rasters: Float32Array[]) => { values: Float32Array; clamped: number };
+  readonly measure: string;
+  readonly description: string;
+  readonly sourceDatasetId: string;
+};
+
+const COMPOSITE_DATASET_ID = 'defra-lidar-composite-1m-2022';
+
+/**
+ * The last-return surface, on exactly the height channel's encoding.
+ *
+ * Sharing the scale is what makes dz derivable: `fz - lz = (fz_raw - lz_raw) *
+ * scale`, since the offset cancels. Sharing the *reduction* is what keeps that
+ * true above level 0, which is why this uses `heightReduction` like FZ rather
+ * than anything tuned for a ground surface.
+ */
+export function lzChannelSpec(): SourceChannelSpec {
+  return {
+    channelId: LZ_CHANNEL_ID,
+    needs: ['LZ'],
+    encoding: globalScaleOffset(),
+    combine: (rasters) => ({ values: passThrough(rasters[0]), clamped: 0 }),
+    measure: 'lastReturnSurface',
+    description:
+      'DEFRA 1 m composite last return, on the same scale as height.dsm.fz so that dz is (fz_raw - lz_raw) * scale.',
+    sourceDatasetId: COMPOSITE_DATASET_ID,
+  };
+}
+
+/**
+ * First return minus last return, stored directly.
+ *
+ * Superseded by storing LZ, and kept because it is what SU42 was first built
+ * with and because the comparison is the argument. What the numbers mean is
+ * worth stating plainly, since "canopy height" is the obvious reading and is
+ * not quite right: the composite merges surveys flown at different times, so LZ
+ * can sit above FZ over the same ground and a fifth to a third of samples come
+ * out negative. Those are kept rather than clamped, so survey disagreement
+ * stays visible instead of reading as flat ground.
+ */
+export function dzChannelSpec(): SourceChannelSpec {
+  return {
+    channelId: DZ_CHANNEL_ID,
+    needs: ['FZ', 'LZ'],
+    encoding: dzScaleOffset(),
+    combine: (rasters) => differenceRasters(rasters[0], rasters[1]),
+    measure: 'firstReturnMinusLastReturn',
+    description:
+      'FZ − LZ from the DEFRA 1 m composite. Negative where surveys disagree, not clamped to zero.',
+    sourceDatasetId: COMPOSITE_DATASET_ID,
+  };
+}
+
+export function channelSpecById(channelId: string): SourceChannelSpec {
+  if (channelId === LZ_CHANNEL_ID) return lzChannelSpec();
+  if (channelId === DZ_CHANNEL_ID) return dzChannelSpec();
+  throw new Error(`no source-built channel called ${channelId}`);
+}
+
+export type SourceChannelOptions = {
+  /** Directory of DEFRA composite zips. */
   readonly sourceDir: string;
-  /** An existing renormalised store; dz is added beside the channels in it. */
+  /** An existing renormalised store; the channel is added beside those in it. */
   readonly storeDir: string;
+  readonly spec: SourceChannelSpec;
   readonly gridRefFilter?: string;
   readonly levelCount?: number;
   readonly dither?: boolean;
   readonly ditherSeed?: number;
-  readonly onProgress?: (event: DzProgressEvent) => void;
+  readonly onProgress?: (event: SourceChannelProgressEvent) => void;
 };
 
-export type DzProgressEvent =
+export type SourceChannelProgressEvent =
   | { readonly kind: 'scan'; readonly quads: number; readonly skipped: number }
   | { readonly kind: 'quad'; readonly tileRef: string; readonly done: number; readonly total: number }
   | PyramidProgressEvent;
 
-export type DzSummary = {
+export type SourceChannelSummary = {
+  readonly channelId: string;
   readonly encoding: ScaleOffset;
   readonly quads: number;
-  readonly skippedNoLz: number;
+  readonly skippedIncomplete: number;
   readonly levels: readonly LevelSummary[];
   readonly totalBytes: number;
   readonly clampedSamples: number;
 };
 
-/** Quads with both returns present. dz needs the pair; FZ alone is not a difference. */
-export function pairedQuads(
+/** Quads carrying every product the channel needs. */
+export function quadsWith(
   groups: readonly DefraTileGroup[],
+  needs: readonly DefraReturnKind[],
   gridRefFilter?: string,
-): { readonly paired: DefraTileGroup[]; readonly skippedNoLz: number } {
+): { readonly usable: DefraTileGroup[]; readonly skippedIncomplete: number } {
   const filter = gridRefFilter ? normalizeGridRef(gridRefFilter) : undefined;
-  const paired: DefraTileGroup[] = [];
-  let skippedNoLz = 0;
+  const usable: DefraTileGroup[] = [];
+  let skippedIncomplete = 0;
   for (const group of groups) {
     if (filter && !normalizeGridRef(group.tileRef).startsWith(filter)) continue;
-    if (!group.sources.FZ) continue;
-    if (!group.sources.LZ) {
-      skippedNoLz += 1;
+    const present = needs.filter((kind) => group.sources[kind] !== undefined);
+    if (present.length === needs.length) {
+      usable.push(group);
       continue;
     }
-    paired.push(group);
+    // Nothing at all is not a gap worth reporting; a partial set is.
+    if (present.length > 0) skippedIncomplete += 1;
   }
-  return { paired, skippedNoLz };
+  return { usable, skippedIncomplete };
 }
 
 /** The store-grid chunks a quad's extent covers, at level 0. */
@@ -162,6 +235,13 @@ export function chunkFromRaster(
 
 const isNodata = (value: number) => !Number.isFinite(value) || value <= -9999 || value < -1e30;
 
+/** A source raster's own nodata sentinels turned into NaN, values otherwise kept. */
+export function passThrough(values: Float32Array): Float32Array {
+  const out = new Float32Array(values.length);
+  for (let i = 0; i < values.length; i += 1) out[i] = isNodata(values[i]) ? Number.NaN : values[i];
+  return out;
+}
+
 /** FZ − LZ, with either side missing making the difference missing. */
 export function differenceRasters(
   first: Float32Array,
@@ -199,19 +279,22 @@ async function registerChannel(storeDir: string, channelId: string): Promise<voi
   );
 }
 
-export async function buildDzChannel(options: DzOptions): Promise<DzSummary> {
+export async function buildSourceChannel(
+  options: SourceChannelOptions,
+): Promise<SourceChannelSummary> {
+  const { spec } = options;
   const levels = renormalisedLevels(options.levelCount);
-  const encoding = dzScaleOffset();
+  const encoding = spec.encoding;
   const dither = options.dither ?? false;
   const seed = options.ditherSeed ?? 1;
-  const channelDir = path.join(options.storeDir, DZ_CHANNEL_ID);
+  const channelDir = path.join(options.storeDir, spec.channelId);
 
   const groups = await scanDefraZips(options.sourceDir);
-  const { paired, skippedNoLz } = pairedQuads(groups, options.gridRefFilter);
-  options.onProgress?.({ kind: 'scan', quads: paired.length, skipped: skippedNoLz });
+  const { usable: paired, skippedIncomplete } = quadsWith(groups, spec.needs, options.gridRefFilter);
+  options.onProgress?.({ kind: 'scan', quads: paired.length, skipped: skippedIncomplete });
   if (paired.length === 0) {
     throw new Error(
-      `no quads with both FZ and LZ under ${options.sourceDir}` +
+      `no quads with ${spec.needs.join(' and ')} under ${options.sourceDir}` +
         (options.gridRefFilter ? ` matching ${options.gridRefFilter}` : ''),
     );
   }
@@ -220,15 +303,14 @@ export async function buildDzChannel(options: DzOptions): Promise<DzSummary> {
   await writeJson(
     path.join(channelDir, 'zarr.json'),
     buildChannelMetadata({
-      channelId: DZ_CHANNEL_ID,
-      sourceDatasetId: 'defra-lidar-composite-1m-2022',
+      channelId: spec.channelId,
+      sourceDatasetId: spec.sourceDatasetId,
       crs: rootCrs,
       levels,
       encoding,
       dithered: dither,
-      measure: 'firstReturnMinusLastReturn',
-      description:
-        'FZ − LZ from the DEFRA 1 m composite. Negative where surveys disagree, not clamped to zero.',
+      measure: spec.measure,
+      description: spec.description,
     }),
   );
 
@@ -277,18 +359,22 @@ export async function buildDzChannel(options: DzOptions): Promise<DzSummary> {
 
     const entries: ShardChunk[] = [];
     for (const group of quads) {
-      const fz = await readRasterSource(group.sources.FZ!);
-      const lz = await readRasterSource(group.sources.LZ!);
-      if (fz.width !== lz.width || fz.height !== lz.height) {
-        throw new Error(
-          `${group.tileRef}: FZ is ${fz.width}x${fz.height} but LZ is ${lz.width}x${lz.height}`,
-        );
+      const rasters = [];
+      for (const kind of spec.needs) rasters.push(await readRasterSource(group.sources[kind]!));
+      const [reference] = rasters;
+      for (let i = 1; i < rasters.length; i += 1) {
+        if (rasters[i].width !== reference.width || rasters[i].height !== reference.height) {
+          throw new Error(
+            `${group.tileRef}: ${spec.needs[0]} is ${reference.width}x${reference.height} but ` +
+              `${spec.needs[i]} is ${rasters[i].width}x${rasters[i].height}`,
+          );
+        }
       }
-      const { values, clamped } = differenceRasters(fz.pixels, lz.pixels);
+      const { values, clamped } = spec.combine(rasters.map((raster) => raster.pixels));
       clampedSamples += clamped;
 
-      for (const coord of chunksForExtent(level0, fz.extent)) {
-        const tile = chunkFromRaster(values, fz, coord, level0);
+      for (const coord of chunksForExtent(level0, reference.extent)) {
+        const tile = chunkFromRaster(values, reference, coord, level0);
         if (!tile.some((value) => Number.isFinite(value))) continue;
         const raw = quantiseHeights(tile, { encoding, dither: ditherFor(dither, seed, coord) });
         const bytes = await encodeChunk(raw, CHUNK_PIXELS, CHUNK_PIXELS);
@@ -317,12 +403,11 @@ export async function buildDzChannel(options: DzOptions): Promise<DzSummary> {
     levels,
     encoding,
     baseCoords: writtenCoords,
-    // Plain area mean at every level. The height channel preserves peaks at
-    // level 0 so tree tops survive, but dz is already a difference: the mean of
-    // a difference is the difference of the means, which keeps a coarse dz
-    // readable as "mean structure height over this cell". Peak-preserving would
-    // also amplify the survey-disagreement outliers.
-    reduction: () => ({ blockSize: 1, bias: 0 }),
+    // Every height-like channel reduces the same way, and for LZ that is not
+    // cosmetic: FZ and LZ must be reduced identically or their difference stops
+    // meaning anything above level 0. dz, already a difference, takes plain
+    // area mean — the mean of a difference is the difference of the means.
+    reduction: spec.channelId === DZ_CHANNEL_ID ? () => ({ blockSize: 1, bias: 0 }) : heightReduction,
     levelMetadata: (level) => buildRenormLevelMetadata(level, encoding),
     dither,
     ditherSeed: seed,
@@ -330,12 +415,13 @@ export async function buildDzChannel(options: DzOptions): Promise<DzSummary> {
   });
   summary.push(...coarse);
 
-  await registerChannel(options.storeDir, DZ_CHANNEL_ID);
+  await registerChannel(options.storeDir, spec.channelId);
 
   return {
+    channelId: spec.channelId,
     encoding,
     quads: paired.length,
-    skippedNoLz,
+    skippedIncomplete,
     levels: summary,
     totalBytes: summary.reduce((total, level) => total + level.bytes, 0),
     clampedSamples,

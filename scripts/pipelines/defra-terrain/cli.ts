@@ -28,7 +28,12 @@ import { transcodeToZarr, type TranscodeProgressEvent } from './zarr/transcode.t
 import { renormaliseToZarr, type RenormaliseProgressEvent } from './zarr/renormalise.ts';
 import { buildStoreIndex } from './zarr/storeIndex.ts';
 import { resortStore, type ResortProgressEvent } from './zarr/shardResort.ts';
-import { buildDzChannel, type DzProgressEvent } from './zarr/dzChannel.ts';
+import {
+  buildSourceChannel,
+  channelSpecById,
+  LZ_CHANNEL_ID,
+  type SourceChannelProgressEvent,
+} from './zarr/sourceChannel.ts';
 
 const startTime = Date.now();
 
@@ -85,11 +90,13 @@ function usage(): string {
     '      [--region <gridRef>] [--dither] [--levels <n>] [--progress]',
     '        Re-encodes to one national scale/offset and a 4x pyramid of 1000px chunks.',
     '        Drops the per-chunk encoding arrays; smaller output, but decodes every chunk.',
-    '  pnpm pipeline:defra -- dz-zarr --input <composite-zips-dir> --store <zarr-dir>',
-    '      [--region <gridRef>] [--levels <n>] [--dither] [--progress]',
-    '        Adds height.aux.dz beside the existing channels: first return minus last',
-    '        return, taken from the FZ/LZ source pair since the v2 archive holds FZ only.',
-    '        Quantised at 10 cm, and negative where the surveys disagree.',
+    '  pnpm pipeline:defra -- channel-zarr --input <composite-zips-dir> --store <zarr-dir>',
+    '      [--channel height.dsm.lz|height.aux.dz] [--region <gridRef>] [--levels <n>] [--progress]',
+    '        Adds a channel built from the DEFRA source rasters, which the v2 archive',
+    '        cannot supply because it holds first return only.',
+    '        height.dsm.lz (default) stores the last-return surface on the height',
+    '        channel scale, so dz comes back exactly as (fz_raw - lz_raw) * scale and',
+    '        twice as accurately as storing it. height.aux.dz stores the difference.',
     '  pnpm pipeline:defra -- resort-zarr --store <zarr-dir> [--verify] [--dry-run] [--progress]',
     '        Rewrites shards written before the writer sorted, so inner chunks sit in',
     '        slot order and a run of neighbours is a run of bytes. Permutes byte ranges',
@@ -154,16 +161,16 @@ function parseArgs(argv: string[]): CliArgs {
   };
 }
 
-function formatDzProgress(event: DzProgressEvent): string {
+function formatSourceChannelProgress(event: SourceChannelProgressEvent): string {
   switch (event.kind) {
     case 'scan':
-      return `[dz] ${event.quads} quads with both returns, ${event.skipped} skipped for want of LZ`;
+      return `[channel] ${event.quads} quads usable, ${event.skipped} skipped for a missing product`;
     case 'quad':
-      return `[dz] ${event.done}/${event.total} ${event.tileRef}`;
+      return `[channel] ${event.done}/${event.total} ${event.tileRef}`;
     case 'chunk':
-      return `[dz] level ${event.level}: ${event.done}/${event.total} chunks`;
+      return `[channel] level ${event.level}: ${event.done}/${event.total} chunks`;
     case 'level':
-      return `[dz] level ${event.level} done: ${event.chunks} chunks, ${formatBytes(event.bytes)}`;
+      return `[channel] level ${event.level} done: ${event.chunks} chunks, ${formatBytes(event.bytes)}`;
   }
 }
 
@@ -495,22 +502,27 @@ async function main(): Promise<void> {
     );
     return;
   }
-  if (args.command === 'dz-zarr') {
-    if (!args.input) throw new Error('--input is required for dz-zarr');
+  if (args.command === 'channel-zarr') {
+    if (!args.input) throw new Error('--input is required for channel-zarr');
     const storeDir = args.store ?? args.out;
-    if (!storeDir) throw new Error('--store is required for dz-zarr');
-    const summary = await buildDzChannel({
+    if (!storeDir) throw new Error('--store is required for channel-zarr');
+    const spec = channelSpecById(args.channel ?? LZ_CHANNEL_ID);
+    const summary = await buildSourceChannel({
       sourceDir: args.input,
       storeDir,
+      spec,
       gridRefFilter: args.region ?? args.cell,
       levelCount: args.levels ? Number.parseInt(args.levels, 10) : undefined,
       dither: args.dither,
-      onProgress: args.progress ? (event) => console.log(formatDzProgress(event)) : undefined,
+      onProgress: args.progress
+        ? (event) => console.log(formatSourceChannelProgress(event))
+        : undefined,
     });
     console.log(
       [
-        `dz step ${(summary.encoding.scale * 100).toFixed(1)} cm, offset ${summary.encoding.offset.toFixed(2)} m`,
-        `${summary.quads} quads paired, ${summary.skippedNoLz} skipped for want of LZ`,
+        `${summary.channelId}: step ${(summary.encoding.scale * 1000).toFixed(2)} mm, ` +
+          `offset ${summary.encoding.offset.toFixed(3)} m`,
+        `${summary.quads} quads, ${summary.skippedIncomplete} skipped for a missing product`,
         ...summary.levels.map(
           (level) =>
             `  level ${level.level} (${level.resolutionMetres} m): ${level.chunks} chunks → ` +
@@ -518,8 +530,8 @@ async function main(): Promise<void> {
         ),
         `total ${formatBytes(summary.totalBytes)}`,
         summary.clampedSamples > 0
-          ? `${summary.clampedSamples} samples clamped to the dz range`
-          : 'no samples hit the dz range limits',
+          ? `${summary.clampedSamples} samples clamped to the encodable range`
+          : 'no samples hit the range limits',
         'channel registered — re-run index-zarr',
       ].join('\n'),
     );
