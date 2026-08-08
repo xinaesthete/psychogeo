@@ -561,7 +561,7 @@ use `heightReduction`, and that sharing is the reason it lives in
 `height.aux.dz` is kept as an option in the pass because the comparison is the
 argument, but it is not the one to build.
 
-### Lossy encoding is not worth it here
+### Lossy encoding is not worth it for dz
 
 The v1 manifest always described dz as low-precision and gave it
 `lossyQuality: 0.2`, so irreversible coding was the obvious lever once dz turned
@@ -599,6 +599,48 @@ national projection is ~58 GiB and ~14 h serial; 20 cm would take it to ~48 GiB
 with a bounded 10 cm worst case, still comfortably inside the composite's own
 ~±15 cm vertical accuracy. 50 cm is where the error starts to exceed the
 accuracy of the source and stops being free.
+
+### Lossy is not worth it for LZ either, for different reasons
+
+The dz result does not carry over and should not be assumed to: dz is a
+noise-dominated difference, LZ is a smooth terrain surface, and irreversible 9/7
+is built for the latter. Measured separately, lossy does genuinely compress LZ —
+33% off at qstep 5e-5, where dz got nothing useful. It is still the wrong call.
+
+| qstep | KiB/chunk | vs lossless | LZ worst | derived dz worst | bare ground still exactly 0 | nodata broken |
+|---|---|---|---|---|---|---|
+| lossless | 589 | 100% | 1.1 cm | **2.2 cm** | **100%** | 0 |
+| 5e-6 | 743 | 126% | 3.2 cm | 4.2 cm | 100% | 0 |
+| 1e-5 | 633 | 107% | 3.2 cm | 4.3 cm | 93.8% | 5 |
+| 2e-5 | 524 | 89% | 5.7 cm | 6.6 cm | 68.4% | 188 |
+| 5e-5 | 397 | 67% | 15.3 cm | 15.3 cm | 40.3% | 1,268 |
+| 1e-4 | 311 | 53% | 35.1 cm | 34.2 cm | 28.0% | 2,991 |
+
+**It forfeits the reason LZ was chosen.** At the setting that saves 33%, derived
+dz is 15.3 cm worst — three times worse than the stored dz layer rejected above
+at 5 cm, which costs about the same (43 GiB against 42). Lossy LZ is dominated
+by the thing it replaced.
+
+**The bare-ground collapse is the real damage, and RMSE hides it.** FZ and LZ
+are the same measurement over open ground, so lossless coding makes dz there
+*exactly* zero across about a fifth of the country. At the first setting that
+saves anything at all — 11% — a third of those pixels stop agreeing, and dz
+becomes low-amplitude speckle over fields instead of clean zero. That is a
+change in what the layer looks like, not a shift in an error average.
+
+**Nodata breaks categorically**, as it does for dz.
+
+And as with dz, lossy is *larger* than lossless until qstep 2e-5: the first two
+settings cost 26% and 7% extra for strictly worse output.
+
+One lever is closed off here that was open for dz. dz could be shrunk by
+coarsening its scalar step; LZ cannot, because it has to share FZ's scale or the
+offsets stop cancelling and the raw-space subtraction goes away. Lossless at the
+height scale is effectively the only configuration that keeps derived dz cheap
+and exact.
+
+**National LZ is therefore ~63 GiB lossless**, taking the store to ~138 GiB. If
+that is too much to host, the honest lever is coverage rather than fidelity.
 
 ## Open
 
