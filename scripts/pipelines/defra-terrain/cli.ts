@@ -172,10 +172,14 @@ function formatSourceChannelProgress(event: SourceChannelProgressEvent): string 
       );
     case 'quad':
       return `[channel] ${event.done}/${event.total} ${event.tileRef}`;
+    case 'unreadable':
+      return `[channel] UNREADABLE ${event.tileRef}: ${event.reason}`;
     case 'chunk':
       return `[channel] level ${event.level}: ${event.done}/${event.total} chunks`;
     case 'level':
       return `[channel] level ${event.level} done: ${event.chunks} chunks, ${formatBytes(event.bytes)}`;
+    case 'failed':
+      return `[channel] FAILED level ${event.level} chunk ${event.coord.join(',')}: ${event.reason}`;
   }
 }
 
@@ -196,6 +200,8 @@ function formatRenormaliseProgress(event: RenormaliseProgressEvent): string {
       return `[zarr] level ${event.level}: ${event.done}/${event.total} chunks`;
     case 'level':
       return `[zarr] level ${event.level} done: ${event.chunks} chunks, ${formatBytes(event.bytes)}`;
+    case 'failed':
+      return `[zarr] FAILED level ${event.level} chunk ${event.coord.join(',')}: ${event.reason}`;
   }
 }
 
@@ -490,6 +496,9 @@ async function main(): Promise<void> {
             `${level.objects} objects, ${formatBytes(level.bytes)}`,
         ),
         `total ${formatBytes(summary.totalBytes)} from ${formatBytes(summary.sourceBytes)} of level-0 source — ${saved}`,
+        ...(summary.failures > 0
+          ? [`${summary.failures} chunks could not be built and are holes in the store`]
+          : []),
       ].join('\n'),
     );
     return;
@@ -530,6 +539,12 @@ async function main(): Promise<void> {
         `${summary.quads} quads, ${summary.skippedIncomplete} skipped for a missing product`,
         ...(summary.unplaceable.length > 0
           ? [`${summary.unplaceable.length} unplaceable on the sheet: ${summary.unplaceable.join(', ')}`]
+          : []),
+        ...(summary.unreadable.length > 0
+          ? [
+              `${summary.unreadable.length} quads unreadable, leaving holes in coverage:`,
+              ...summary.unreadable.map((entry) => `  ${entry.tileRef}: ${entry.reason}`),
+            ]
           : []),
         ...summary.levels.map(
           (level) =>

@@ -25,7 +25,14 @@ import { writeShard, type ShardChunk } from './shardWriter.ts';
 
 export type PyramidProgressEvent =
   | { readonly kind: 'chunk'; readonly level: number; readonly done: number; readonly total: number }
-  | { readonly kind: 'level'; readonly level: number; readonly chunks: number; readonly bytes: number };
+  | { readonly kind: 'level'; readonly level: number; readonly chunks: number; readonly bytes: number }
+  /** One chunk could not be built. Loud, counted, and not fatal. */
+  | {
+      readonly kind: 'failed';
+      readonly level: number;
+      readonly coord: readonly [number, number];
+      readonly reason: string;
+    };
 
 export type LevelSummary = {
   readonly level: number;
@@ -126,6 +133,11 @@ export async function writeOneShard(
   return payload.length;
 }
 
+export type CoarseLevelResult = {
+  readonly levels: LevelSummary[];
+  readonly failures: number;
+};
+
 export type CoarseLevelOptions = {
   readonly channelDir: string;
   readonly levels: readonly RenormLevel[];
@@ -148,11 +160,12 @@ export type CoarseLevelOptions = {
  * which also means the pass exercises the same suffix-then-range access the
  * browser will use, so a mistake shows up locally rather than in the viewer.
  */
-export async function buildCoarseLevels(options: CoarseLevelOptions): Promise<LevelSummary[]> {
+export async function buildCoarseLevels(options: CoarseLevelOptions): Promise<CoarseLevelResult> {
   const { channelDir, levels, encoding } = options;
   const dither = options.dither ?? false;
   const seed = options.ditherSeed ?? 1;
   const summary: LevelSummary[] = [];
+  let failures = 0;
   let writtenCoords: ReadonlyArray<readonly [number, number]> = options.baseCoords;
 
   for (let index = 1; index < levels.length; index += 1) {
@@ -186,38 +199,62 @@ export async function buildCoarseLevels(options: CoarseLevelOptions): Promise<Le
         }
         const pixels = new Float32Array(block * block).fill(Number.NaN);
         let anyChild = false;
+        // A child that will not decode costs its own quadrant of this parent,
+        // which the downsample already handles as absent. Losing a quarter of
+        // one coarse chunk is a far smaller harm than losing the run, but it is
+        // still a hole, so it is reported rather than swallowed.
         for (const childCoord of childChunkCoords(coord)) {
-          const bytes = await reader.read(childCoord);
-          if (!bytes) continue;
-          anyChild = true;
-          const decoded = await decodeChunk(bytes);
-          const heights = dequantiseToHeights(decoded.raw, encoding);
-          const originY = (childCoord[0] % LEVEL_FACTOR) * CHUNK_PIXELS;
-          const originX = (childCoord[1] % LEVEL_FACTOR) * CHUNK_PIXELS;
-          for (let y = 0; y < decoded.height; y += 1) {
-            pixels.set(
-              heights.subarray(y * decoded.width, (y + 1) * decoded.width),
-              (originY + y) * block + originX,
-            );
+          try {
+            const bytes = await reader.read(childCoord);
+            if (!bytes) continue;
+            const decoded = await decodeChunk(bytes);
+            anyChild = true;
+            const heights = dequantiseToHeights(decoded.raw, encoding);
+            const originY = (childCoord[0] % LEVEL_FACTOR) * CHUNK_PIXELS;
+            const originX = (childCoord[1] % LEVEL_FACTOR) * CHUNK_PIXELS;
+            for (let y = 0; y < decoded.height; y += 1) {
+              pixels.set(
+                heights.subarray(y * decoded.width, (y + 1) * decoded.width),
+                (originY + y) * block + originX,
+              );
+            }
+          } catch (error) {
+            failures += 1;
+            options.onProgress?.({
+              kind: 'failed',
+              level: child.level,
+              coord: childCoord,
+              reason: error instanceof Error ? error.message : String(error),
+            });
           }
         }
         if (!anyChild) continue;
 
-        const { blockSize, bias } = options.reduction(child.level);
-        const downsampleSource: DownsampleSource = {
-          pixels,
-          width: block,
-          height: block,
-          resolutionMetres: child.resolutionMetres,
-          // Only used to derive the output extent, which this pass ignores —
-          // placement comes from the chunk coordinate, not the raster extent.
-          extent: { eastMin: 0, eastMax: block, northMin: 0, northMax: block },
-        };
-        const reduced = downsampleReduce(downsampleSource, level.resolutionMetres, blockSize, bias);
-        const raw = quantiseHeights(reduced.pixels, { encoding, dither: ditherFor(dither, seed, coord) });
-        const bytes = await encodeChunk(raw, reduced.width, reduced.height);
-        entries.push({ local: placeInShard(level, coord).local, load: async () => bytes });
-        nextCoords.push(coord);
+        try {
+          const { blockSize, bias } = options.reduction(child.level);
+          const downsampleSource: DownsampleSource = {
+            pixels,
+            width: block,
+            height: block,
+            resolutionMetres: child.resolutionMetres,
+            // Only used to derive the output extent, which this pass ignores —
+            // placement comes from the chunk coordinate, not the raster extent.
+            extent: { eastMin: 0, eastMax: block, northMin: 0, northMax: block },
+          };
+          const reduced = downsampleReduce(downsampleSource, level.resolutionMetres, blockSize, bias);
+          const raw = quantiseHeights(reduced.pixels, { encoding, dither: ditherFor(dither, seed, coord) });
+          const bytes = await encodeChunk(raw, reduced.width, reduced.height);
+          entries.push({ local: placeInShard(level, coord).local, load: async () => bytes });
+          nextCoords.push(coord);
+        } catch (error) {
+          failures += 1;
+          options.onProgress?.({
+            kind: 'failed',
+            level: level.level,
+            coord,
+            reason: error instanceof Error ? error.message : String(error),
+          });
+        }
         processed += 1;
         if (processed % 25 === 0) {
           options.onProgress?.({ kind: 'chunk', level: level.level, done: processed, total: parents.length });
@@ -238,5 +275,5 @@ export async function buildCoarseLevels(options: CoarseLevelOptions): Promise<Le
     writtenCoords = nextCoords;
   }
 
-  return summary;
+  return { levels: summary, failures };
 }

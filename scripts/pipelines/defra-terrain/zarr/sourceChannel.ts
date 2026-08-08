@@ -150,6 +150,7 @@ export type SourceChannelProgressEvent =
       readonly skipped: number;
       readonly unplaceable: readonly string[];
     }
+  | { readonly kind: 'unreadable'; readonly tileRef: string; readonly reason: string }
   | { readonly kind: 'quad'; readonly tileRef: string; readonly done: number; readonly total: number }
   | PyramidProgressEvent;
 
@@ -159,6 +160,8 @@ export type SourceChannelSummary = {
   readonly quads: number;
   readonly skippedIncomplete: number;
   readonly unplaceable: readonly string[];
+  /** Quads whose source rasters could not be read, with the reason. */
+  readonly unreadable: ReadonlyArray<{ tileRef: string; reason: string }>;
   readonly levels: readonly LevelSummary[];
   readonly totalBytes: number;
   readonly clampedSamples: number;
@@ -375,6 +378,7 @@ export async function buildSourceChannel(
   });
 
   const writtenCoords: Array<readonly [number, number]> = [];
+  const unreadable: Array<{ tileRef: string; reason: string }> = [];
   let level0Bytes = 0;
   let clampedSamples = 0;
   let done = 0;
@@ -396,27 +400,37 @@ export async function buildSourceChannel(
 
     const entries: ShardChunk[] = [];
     for (const group of quads) {
-      const rasters = [];
-      for (const kind of spec.needs) rasters.push(await readRasterSource(group.sources[kind]!));
-      const [reference] = rasters;
-      for (let i = 1; i < rasters.length; i += 1) {
-        if (rasters[i].width !== reference.width || rasters[i].height !== reference.height) {
-          throw new Error(
-            `${group.tileRef}: ${spec.needs[0]} is ${reference.width}x${reference.height} but ` +
-              `${spec.needs[i]} is ${rasters[i].width}x${rasters[i].height}`,
-          );
+      // The source set is not curated and at least one of its ~5,900 files is
+      // an unreadable TIFF. A bad file costs its own 5 km of coverage; it must
+      // not cost the other 5,873 quads, so it is named and counted rather than
+      // thrown. A shape mismatch between products is the same kind of fault.
+      try {
+        const rasters = [];
+        for (const kind of spec.needs) rasters.push(await readRasterSource(group.sources[kind]!));
+        const [reference] = rasters;
+        for (let i = 1; i < rasters.length; i += 1) {
+          if (rasters[i].width !== reference.width || rasters[i].height !== reference.height) {
+            throw new Error(
+              `${spec.needs[0]} is ${reference.width}x${reference.height} but ` +
+                `${spec.needs[i]} is ${rasters[i].width}x${rasters[i].height}`,
+            );
+          }
         }
-      }
-      const { values, clamped } = spec.combine(rasters.map((raster) => raster.pixels));
-      clampedSamples += clamped;
+        const { values, clamped } = spec.combine(rasters.map((raster) => raster.pixels));
+        clampedSamples += clamped;
 
-      for (const coord of chunksForExtent(level0, reference.extent)) {
-        const tile = chunkFromRaster(values, reference, coord, level0);
-        if (!tile.some((value) => Number.isFinite(value))) continue;
-        const raw = quantiseHeights(tile, { encoding, dither: ditherFor(dither, seed, coord) });
-        const bytes = await encodeChunk(raw, CHUNK_PIXELS, CHUNK_PIXELS);
-        entries.push({ local: placeInShard(level0, coord).local, load: async () => bytes });
-        writtenCoords.push(coord);
+        for (const coord of chunksForExtent(level0, reference.extent)) {
+          const tile = chunkFromRaster(values, reference, coord, level0);
+          if (!tile.some((value) => Number.isFinite(value))) continue;
+          const raw = quantiseHeights(tile, { encoding, dither: ditherFor(dither, seed, coord) });
+          const bytes = await encodeChunk(raw, CHUNK_PIXELS, CHUNK_PIXELS);
+          entries.push({ local: placeInShard(level0, coord).local, load: async () => bytes });
+          writtenCoords.push(coord);
+        }
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        unreadable.push({ tileRef: group.tileRef, reason });
+        options.onProgress?.({ kind: 'unreadable', tileRef: group.tileRef, reason });
       }
       done += 1;
       options.onProgress?.({ kind: 'quad', tileRef: group.tileRef, done, total: paired.length });
@@ -450,7 +464,7 @@ export async function buildSourceChannel(
     ditherSeed: seed,
     onProgress: options.onProgress,
   });
-  summary.push(...coarse);
+  summary.push(...coarse.levels);
 
   await registerChannel(options.storeDir, spec.channelId);
 
@@ -460,6 +474,7 @@ export async function buildSourceChannel(
     quads: paired.length,
     skippedIncomplete,
     unplaceable,
+    unreadable,
     levels: summary,
     totalBytes: summary.reduce((total, level) => total + level.bytes, 0),
     clampedSamples,

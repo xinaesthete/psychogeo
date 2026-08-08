@@ -642,8 +642,41 @@ and exact.
 **National LZ is therefore ~63 GiB lossless**, taking the store to ~138 GiB. If
 that is too much to host, the honest lever is coverage rather than fidelity.
 
+### A failing tile must not abort the run
+
+Learned the hard way on the first national LZ attempt, which died 1h46m in on
+`SJ69se` and then burned its five retries hitting the same file. Two separate
+faults, both in the first 1,600 of 5,874 uncurated source quads:
+
+- **`OV00sw` cannot be placed.** The grid library rejects the bottom row of the
+  O square (OU, OV, OW) and DEFRA ships an OV00 quad. Offshore, 2.58 MB for a
+  5 km tile, so near enough all nodata.
+- **`LZ SJ69se` is a corrupt download.** `unzip -t` reports a bad CRC on the
+  `.tif` entry, and the zip is 63.6 MB against its neighbours' 66–68 MB. Its FZ
+  twin and all four neighbouring quads read fine, so it is one bad file rather
+  than a parser limitation — it can be re-fetched.
+
+Neither is interesting in itself. What matters is that either one could end a
+six-hour pass, so the rule is now general across the passes: **a tile that
+cannot be read, placed or decoded costs its own ground and nothing more.** It is
+counted, named with its reason on its own log line, and repeated in the closing
+summary, because a store with holes must not look like a store without them.
+This covers the source-channel quad read, the renormalise level-0 chunk read —
+which used to throw `vanished from` — and each child decode in the coarse-level
+builder.
+
+Verified byte-identical on NT60 against a baseline captured before any of it, so
+the happy path is untouched.
+
+One consequence to remember when repairing a source file: the shard containing
+the hole is already written, and resume skips whole shards. Re-fetching
+`SJ69se` means deleting `height.dsm.lz/0/c/90/36` before re-running, or the pass
+will never look at it again.
+
 ## Open
 
+- **`LZ SJ69se` is a corrupt source download**, leaving a 5 km hole in LZ where
+  FZ has data. Re-fetch, delete `height.dsm.lz/0/c/90/36`, re-run.
 - **LZ nationally.** Only SU42 exists so far, ~22 s for a 10 km cell, so roughly
   9 h serial for 5,875 quads — the same argument for the worker pool the height
   pass already makes.

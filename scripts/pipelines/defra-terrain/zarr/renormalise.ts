@@ -52,6 +52,8 @@ export type RenormaliseSummary = {
   readonly levels: readonly LevelSummary[];
   readonly sourceBytes: number;
   readonly totalBytes: number;
+  /** Chunks that could not be built. Each is a hole, and each was logged.  */
+  readonly failures: number;
 };
 
 type SourceChunk = {
@@ -135,6 +137,7 @@ async function runRenormalise(
   const summary: RenormaliseSummary['levels'][number][] = [];
   let sourceBytes = 0;
   let totalBytes = 0;
+  let failures = 0;
 
   // Level 0: decode, undo the per-chunk normalisation, requantise nationally.
   const leaves = await scanLeaves(store, options, levels[0]);
@@ -164,13 +167,26 @@ async function runRenormalise(
     }
     const entries: ShardChunk[] = [];
     for (const leaf of group) {
-      const codestream = await store.readBytes(leaf.sourcePath);
-      if (!codestream) throw new Error(`${leaf.sourcePath} vanished from ${store.label}`);
-      const decoded = await decodeChunk(codestream);
-      const heights = dequantiseToHeights(decoded.raw, leaf.encoding);
-      const raw = quantiseHeights(heights, { encoding, dither: ditherFor(dither, seed, leaf.coord) });
-      const bytes = await encodeChunk(raw, decoded.width, decoded.height);
-      entries.push({ local: placeInShard(levels[0], leaf.coord).local, load: async () => bytes });
+      // One unreadable source chunk costs its own square kilometre. It used to
+      // cost the whole run, which for a national pass is hours of completed
+      // work thrown away over a single bad file.
+      try {
+        const codestream = await store.readBytes(leaf.sourcePath);
+        if (!codestream) throw new Error(`missing from ${store.label}`);
+        const decoded = await decodeChunk(codestream);
+        const heights = dequantiseToHeights(decoded.raw, leaf.encoding);
+        const raw = quantiseHeights(heights, { encoding, dither: ditherFor(dither, seed, leaf.coord) });
+        const bytes = await encodeChunk(raw, decoded.width, decoded.height);
+        entries.push({ local: placeInShard(levels[0], leaf.coord).local, load: async () => bytes });
+      } catch (error) {
+        failures += 1;
+        options.onProgress?.({
+          kind: 'failed',
+          level: 0,
+          coord: leaf.coord,
+          reason: `${leaf.sourcePath}: ${error instanceof Error ? error.message : String(error)}`,
+        });
+      }
       done += 1;
       if (done % 100 === 0) {
         options.onProgress?.({ kind: 'chunk', level: 0, done, total: leaves.length });
@@ -200,8 +216,9 @@ async function runRenormalise(
     ditherSeed: seed,
     onProgress: options.onProgress,
   });
-  summary.push(...coarse);
-  for (const level of coarse) totalBytes += level.bytes;
+  summary.push(...coarse.levels);
+  for (const level of coarse.levels) totalBytes += level.bytes;
+  failures += coarse.failures;
 
-  return { encoding, dithered: dither, levels: summary, sourceBytes, totalBytes };
+  return { encoding, dithered: dither, levels: summary, sourceBytes, totalBytes, failures };
 }
