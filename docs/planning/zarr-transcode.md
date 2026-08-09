@@ -755,9 +755,32 @@ correlation. Measured over four chunks, lossless throughout:
 | one 2-component codestream | 1334 | **−0.0%** |
 | FZ + dz at the height scale | 1300 | −2.6% |
 
-**Multi-component is byte-for-byte identical to separate.** JPEG 2000's
-multi-component transform is defined for 3-component colour and there is no
-2-component equivalent, so openjph transforms each component independently.
+**Multi-component is byte-for-byte identical to separate**, and the reason is
+worth pinning down, because "add a third channel and it will kick in" is the
+obvious next thought.
+
+Decisive test: encode the *same* band three times. With a reversible colour
+transform running, `Y1 = C2 - C1 = 0` and `Y2 = C0 - C1 = 0`, so two of three
+bands are entirely zero and the result should collapse to about 1x one band. It
+comes out at **3.00x** — 951 KiB against 2854 KiB. openjph applies no
+multi-component transform at all, at any component count.
+
+Nor would it pay if it did. Part 1 defines the transform as a *fixed* one over
+components 0, 1, 2 — built for RGB to luma-chroma, not a general decorrelator.
+Feed it (FZ, LZ, FZ) and `Y1 = Y2 = dz`: the same difference band twice, plus a
+mean, so the redundant duplicate is paid for twice over. Measured directly, the
+padded three-component layout costs **+52.5%** against storing FZ and LZ
+separately.
+
+Part 2 (15444-2) does define generalised multiple component transforms —
+arbitrary component counts, array-based decorrelation, a wavelet across the
+component axis — which is the thing that would genuinely suit correlated height
+surfaces. Worth checking against the standard rather than taking on trust here;
+OpenJPH targets Part 1 plus Part 15's block coder.
+
+So the correlation is real and worth money — dz codes ~30% cheaper than LZ over
+bare rural ground — but no codec path in this toolchain reaches it. The only
+lever that does is choosing what to store.
 
 Difference coding does reach the correlation, but the mean hides the spread:
 NT94nw −30.6% where dz is near zero over bare rural ground, but SU42ne **+2.2%**
