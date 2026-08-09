@@ -1,11 +1,20 @@
 import type { DsmCatItem } from './TileLoaderUK';
 
+/**
+ * The channels this app knows by name, plus whatever a store declares.
+ *
+ * A zarr store names its own channels in `psychogeo.channels`, and a pipeline
+ * run can add one the app has never heard of. Closing this union would mean the
+ * viewer could not open a channel until someone edited this file, so the known
+ * names are here for autocomplete rather than as a constraint.
+ */
 export type TerrainDatasetChannelId =
   | 'height.dsm.base'
   | 'height.dsm.fz'
   | 'height.dsm.lz'
   | 'height.aux.dz'
-  | 'height.dtm';
+  | 'height.dtm'
+  | (string & {});
 
 export type TerrainDatasetSchemaVersion = 'v1' | 'v2';
 

@@ -1,4 +1,4 @@
-import { mkdir, stat, writeFile } from 'node:fs/promises';
+import { mkdir, open, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { quantiseHeights, seededRandom, type ScaleOffset } from './globalScale.ts';
 import { chunkKey } from './grid.ts';
@@ -11,7 +11,8 @@ import {
   type RenormLevel,
 } from './levels.ts';
 import { ShardReader } from './shardReader.ts';
-import { writeShard, type ShardChunk } from './shardWriter.ts';
+import { shardIndexByteLength, writeShard, type ShardChunk } from './shardWriter.ts';
+import { decodeShardIndex } from './shardResort.ts';
 
 /**
  * Building the pyramid above level 0.
@@ -122,6 +123,50 @@ export async function fileSize(filePath: string): Promise<number | undefined> {
 }
 
 /**
+ * Can this shard be skipped — does it already hold every chunk this run wants
+ * in it?
+ *
+ * Existence alone is not enough, and assuming it was cost the LZ store its
+ * coarse levels. A `--region SU42` test run had written the level-3 shard
+ * covering most of England with the two chunks SU42 reaches; the national run
+ * then found the file present and skipped it, so 53 of 55 chunks were never
+ * built. Nothing failed and nothing was logged, because from the run's point of
+ * view the shard was done.
+ *
+ * A shard is complete only against a given expectation, so the expectation has
+ * to be checked. One suffix read per shard, against a level-0 shard that is
+ * ~100 MB of payload — the cheapest part of deciding to skip it.
+ */
+export async function shardIsComplete(
+  filePath: string,
+  level: RenormLevel,
+  expected: ReadonlyArray<readonly [number, number]>,
+): Promise<{ readonly complete: boolean; readonly bytes: number } | undefined> {
+  const size = await fileSize(filePath);
+  if (size === undefined) return undefined;
+  // An unsharded level is one chunk per object, so the file being there is the
+  // whole of the claim.
+  if (!level.shardChunks) return { complete: true, bytes: size };
+
+  const indexBytes = shardIndexByteLength(level.shardChunks);
+  if (size < indexBytes) return { complete: false, bytes: size };
+  const handle = await open(filePath, 'r');
+  try {
+    const buffer = new Uint8Array(indexBytes);
+    await handle.read(buffer, 0, indexBytes, size - indexBytes);
+    const present = new Set(decodeShardIndex(buffer, level.shardChunks).map((entry) => entry.slot));
+    const [, perX] = level.shardChunks;
+    const complete = expected.every((coord) => {
+      const { local } = placeInShard(level, coord);
+      return present.has(local[0] * perX + local[1]);
+    });
+    return { complete, bytes: size };
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
  * Write one shard's chunks and let them go.
  *
  * Deliberately per shard rather than per level: holding a whole level's
@@ -204,10 +249,11 @@ export async function buildCoarseLevels(options: CoarseLevelOptions): Promise<Co
     let levelBytes = 0;
     let processed = 0;
     for (const [key, group] of shards) {
-      const existingBytes = await fileSize(path.join(levelDir, key));
-      if (existingBytes !== undefined) levelBytes += existingBytes;
-      const pending = existingBytes !== undefined ? [] : group;
-      if (existingBytes !== undefined) nextCoords.push(...group);
+      const existing = await shardIsComplete(path.join(levelDir, key), level, group);
+      const skip = existing?.complete === true;
+      if (skip) levelBytes += existing.bytes;
+      const pending = skip ? [] : group;
+      if (skip) nextCoords.push(...group);
 
       // Reads stay here, where the shard reader and its index cache live; the
       // 16 decodes, the downsample and the encode go to the pool. One shard's

@@ -679,6 +679,39 @@ bare ground is exactly zero everywhere. Derived dz wins on accuracy by more than
 from the v2 archive would give both, and would make FZ match LZ's provenance —
 which is the natural thing to do anyway when a channel is next rebuilt.
 
+### Existence is not completeness
+
+The LZ store's coarse levels came out nearly empty and nothing reported it. At
+level 3 the shard covering most of England and Wales held **2 chunks where it
+should hold 55**, and the closing summary said "61 chunks" because it counted
+coordinates rather than writes.
+
+The two surviving chunks were `(18,6)` and `(18,7)` — exactly where SU42 lands.
+They are the leftovers of a `--region SU42` test run made an hour earlier. That
+run correctly wrote a level-3 shard containing the two chunks a 10 km cell
+reaches; the national run then found the file present and skipped the whole
+shard. Levels 1, 2 and 4 were poisoned the same way; level 3 was simply the most
+visible, because one of its shards is 640 km across.
+
+The predicate was `fileSize(shard) !== undefined`, on the reasoning that a shard
+is renamed into place only once complete. That is true, and it is not the
+question. **A shard is complete only relative to an expectation**, and a run with
+a wider scope than the one that wrote it has a larger expectation. Nothing
+failed, nothing was logged, and from the run's own point of view the shard was
+finished — the worst shape a bug can take.
+
+`shardIsComplete` now reads the shard's trailing index and checks that every
+chunk *this* run wants is actually in it. One suffix read against a shard that
+is ~100 MB of payload.
+
+Deliberately **not** applied to level 0, where the old predicate is sound and the
+new one would be wrong. A level-0 shard is a 10 km square and the smallest
+region filter is a 10 km cell, so any run that touches one writes all of it. Its
+contents are also data-dependent — an all-nodata chunk is legitimately never
+written — so there is no fixed expectation to check against. Coarse levels have
+neither property: a 10 km run reaches a 640 km level-3 shard, and every parent
+coordinate is derived rather than data-dependent.
+
 ### A failing tile must not abort the run
 
 Learned the hard way on the first national LZ attempt, which died 1h46m in on

@@ -810,7 +810,9 @@ export class TerrainRenderer extends ThreactTrackballBase {
         // root for its first channel, or at a channel group for that one.
         if (/\/zarr\.json$/.test(config.manifestUrl)) {
             const storeUrl = config.manifestUrl.replace(/\/zarr\.json$/, '');
-            const zarrResolver = await ZarrPyramidResolver.load(storeUrl);
+            // The configured channel wins over the one the URL names, so the
+            // picker can select a channel while the URL addresses the root.
+            const zarrResolver = await ZarrPyramidResolver.load(storeUrl, config.channelId);
             if (!zarrResolver) {
                 throw new Error(
                     `not a readable renormalised zarr store: ${storeUrl} — the root group must ` +

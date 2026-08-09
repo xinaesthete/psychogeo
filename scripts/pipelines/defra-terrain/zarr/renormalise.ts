@@ -157,9 +157,9 @@ async function runRenormalise(
   let done = 0;
   for (const [key, group] of shards0) {
     for (const leaf of group) writtenCoords.push(leaf.coord);
-    // Resume: a shard already on disk is complete, since it is renamed into
-    // place only after every chunk in it is written. Its size still counts
-    // towards the level, or a resumed run would under-report the store.
+    // Resume on existence: a level-0 shard is a 10 km square and the smallest
+    // region filter is a 10 km cell, so any run reaching this shard writes all
+    // of it. The coarse levels above cannot assume that — see shardIsComplete.
     const existingBytes = await fileSize(path.join(levelDir0, key));
     if (existingBytes !== undefined) {
       level0Bytes += existingBytes;

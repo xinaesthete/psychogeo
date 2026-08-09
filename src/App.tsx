@@ -12,6 +12,7 @@ import { convertWgsToOSGB, EastNorth } from './geo/Coordinates';
 import { CompressionAnalysisPanel } from './geo/CompressionAnalysisPanel';
 import { newGLContext, TerrainOptions, Track, type PyramidInspectionOptions } from './geo/TileLoaderUK';
 import { PyramidInspectionPanel } from './geo/PyramidInspectionPanel';
+import { resolveStoreChannels } from './geo/storeChannels';
 import {
   DEFAULT_VIEWSHED_SHADOW_MAP_SIZE,
   DEFAULT_VIEWSHED_SHADOW_NEAR_SCALE,
@@ -78,6 +79,39 @@ function App() {
       label: 'dataset URL (metadata.json or zarr.json)',
     },
   });
+
+  // The store root names its channels; a v2 manifest tree has one and no list,
+  // in which case the picker below collapses to that single option.
+  const [storeChannels, setStoreChannels] = useState<{ channels: string[]; addressed?: string }>({
+    channels: [],
+  });
+  useEffect(() => {
+    let cancelled = false;
+    void resolveStoreChannels(terrainDatasetManifestUrl).then((found) => {
+      if (cancelled) return;
+      setStoreChannels({ channels: [...found.channels], addressed: found.addressed });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [terrainDatasetManifestUrl]);
+
+  const channelOptions = storeChannels.channels.length > 0
+    ? storeChannels.channels
+    : ['height.dsm.fz'];
+  // Defaults to the channel the URL names, so pointing at a channel group and
+  // using the picker cannot disagree about what is on screen.
+  const { channelId } = useControls(
+    'Terrain dataset',
+    {
+      channelId: {
+        value: storeChannels.addressed ?? channelOptions[0],
+        options: channelOptions,
+        label: 'channel',
+      },
+    },
+    [channelOptions.join('|'), storeChannels.addressed],
+  );
   const {
     zoomSpeed,
     zoomSmoothMs,
@@ -240,7 +274,7 @@ function App() {
       terrainDataset: terrainDatasetActive
         ? {
             manifestUrl: terrainDatasetManifestUrl,
-            channelId: 'height.dsm.fz',
+            channelId,
             schemaVersion: terrainDatasetV2 ? 'v2' : 'v1',
           }
         : undefined,
@@ -251,7 +285,7 @@ function App() {
         onSelectedKeyChange: onPyramidTileSelected,
       },
     }),
-    [defra10mDTMLayer, defraDSMLayer, osTerr50Layer, compressionExperimentEnabled, inspectionLight, viewshedSourceHeight, viewshedShadowRadius, viewshedShadowMapSize, viewshedShadowNearScale, viewshedDoubleSidedShadows, terrainDatasetActive, terrainDatasetV2, terrainDatasetManifestUrl, overlayTracks, pyramidInspection, onPyramidTileSelected],
+    [defra10mDTMLayer, defraDSMLayer, osTerr50Layer, compressionExperimentEnabled, inspectionLight, viewshedSourceHeight, viewshedShadowRadius, viewshedShadowMapSize, viewshedShadowNearScale, viewshedDoubleSidedShadows, terrainDatasetActive, terrainDatasetV2, terrainDatasetManifestUrl, channelId, overlayTracks, pyramidInspection, onPyramidTileSelected],
   );
 
   const renderMode: TerrainRenderMode = r3f ? 'r3f' : 'threact';

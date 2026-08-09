@@ -400,9 +400,13 @@ async function runSourceChannel(
   let done = 0;
 
   for (const [key, quads] of shards) {
+    // Resume on existence here, and only here. A level-0 shard is a 10 km
+    // square and the smallest region filter is a 10 km cell, so any run that
+    // touches this shard writes all of it. Which chunks it holds is also
+    // data-dependent — an all-nodata chunk is legitimately never written — so
+    // there is no expectation to check it against.
     const existingBytes = await fileSize(path.join(levelDir0, key));
     if (existingBytes !== undefined) {
-      // Resume: a shard is renamed into place only once complete.
       level0Bytes += existingBytes;
       for (const group of quads) {
         for (const coord of chunksForExtent(level0, gridRefToBounds(group.tileRef))) {

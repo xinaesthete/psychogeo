@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { globalScaleOffset } from './globalScale.ts';
-import { buildCoarseLevels, heightReduction } from './pyramidBuild.ts';
+import { buildCoarseLevels, heightReduction, shardIsComplete } from './pyramidBuild.ts';
 import { renormalisedLevels } from './levels.ts';
 import { chunkFromBytes, writeShard } from './shardWriter.ts';
 
@@ -57,5 +57,33 @@ describe('buildCoarseLevels', () => {
     expect(failed[0].reason).toBeTruthy();
     // No parent was invented from children that never decoded.
     expect(result.levels[0].chunks).toBe(0);
+  });
+});
+
+describe('shardIsComplete', () => {
+  it('refuses a shard that a narrower run left short', async () => {
+    // The bug that cost the LZ store its coarse levels. A --region SU42 run
+    // wrote the level-3 shard covering most of England holding the two chunks
+    // SU42 reaches; the national run found the file present, skipped it, and
+    // never built the other 53. Nothing failed and nothing was logged.
+    const dir = await scratchDir();
+    const levels = renormalisedLevels(2);
+    const target = path.join(dir, 'c', '1', '0');
+    await writeShard(target, levels[0].shardChunks!, [
+      chunkFromBytes([8, 6], new Uint8Array([1, 2, 3])),
+      chunkFromBytes([8, 7], new Uint8Array([4, 5, 6])),
+    ]);
+
+    const written: Array<readonly [number, number]> = [[18, 6], [18, 7]];
+    const wanted: Array<readonly [number, number]> = [...written, [18, 8]];
+
+    expect((await shardIsComplete(target, levels[0], written))?.complete).toBe(true);
+    expect((await shardIsComplete(target, levels[0], wanted))?.complete).toBe(false);
+  });
+
+  it('reports nothing for a shard that is not there', async () => {
+    const dir = await scratchDir();
+    const levels = renormalisedLevels(2);
+    expect(await shardIsComplete(path.join(dir, 'nope'), levels[0], [[0, 0]])).toBeUndefined();
   });
 });
