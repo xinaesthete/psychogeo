@@ -279,8 +279,17 @@ export class ZarrPyramidResolver {
     requestedChannel?: string,
   ): Promise<ZarrPyramidResolver | undefined> {
     const trimmed = storeUrl.replace(/\/+$/, '');
-    const roots = [...new Set([trimmed, trimmed.replace(/\/[^/]+$/, '')])].filter(Boolean);
-    for (const root of roots) {
+    const parent = trimmed.replace(/\/[^/]+$/, '');
+    // Walking up has to carry the segment it walked past. That segment is the
+    // channel the caller addressed, and the index names every channel, so
+    // without it a channel-group URL silently resolves to the store's first
+    // channel — which looks like working code until a second channel exists.
+    const candidates = [
+      { root: trimmed, wanted: requestedChannel },
+      { root: parent, wanted: requestedChannel ?? trimmed.slice(parent.length + 1) },
+    ].filter((candidate, i, all) => candidate.root && all.findIndex((c) => c.root === candidate.root) === i);
+
+    for (const { root, wanted } of candidates) {
       let bytes: Uint8Array;
       try {
         const response = await fetch(joinUrl(root, STORE_INDEX_FILENAME));
@@ -290,9 +299,9 @@ export class ZarrPyramidResolver {
         continue;
       }
       const index = parseStoreIndex(bytes);
-      const channel = index?.channel(requestedChannel);
+      const channel = index?.channel(wanted);
       if (!index || !channel) continue;
-      if (requestedChannel !== undefined && channel.channelId !== requestedChannel) continue;
+      if (wanted !== undefined && channel.channelId !== wanted) continue;
 
       const scale = channel.encoding.scale as number;
       const offset = channel.encoding.offset as number;

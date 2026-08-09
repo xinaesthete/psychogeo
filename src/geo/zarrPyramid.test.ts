@@ -157,6 +157,49 @@ describe('ZarrPyramidResolver', () => {
     expect(await ZarrPyramidResolver.load(STORE)).toBeUndefined();
   });
 
+  it('opens the addressed channel group even when the index lives at the root', async () => {
+    // The index sits at the store root, so a channel-group URL has to walk up
+    // one segment to find it — and carry the segment it walked past. Without
+    // that the resolver quietly serves the store's *first* channel, which looks
+    // identical to working code until a store has two.
+    const level = (path: string) => ({
+      level: 0, path, resolutionMetres: 1, chunkMetres: 1000, chunkPixels: 1000,
+      chunkGrid: [1300, 700], shardChunks: null, recordCount: 0,
+    });
+    const header = {
+      psychogeo: { storeIndexVersion: 1 },
+      channels: [
+        {
+          channelId: CHANNEL,
+          encoding: { normalisation: 'globalScaleOffset', scale: SCALE, offset: OFFSET },
+          levels: [level('0')],
+        },
+        {
+          channelId: DTM_CHANNEL,
+          encoding: { normalisation: 'globalScaleOffset', scale: SCALE, offset: OFFSET },
+          levels: [level('0')],
+        },
+      ],
+    };
+    const headerBytes = new TextEncoder().encode(JSON.stringify(header));
+    const bytes = new Uint8Array(12 + headerBytes.length);
+    const hv = new DataView(bytes.buffer);
+    hv.setUint32(0, 0x497a4750, true);
+    hv.setUint32(4, 1, true);
+    hv.setUint32(8, headerBytes.length, true);
+    bytes.set(headerBytes, 12);
+
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === `${STORE}/psychogeo-index.bin`) return new Response(bytes, { status: 200 });
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+
+    const resolver = await ZarrPyramidResolver.load(`${STORE}/${DTM_CHANNEL}`);
+    expect(resolver!.channelId).toBe(DTM_CHANNEL);
+    expect(resolver!.levels[0].baseUrl).toBe(`${STORE}/${DTM_CHANNEL}/0`);
+  });
+
   it('prefers a consolidated index, and asks for nothing else', async () => {
     // The whole point: no zarr.json per level, no suffix read per shard.
     const header = {
