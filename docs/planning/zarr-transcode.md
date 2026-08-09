@@ -794,6 +794,15 @@ Byte-identical to the serial baseline at every step, which is only safe because
 what lands on disk. Dither had to become a seed rather than a closure so it
 survives crossing a thread boundary.
 
+**Do not carry 2.85× over to a source-raster pass.** That table is the
+renormalise pass, which reads chunks from an archive; a channel pass reads four
+5000² float32 GeoTIFFs — ~400 MB — out of a zip per quad, and that is main-thread
+I/O the pool cannot touch. The national FZ rebuild measures **3.31 s/quad on ten
+threads against 4.14 s/quad serial: 1.25×**, at ~123% CPU. It is disk-bound off
+the USB volume, and threads past a handful buy nothing. I estimated 1.8–2× before
+measuring and was wrong; the coarse levels still parallelise as the table says,
+they are just a small share of a level-0-dominated run.
+
 ### Co-chunking channels does not help
 
 The idea was that FZ and LZ are the same measurement over bare ground and differ
