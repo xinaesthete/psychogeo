@@ -712,8 +712,8 @@ written — so there is no fixed expectation to check against. Coarse levels hav
 neither property: a 10 km run reaches a 640 km level-3 shard, and every parent
 coordinate is derived rather than data-dependent.
 
-The repair rebuilt LZ's coarse levels in about seven hours, level 0 skipped in
-90 s. Level 3 shard `c/1/0` now holds 54 of 100 slots at 34.11 MiB against FZ's
+The repair rebuilt LZ's coarse levels in 6m47s with `--threads 10`, of which the
+first 90 s was scanning level 0 to skip it. Level 3 shard `c/1/0` now holds 54 of 100 slots at 34.11 MiB against FZ's
 55 at 35.71 MiB, slot-ordered; levels 1, 2 and 4 are comparable to FZ throughout.
 The two stores' occupancy differs by a handful of coarse chunks in both
 directions — three at level 3 — which is coverage, not damage: FZ came from the
