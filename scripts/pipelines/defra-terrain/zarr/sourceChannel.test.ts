@@ -12,9 +12,12 @@ import {
   DZ_MAX_METRES,
   DZ_MIN_METRES,
   dzScaleOffset,
+  fzChannelSpec,
+  FZ_CHANNEL_ID,
   lzChannelSpec,
   passThrough,
   quadsWith,
+  renamedSpec,
 } from './sourceChannel.ts';
 import { globalScaleOffset } from './globalScale.ts';
 
@@ -205,6 +208,32 @@ describe('channel specs', () => {
   it('needs one product for LZ and two for dz', () => {
     expect(lzChannelSpec().needs).toEqual(['LZ']);
     expect(dzChannelSpec().needs).toEqual(['FZ', 'LZ']);
+  });
+
+  it('rebuilds FZ under the name and encoding the archive transcode already uses', () => {
+    // The point of the rebuild is one quantisation instead of two, not a new
+    // surface. Anything but a drop-in replacement would strand the existing
+    // pyramid, and would break derived dz, which needs FZ and LZ on one scale.
+    const fz = fzChannelSpec();
+    expect(fz.channelId).toBe(FZ_CHANNEL_ID);
+    expect(fz.needs).toEqual(['FZ']);
+    expect(fz.encoding).toEqual(lzChannelSpec().encoding);
+  });
+
+  it('renames a spec without changing what it builds', () => {
+    // So a rebuild can land beside the live channel: level 0 resumes on whether
+    // a shard exists, so aiming it at the name already there would skip
+    // everything and report success having written nothing.
+    const original = fzChannelSpec();
+    const beside = renamedSpec(original, 'height.dsm.fz2');
+    expect(beside.channelId).toBe('height.dsm.fz2');
+    expect(original.channelId).toBe(FZ_CHANNEL_ID);
+    const { channelId: _a, ...restNamed } = beside;
+    const { channelId: _b, ...restOriginal } = original;
+    expect(restNamed).toEqual(restOriginal);
+    // Same closure, not an equal-looking one — the rename must not re-derive
+    // how samples are combined.
+    expect(beside.combine).toBe(original.combine);
   });
 });
 

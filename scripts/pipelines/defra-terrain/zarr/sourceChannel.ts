@@ -44,6 +44,7 @@ import {
  * scale and the offset cancels. LZ is the one to build.
  */
 
+export const FZ_CHANNEL_ID = 'height.dsm.fz';
 export const LZ_CHANNEL_ID = 'height.dsm.lz';
 export const DZ_CHANNEL_ID = 'height.aux.dz';
 
@@ -78,6 +79,34 @@ export type SourceChannelSpec = {
 };
 
 const COMPOSITE_DATASET_ID = 'defra-lidar-composite-1m-2022';
+
+/**
+ * The first-return surface, straight from the composite zips.
+ *
+ * The store already has `height.dsm.fz`, transcoded from the v2 archive, and
+ * this rebuilds the same surface from the same source DEFRA published — one
+ * quantisation instead of two. The archive had already quantised to its own
+ * per-chunk scale, so transcoding requantised, and 0.56% of samples land one
+ * 2.152 cm code away from what direct quantisation gives. Small, but it is the
+ * reason derived dz is bounded at ~2.26 cm rather than the ~2.15 cm the encoding
+ * alone would imply, and the reason FZ − LZ is not exactly zero on bare ground
+ * where both surveys agree.
+ *
+ * Identical encoding to the channel it replaces, so the rebuild is a swap rather
+ * than a migration.
+ */
+export function fzChannelSpec(): SourceChannelSpec {
+  return {
+    channelId: FZ_CHANNEL_ID,
+    needs: ['FZ'],
+    encoding: globalScaleOffset(),
+    combine: (rasters) => ({ values: passThrough(rasters[0]), clamped: 0 }),
+    measure: 'firstReturnSurface',
+    description:
+      'DEFRA 1 m composite first return, quantised once from the source float rather than transcoded from the v2 archive.',
+    sourceDatasetId: COMPOSITE_DATASET_ID,
+  };
+}
 
 /**
  * The last-return surface, on exactly the height channel's encoding.
@@ -125,9 +154,22 @@ export function dzChannelSpec(): SourceChannelSpec {
 }
 
 export function channelSpecById(channelId: string): SourceChannelSpec {
+  if (channelId === FZ_CHANNEL_ID) return fzChannelSpec();
   if (channelId === LZ_CHANNEL_ID) return lzChannelSpec();
   if (channelId === DZ_CHANNEL_ID) return dzChannelSpec();
   throw new Error(`no source-built channel called ${channelId}`);
+}
+
+/**
+ * The same channel written under a different name.
+ *
+ * Level 0 resumes on whether a shard exists, so a rebuild aimed at a channel
+ * that is already there would skip every shard and do nothing. Building beside
+ * the live channel and renaming once it is verified avoids deleting a working
+ * 76 GB surface in order to find out whether its replacement is any good.
+ */
+export function renamedSpec(spec: SourceChannelSpec, channelId: string): SourceChannelSpec {
+  return { ...spec, channelId };
 }
 
 export type SourceChannelOptions = {

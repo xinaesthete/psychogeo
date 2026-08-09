@@ -33,6 +33,7 @@ import { resortStore, type ResortProgressEvent } from './zarr/shardResort.ts';
 import {
   buildSourceChannel,
   channelSpecById,
+  renamedSpec,
   LZ_CHANNEL_ID,
   type SourceChannelProgressEvent,
 } from './zarr/sourceChannel.ts';
@@ -69,6 +70,8 @@ interface CliArgs {
   readonly bounds?: string;
   readonly baseline?: string;
   readonly channel?: string;
+  /** Write the channel under this name instead of the spec's own. */
+  readonly as?: string;
   readonly pyramidPreset?: string;
   readonly pyramidLevels?: string;
   readonly tileConcurrency?: string;
@@ -111,12 +114,17 @@ function usage(): string {
     `        --threads runs the codec on N worker threads (default ${defaultPoolSize()} here, 0 for inline).`,
     '        Drops the per-chunk encoding arrays; smaller output, but decodes every chunk.',
     '  pnpm pipeline:defra -- channel-zarr --input <composite-zips-dir> --store <zarr-dir>',
-    '      [--channel height.dsm.lz|height.aux.dz] [--region <gridRef>] [--levels <n>] [--progress]',
+    '      [--channel height.dsm.lz|height.dsm.fz|height.aux.dz] [--as <channelId>]',
+    '      [--region <gridRef>] [--levels <n>] [--threads <n>] [--progress]',
     '        Adds a channel built from the DEFRA source rasters, which the v2 archive',
     '        cannot supply because it holds first return only.',
     '        height.dsm.lz (default) stores the last-return surface on the height',
     '        channel scale, so dz comes back exactly as (fz_raw - lz_raw) * scale and',
     '        twice as accurately as storing it. height.aux.dz stores the difference.',
+    '        height.dsm.fz rebuilds the first-return surface the archive transcode',
+    '        already provides, quantising once from source instead of twice.',
+    '        --as writes under a different name, so a rebuild can be verified beside',
+    '        the channel it replaces rather than on top of it.',
     '  pnpm pipeline:defra -- resort-zarr --store <zarr-dir> [--verify] [--dry-run] [--progress]',
     '        Rewrites shards written before the writer sorted, so inner chunks sit in',
     '        slot order and a run of neighbours is a run of bytes. Permutes byte ranges',
@@ -168,6 +176,7 @@ function parseArgs(argv: string[]): CliArgs {
     bounds: values.get('bounds'),
     baseline: values.get('baseline'),
     channel: values.get('channel'),
+    as: values.get('as'),
     pyramidPreset: values.get('pyramid-preset'),
     pyramidLevels: values.get('pyramid-levels'),
     tileConcurrency: values.get('tile-concurrency'),
@@ -543,7 +552,8 @@ async function main(): Promise<void> {
     if (!args.input) throw new Error('--input is required for channel-zarr');
     const storeDir = args.store ?? args.out;
     if (!storeDir) throw new Error('--store is required for channel-zarr');
-    const spec = channelSpecById(args.channel ?? LZ_CHANNEL_ID);
+    const base = channelSpecById(args.channel ?? LZ_CHANNEL_ID);
+    const spec = args.as ? renamedSpec(base, args.as) : base;
     const summary = await buildSourceChannel({
       sourceDir: args.input,
       storeDir,
