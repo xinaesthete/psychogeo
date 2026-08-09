@@ -153,6 +153,8 @@ async function runRenormalise(
 
   const shards0 = groupByShard(levels[0], leaves, (leaf) => leaf.coord);
   let writtenCoords: Array<readonly [number, number]> = [];
+  /** Only what this run re-encoded, so the pyramid above it can be left alone. */
+  const rebuiltCoords: Array<readonly [number, number]> = [];
   let level0Bytes = 0;
   let done = 0;
   for (const [key, group] of shards0) {
@@ -209,6 +211,7 @@ async function runRenormalise(
       const bytes = encoded[i];
       if (!bytes) return;
       entries.push({ local: placeInShard(levels[0], leaf.coord).local, load: async () => bytes });
+      rebuiltCoords.push(leaf.coord);
     });
     level0Bytes += await writeOneShard(levelDir0, levels[0], key, entries);
   }
@@ -228,6 +231,7 @@ async function runRenormalise(
     levels,
     encoding,
     baseCoords: writtenCoords,
+    rebuiltCoords,
     reduction: heightReduction,
     levelMetadata: (level) => buildRenormLevelMetadata(level, encoding),
     dither,

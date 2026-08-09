@@ -144,8 +144,11 @@ export async function shardIsComplete(
 ): Promise<{ readonly complete: boolean; readonly bytes: number } | undefined> {
   const size = await fileSize(filePath);
   if (size === undefined) return undefined;
-  // An unsharded level is one chunk per object, so the file being there is the
-  // whole of the claim.
+  // An unsharded level is one chunk per object, so there is no index to read
+  // and nothing here can tell a chunk reduced from all sixteen children from
+  // one reduced from two. Existence is necessary but not sufficient; what
+  // settles it is whether anything below was rewritten, which is why the caller
+  // gates every skip on that as well.
   if (!level.shardChunks) return { complete: true, bytes: size };
 
   const indexBytes = shardIndexByteLength(level.shardChunks);
@@ -201,6 +204,16 @@ export type CoarseLevelOptions = {
   readonly encoding: ScaleOffset;
   /** Chunk coordinates written at level 0. */
   readonly baseCoords: ReadonlyArray<readonly [number, number]>;
+  /**
+   * The subset of `baseCoords` this run actually re-encoded, as opposed to
+   * found already on disk. Anything above a rebuilt chunk is stale by
+   * definition and is rebuilt too, level by level.
+   *
+   * Defaults to all of `baseCoords`, which rebuilds the whole pyramid: slower,
+   * but a caller that has not thought about it gets the correct answer rather
+   * than a quietly stale one.
+   */
+  readonly rebuiltCoords?: ReadonlyArray<readonly [number, number]>;
   /** Reduction to apply when building *from* the given source level. */
   readonly reduction: (sourceLevel: number) => Reduction;
   /** Metadata for each level, written before the level is built. */
@@ -227,6 +240,8 @@ export async function buildCoarseLevels(options: CoarseLevelOptions): Promise<Co
   const summary: LevelSummary[] = [];
   let failures = 0;
   let writtenCoords: ReadonlyArray<readonly [number, number]> = options.baseCoords;
+  const coordKey = (coord: readonly [number, number]) => `${coord[0]},${coord[1]}`;
+  let dirty = new Set((options.rebuiltCoords ?? options.baseCoords).map(coordKey));
 
   for (let index = 1; index < levels.length; index += 1) {
     if (writtenCoords.length === 0) break;
@@ -246,12 +261,21 @@ export async function buildCoarseLevels(options: CoarseLevelOptions): Promise<Co
 
     const block = CHUNK_PIXELS * LEVEL_FACTOR;
     const nextCoords: Array<readonly [number, number]> = [];
+    const nextDirty = new Set<string>();
     let levelBytes = 0;
     let processed = 0;
     for (const [key, group] of shards) {
       const existing = await shardIsComplete(path.join(levelDir, key), level, group);
-      const skip = existing?.complete === true;
+      // Rebuilt below means stale here, whatever the object looks like. This is
+      // what catches an unsharded level, where the object carries no index to
+      // check, and it is also what catches a chunk whose slot is present but
+      // whose contents were reduced from fewer children than exist now.
+      const stale = group.some((coord) =>
+        childChunkCoords(coord).some((childCoord) => dirty.has(coordKey(childCoord))),
+      );
+      const skip = existing?.complete === true && !stale;
       if (skip) levelBytes += existing.bytes;
+      if (!skip) for (const coord of group) nextDirty.add(coordKey(coord));
       const pending = skip ? [] : group;
       if (skip) nextCoords.push(...group);
 
@@ -348,6 +372,7 @@ export async function buildCoarseLevels(options: CoarseLevelOptions): Promise<Co
     });
     options.onProgress?.({ kind: 'level', level: level.level, chunks: nextCoords.length, bytes: levelBytes });
     writtenCoords = nextCoords;
+    dirty = nextDirty;
   }
 
   return { levels: summary, failures };

@@ -1,10 +1,11 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
+import { decodeChunk, encodeChunk } from './chunkCodec.ts';
 import { globalScaleOffset } from './globalScale.ts';
 import { buildCoarseLevels, heightReduction, shardIsComplete } from './pyramidBuild.ts';
-import { renormalisedLevels } from './levels.ts';
+import { CHUNK_PIXELS, renormalisedLevel, renormalisedLevels } from './levels.ts';
 import { chunkFromBytes, writeShard } from './shardWriter.ts';
 
 const dirs: string[] = [];
@@ -58,6 +59,78 @@ describe('buildCoarseLevels', () => {
     // No parent was invented from children that never decoded.
     expect(result.levels[0].chunks).toBe(0);
   });
+});
+
+describe('buildCoarseLevels resume', () => {
+  // Level 4 is the first unsharded level, so build it from level 3 directly.
+  const levels = [renormalisedLevel(3), renormalisedLevel(4)];
+  const topChunk = (channelDir: string) => path.join(channelDir, '4', 'c', '0', '0');
+
+  async function writeChildren(channelDir: string, coords: ReadonlyArray<readonly [number, number]>) {
+    const entries = [];
+    for (const coord of coords) {
+      const raw = new Uint16Array(CHUNK_PIXELS * CHUNK_PIXELS).fill(1000 + coord[0] * 4 + coord[1]);
+      entries.push(chunkFromBytes(coord, await encodeChunk(raw, CHUNK_PIXELS, CHUNK_PIXELS)));
+    }
+    await writeShard(path.join(channelDir, '3', 'c', '0', '0'), levels[0].shardChunks!, entries);
+  }
+
+  async function build(
+    channelDir: string,
+    baseCoords: ReadonlyArray<readonly [number, number]>,
+    rebuiltCoords: ReadonlyArray<readonly [number, number]>,
+  ) {
+    return buildCoarseLevels({
+      channelDir,
+      levels,
+      encoding: globalScaleOffset(),
+      baseCoords,
+      rebuiltCoords,
+      reduction: heightReduction,
+      levelMetadata: () => ({ zarr_format: 3, node_type: 'array' }),
+    });
+  }
+
+  /** Samples the parent actually covers, so a partial reduction is visible. */
+  async function coverage(file: string): Promise<number> {
+    const { raw } = await decodeChunk(await readFile(file));
+    let valid = 0;
+    for (const value of raw) if (value !== 0) valid += 1;
+    return valid;
+  }
+
+  it('rebuilds an unsharded parent when a child below it changed', async () => {
+    // What cost the LZ store its level 4. The object carries no index, so
+    // nothing about the file distinguishes a chunk reduced from two children
+    // from one reduced from sixteen, and the old check called existence
+    // completeness — leaving a --region run's leftovers in place forever.
+    const channelDir = await scratchDir();
+    const narrow: Array<readonly [number, number]> = [[0, 0], [0, 1]];
+    await writeChildren(channelDir, narrow);
+    await build(channelDir, narrow, narrow);
+    const before = await coverage(topChunk(channelDir));
+
+    const wide: Array<readonly [number, number]> = [...narrow, [1, 0], [1, 1]];
+    const added: Array<readonly [number, number]> = [[1, 0], [1, 1]];
+    await writeChildren(channelDir, wide);
+    await build(channelDir, wide, added);
+
+    expect(await coverage(topChunk(channelDir))).toBeGreaterThan(before);
+  }, 120_000);
+
+  it('leaves the parent alone when nothing below it was rebuilt', async () => {
+    // The other half: a plain resume must not re-encode a pyramid that is
+    // already right, or every retry of a national run pays for it again.
+    const channelDir = await scratchDir();
+    const coords: Array<readonly [number, number]> = [[0, 0], [0, 1]];
+    await writeChildren(channelDir, coords);
+    await build(channelDir, coords, coords);
+    const stamp = await stat(topChunk(channelDir));
+
+    await build(channelDir, coords, []);
+
+    expect((await stat(topChunk(channelDir))).mtimeMs).toBe(stamp.mtimeMs);
+  }, 120_000);
 });
 
 describe('shardIsComplete', () => {

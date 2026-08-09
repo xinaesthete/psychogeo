@@ -436,6 +436,8 @@ async function runSourceChannel(
   });
 
   const writtenCoords: Array<readonly [number, number]> = [];
+  /** Only what this run re-encoded, so the pyramid above it can be left alone. */
+  const rebuiltCoords: Array<readonly [number, number]> = [];
   const unreadable: Array<{ tileRef: string; reason: string }> = [];
   let level0Bytes = 0;
   let clampedSamples = 0;
@@ -501,6 +503,7 @@ async function runSourceChannel(
           if (!bytes) return;
           entries.push({ local: placeInShard(level0, coord).local, load: async () => bytes });
           writtenCoords.push(coord);
+          rebuiltCoords.push(coord);
         });
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
@@ -529,6 +532,7 @@ async function runSourceChannel(
     levels,
     encoding,
     baseCoords: writtenCoords,
+    rebuiltCoords,
     // Every height-like channel reduces the same way, and for LZ that is not
     // cosmetic: FZ and LZ must be reduced identically or their difference stops
     // meaning anything above level 0. dz, already a difference, takes plain
