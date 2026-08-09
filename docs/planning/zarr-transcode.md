@@ -712,6 +712,24 @@ written — so there is no fixed expectation to check against. Coarse levels hav
 neither property: a 10 km run reaches a 640 km level-3 shard, and every parent
 coordinate is derived rather than data-dependent.
 
+The repair rebuilt LZ's coarse levels in about seven hours, level 0 skipped in
+90 s. Level 3 shard `c/1/0` now holds 54 of 100 slots at 34.11 MiB against FZ's
+55 at 35.71 MiB, slot-ordered; levels 1, 2 and 4 are comparable to FZ throughout.
+The two stores' occupancy differs by a handful of coarse chunks in both
+directions — three at level 3 — which is coverage, not damage: FZ came from the
+v2 archive and LZ from the composite zips, and their footprints are not identical
+at the edges.
+
+**Rebuilding data is not publishing it.** The repair was run by hand rather than
+through the weekend script, and the manual path does not chain `dot_clean -m` and
+`index-zarr` the way the script does. So the bytes were correct at 18:44 and the
+viewer still showed the old broken coarse levels, because the consolidated index
+it reads was a day stale and still carried the two-slot offsets. Same shape as
+the bug above: nothing failed, nothing was logged, and the visible symptom
+outlived its cause. Verified in the viewer afterwards — LZ renders as ground with
+canopy and buildings gone, and zooms out through the coarse levels to a regional
+view with no holes.
+
 ### A failing tile must not abort the run
 
 Learned the hard way on the first national LZ attempt, which died 1h46m in on
