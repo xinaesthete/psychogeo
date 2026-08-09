@@ -1,9 +1,8 @@
 import { mkdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { downsampleReduce, type DownsampleSource } from '../raster.ts';
-import { dequantiseToHeights, quantiseHeights, seededRandom, type ScaleOffset } from './globalScale.ts';
+import { quantiseHeights, seededRandom, type ScaleOffset } from './globalScale.ts';
 import { chunkKey } from './grid.ts';
-import { decodeChunk, encodeChunk } from './chunkCodec.ts';
+import { createCodecRunner, mapWithRunner, type CodecRunner } from './codecPool.ts';
 import {
   CHUNK_PIXELS,
   childChunkCoords,
@@ -164,6 +163,8 @@ export type CoarseLevelOptions = {
   readonly dither?: boolean;
   readonly ditherSeed?: number;
   readonly onProgress?: (event: PyramidProgressEvent) => void;
+  /** Shared with the caller's level-0 pass; omit to run the codec inline. */
+  readonly runner?: CodecRunner;
 };
 
 /**
@@ -175,6 +176,7 @@ export type CoarseLevelOptions = {
  */
 export async function buildCoarseLevels(options: CoarseLevelOptions): Promise<CoarseLevelResult> {
   const { channelDir, levels, encoding } = options;
+  const runner = options.runner ?? createCodecRunner({ size: 0 });
   const dither = options.dither ?? false;
   const seed = options.ditherSeed ?? 1;
   const summary: LevelSummary[] = [];
@@ -204,33 +206,20 @@ export async function buildCoarseLevels(options: CoarseLevelOptions): Promise<Co
     for (const [key, group] of shards) {
       const existingBytes = await fileSize(path.join(levelDir, key));
       if (existingBytes !== undefined) levelBytes += existingBytes;
-      const entries: ShardChunk[] = [];
-      for (const coord of group) {
-        if (existingBytes !== undefined) {
-          nextCoords.push(coord);
-          continue;
-        }
-        const pixels = new Float32Array(block * block).fill(Number.NaN);
-        let anyChild = false;
-        // A child that will not decode costs its own quadrant of this parent,
-        // which the downsample already handles as absent. Losing a quarter of
-        // one coarse chunk is a far smaller harm than losing the run, but it is
-        // still a hole, so it is reported rather than swallowed.
+      const pending = existingBytes !== undefined ? [] : group;
+      if (existingBytes !== undefined) nextCoords.push(...group);
+
+      // Reads stay here, where the shard reader and its index cache live; the
+      // 16 decodes, the downsample and the encode go to the pool. One shard's
+      // worth is in flight at a time, which bounds memory the way writing a
+      // shard at a time already does.
+      const width = Math.max(1, runner.size);
+      const built = await mapWithRunner(pending, width, async (coord) => {
+        const children = [];
         for (const childCoord of childChunkCoords(coord)) {
+          let bytes: Uint8Array | undefined;
           try {
-            const bytes = await reader.read(childCoord);
-            if (!bytes) continue;
-            const decoded = await decodeChunk(bytes);
-            anyChild = true;
-            const heights = dequantiseToHeights(decoded.raw, encoding);
-            const originY = (childCoord[0] % LEVEL_FACTOR) * CHUNK_PIXELS;
-            const originX = (childCoord[1] % LEVEL_FACTOR) * CHUNK_PIXELS;
-            for (let y = 0; y < decoded.height; y += 1) {
-              pixels.set(
-                heights.subarray(y * decoded.width, (y + 1) * decoded.width),
-                (originY + y) * block + originX,
-              );
-            }
+            bytes = await reader.read(childCoord);
           } catch (error) {
             failures += 1;
             options.onProgress?.({
@@ -239,26 +228,44 @@ export async function buildCoarseLevels(options: CoarseLevelOptions): Promise<Co
               coord: childCoord,
               reason: error instanceof Error ? error.message : String(error),
             });
+            continue;
           }
+          if (!bytes) continue;
+          children.push({
+            bytes,
+            originY: (childCoord[0] % LEVEL_FACTOR) * CHUNK_PIXELS,
+            originX: (childCoord[1] % LEVEL_FACTOR) * CHUNK_PIXELS,
+            coord: childCoord,
+          });
         }
-        if (!anyChild) continue;
+        if (children.length === 0) return undefined;
 
+        const { blockSize, bias } = options.reduction(child.level);
         try {
-          const { blockSize, bias } = options.reduction(child.level);
-          const downsampleSource: DownsampleSource = {
-            pixels,
-            width: block,
-            height: block,
-            resolutionMetres: child.resolutionMetres,
-            // Only used to derive the output extent, which this pass ignores —
-            // placement comes from the chunk coordinate, not the raster extent.
-            extent: { eastMin: 0, eastMax: block, northMin: 0, northMax: block },
-          };
-          const reduced = downsampleReduce(downsampleSource, level.resolutionMetres, blockSize, bias);
-          const raw = quantiseHeights(reduced.pixels, { encoding, dither: ditherFor(dither, seed, coord) });
-          const bytes = await encodeChunk(raw, reduced.width, reduced.height);
-          entries.push({ local: placeInShard(level, coord).local, load: async () => bytes });
-          nextCoords.push(coord);
+          const outcome = await runner.submit({
+            kind: 'reduce',
+            id: 0,
+            children: children.map(({ bytes, originY, originX }) => ({ bytes, originY, originX })),
+            block: CHUNK_PIXELS * LEVEL_FACTOR,
+            encoding,
+            sourceResolutionMetres: child.resolutionMetres,
+            targetResolutionMetres: level.resolutionMetres,
+            blockSize,
+            bias,
+            ditherSeed: ditherSeedFor(dither, seed, coord),
+          });
+          // A child that would not decode costs its own quadrant, which the
+          // downsample already treats as absent.
+          for (const index of outcome.failed) {
+            failures += 1;
+            options.onProgress?.({
+              kind: 'failed',
+              level: child.level,
+              coord: children[index].coord,
+              reason: 'would not decode',
+            });
+          }
+          return outcome.bytes ?? undefined;
         } catch (error) {
           failures += 1;
           options.onProgress?.({
@@ -267,12 +274,21 @@ export async function buildCoarseLevels(options: CoarseLevelOptions): Promise<Co
             coord,
             reason: error instanceof Error ? error.message : String(error),
           });
+          return undefined;
         }
+      });
+
+      const entries: ShardChunk[] = [];
+      pending.forEach((coord, i) => {
+        const bytes = built[i];
+        if (!bytes) return;
+        entries.push({ local: placeInShard(level, coord).local, load: async () => bytes });
+        nextCoords.push(coord);
         processed += 1;
         if (processed % 25 === 0) {
           options.onProgress?.({ kind: 'chunk', level: level.level, done: processed, total: parents.length });
         }
-      }
+      });
       if (entries.length > 0) levelBytes += await writeOneShard(levelDir, level, key, entries);
     }
     reader.clear();

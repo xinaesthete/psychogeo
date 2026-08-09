@@ -1,6 +1,6 @@
 import { availableParallelism } from 'node:os';
 import { Worker } from 'node:worker_threads';
-import { runCodecTask, type CodecResult, type CodecTask } from './codecWorker.ts';
+import { runCodecTask, type CodecOutcome, type CodecResult, type CodecTask } from './codecWorker.ts';
 
 /**
  * A pool of `worker_threads` running the codec.
@@ -14,8 +14,10 @@ import { runCodecTask, type CodecResult, type CodecTask } from './codecWorker.ts
  */
 
 export interface CodecRunner {
-  /** Bring a stored codestream onto a new scale, and re-encode it. */
+  /** Bytes, or a rejection. Use for tasks that must produce a chunk. */
   run(task: CodecTask): Promise<Uint8Array>;
+  /** Bytes plus which inputs failed. Use for a reduce, where partial is normal. */
+  submit(task: CodecTask): Promise<CodecOutcome>;
   close(): Promise<void>;
   /** 0 when running inline. */
   readonly size: number;
@@ -30,16 +32,24 @@ export function defaultPoolSize(): number {
   return Math.max(0, Math.min(12, cores - 2));
 }
 
+async function demand(outcome: CodecOutcome): Promise<Uint8Array> {
+  if (!outcome.bytes) throw new Error('codec produced no output');
+  return outcome.bytes;
+}
+
 class InlineRunner implements CodecRunner {
   readonly size = 0;
-  async run(task: CodecTask): Promise<Uint8Array> {
+  submit(task: CodecTask): Promise<CodecOutcome> {
     return runCodecTask(task);
+  }
+  async run(task: CodecTask): Promise<Uint8Array> {
+    return demand(await this.submit(task));
   }
   async close(): Promise<void> {}
 }
 
 type Pending = {
-  resolve: (bytes: Uint8Array) => void;
+  resolve: (outcome: CodecOutcome) => void;
   reject: (error: Error) => void;
 };
 
@@ -60,7 +70,7 @@ class WorkerPoolRunner implements CodecRunner {
       this.pending.delete(result.id);
       if (pending) {
         if ('error' in result) pending.reject(new Error(result.error));
-        else pending.resolve(result.bytes);
+        else pending.resolve({ bytes: result.bytes, failed: [...(result.failed ?? [])] });
       }
       this.release(worker);
     });
@@ -102,15 +112,17 @@ class WorkerPoolRunner implements CodecRunner {
   private dispatch(worker: Worker, task: CodecTask, pending: Pending): void {
     this.pending.set(task.id, pending);
     (worker as unknown as { __taskId?: number }).__taskId = task.id;
-    const transfer: ArrayBuffer[] =
-      task.kind === 'requantise' ? [task.codestream.buffer as ArrayBuffer] : [task.values.buffer as ArrayBuffer];
-    worker.postMessage(task, transfer);
+    worker.postMessage(task, transferListFor(task));
   }
 
-  run(task: CodecTask): Promise<Uint8Array> {
+  async run(task: CodecTask): Promise<Uint8Array> {
+    return demand(await this.submit(task));
+  }
+
+  submit(task: CodecTask): Promise<CodecOutcome> {
     if (this.closed) return Promise.reject(new Error('codec pool is closed'));
     const withId = { ...task, id: this.nextId++ } as CodecTask;
-    return new Promise<Uint8Array>((resolve, reject) => {
+    return new Promise<CodecOutcome>((resolve, reject) => {
       const pending = { resolve, reject };
       const worker = this.idle.pop() ?? (this.workers.length < this.size ? this.spawn() : undefined);
       if (worker) this.dispatch(worker, withId, pending);
@@ -124,6 +136,13 @@ class WorkerPoolRunner implements CodecRunner {
     this.workers.length = 0;
     this.idle.length = 0;
   }
+}
+
+/** Every buffer a task owns, so the message costs a pointer rather than a copy. */
+function transferListFor(task: CodecTask): ArrayBuffer[] {
+  if (task.kind === 'requantise') return [task.codestream.buffer as ArrayBuffer];
+  if (task.kind === 'encode') return [task.values.buffer as ArrayBuffer];
+  return task.children.map((child) => child.bytes.buffer as ArrayBuffer);
 }
 
 export type CodecRunnerOptions = {

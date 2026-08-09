@@ -4,13 +4,13 @@ import { scanDefraZips, type DefraTileGroup } from '../scan.ts';
 import type { DefraReturnKind } from '../types.ts';
 import { gridRefToBounds, normalizeGridRef } from '../v2/osgb.ts';
 import type { TerrainManifestV2 } from '../v2/types.ts';
-import { encodeChunk } from './chunkCodec.ts';
-import { globalScaleOffset, quantiseHeights, type ScaleOffset } from './globalScale.ts';
+import { createCodecRunner, mapWithRunner, type CodecRunner } from './codecPool.ts';
+import { globalScaleOffset, type ScaleOffset } from './globalScale.ts';
 import { NATIONAL_EXTENT } from './grid.ts';
 import { CHUNK_PIXELS, renormalisedLevels, type RenormLevel } from './levels.ts';
 import {
   buildCoarseLevels,
-  ditherFor,
+  ditherSeedFor,
   fileSize,
   groupByShard,
   heightReduction,
@@ -140,6 +140,10 @@ export type SourceChannelOptions = {
   readonly levelCount?: number;
   readonly dither?: boolean;
   readonly ditherSeed?: number;
+  /** Codec threads. 0 runs inline; omit for one per spare core. */
+  readonly poolSize?: number;
+  /** The built codec worker module. Omit to run inline. */
+  readonly workerUrl?: URL;
   readonly onProgress?: (event: SourceChannelProgressEvent) => void;
 };
 
@@ -313,6 +317,18 @@ async function registerChannel(storeDir: string, channelId: string): Promise<voi
 export async function buildSourceChannel(
   options: SourceChannelOptions,
 ): Promise<SourceChannelSummary> {
+  const runner = createCodecRunner({ size: options.poolSize, workerUrl: options.workerUrl });
+  try {
+    return await runSourceChannel(options, runner);
+  } finally {
+    await runner.close();
+  }
+}
+
+async function runSourceChannel(
+  options: SourceChannelOptions,
+  runner: CodecRunner,
+): Promise<SourceChannelSummary> {
   const { spec } = options;
   const levels = renormalisedLevels(options.levelCount);
   const encoding = spec.encoding;
@@ -419,14 +435,27 @@ export async function buildSourceChannel(
         const { values, clamped } = spec.combine(rasters.map((raster) => raster.pixels));
         clampedSamples += clamped;
 
-        for (const coord of chunksForExtent(level0, reference.extent)) {
+        const coords = chunksForExtent(level0, reference.extent).filter((coord) => {
           const tile = chunkFromRaster(values, reference, coord, level0);
-          if (!tile.some((value) => Number.isFinite(value))) continue;
-          const raw = quantiseHeights(tile, { encoding, dither: ditherFor(dither, seed, coord) });
-          const bytes = await encodeChunk(raw, CHUNK_PIXELS, CHUNK_PIXELS);
+          return tile.some((value) => Number.isFinite(value));
+        });
+        const encoded = await mapWithRunner(coords, Math.max(1, runner.size), async (coord) =>
+          runner.run({
+            kind: 'encode',
+            id: 0,
+            values: chunkFromRaster(values, reference, coord, level0),
+            width: CHUNK_PIXELS,
+            height: CHUNK_PIXELS,
+            encoding,
+            ditherSeed: ditherSeedFor(dither, seed, coord),
+          }),
+        );
+        coords.forEach((coord, i) => {
+          const bytes = encoded[i];
+          if (!bytes) return;
           entries.push({ local: placeInShard(level0, coord).local, load: async () => bytes });
           writtenCoords.push(coord);
-        }
+        });
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
         unreadable.push({ tileRef: group.tileRef, reason });
@@ -463,6 +492,7 @@ export async function buildSourceChannel(
     dither,
     ditherSeed: seed,
     onProgress: options.onProgress,
+    runner,
   });
   summary.push(...coarse.levels);
 

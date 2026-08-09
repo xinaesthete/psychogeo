@@ -710,6 +710,61 @@ the hole is already written, and resume skips whole shards. Re-fetching
 `SJ69se` means deleting `height.dsm.lz/0/c/90/36` before re-running, or the pass
 will never look at it again.
 
+## The codec pool (`--threads`)
+
+Deferred twice, and the second deferral was wrong: three national passes in a
+row wanted one. Node `worker_threads`, with the worker as a second rollup entry
+rather than a bundler chunk, because `new Worker()` needs a file it can address
+and an emitted chunk name is not something the pool can predict.
+
+Size 0 runs inline on the calling thread, and that is also the fallback when the
+worker file is absent — running from source, or a build that did not emit it. So
+there is no second code path to keep in step and tests do not spawn threads.
+
+Reads stay on the main thread, where the archive handle, the shard reader's
+index cache and the resume logic already live. Only the codec crosses: decode,
+requantise, downsample, encode.
+
+On NT (1,330 level-0 chunks, 105 coarse), twelve-core machine, ten threads:
+
+| | wall | speedup |
+|---|---|---|
+| inline | 103.9 s | — |
+| level 0 pooled only | 60.6 s | 1.72x |
+| level 0 and coarse pooled | **36.4 s** | **2.85x** |
+
+The first number is the lesson. Parallelising level 0 alone looked disappointing
+until it was clear the coarse levels are nearly half the work — 105 coarse
+chunks each decode up to 16 children, so they carry as many decodes as level 0
+does. Amdahl, arrived at empirically.
+
+Byte-identical to the serial baseline at every step, which is only safe because
+`writeShard` sorts by slot: chunks may complete in any order without changing
+what lands on disk. Dither had to become a seed rather than a closure so it
+survives crossing a thread boundary.
+
+### Co-chunking channels does not help
+
+The idea was that FZ and LZ are the same measurement over bare ground and differ
+only by what stands on it, so a codec ought to be able to exploit the
+correlation. Measured over four chunks, lossless throughout:
+
+| layout | mean KiB per chunk-pair | vs separate |
+|---|---|---|
+| separate 1-component codestreams | 1334 | — |
+| one 2-component codestream | 1334 | **−0.0%** |
+| FZ + dz at the height scale | 1300 | −2.6% |
+
+**Multi-component is byte-for-byte identical to separate.** JPEG 2000's
+multi-component transform is defined for 3-component colour and there is no
+2-component equivalent, so openjph transforms each component independently.
+
+Difference coding does reach the correlation, but the mean hides the spread:
+NT94nw −30.6% where dz is near zero over bare rural ground, but SU42ne **+2.2%**
+and SU42sw **+3.8%** where canopy and buildings make dz expensive. And it would
+cost every reader that wants one channel the bytes of two, where sibling groups
+let a reader fetch only what it asked for. Channels stay siblings.
+
 ## Open
 
 - **The SJ69se hole is not in the final summary.** The flag fired on the run

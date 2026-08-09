@@ -233,6 +233,7 @@ async function runRenormalise(
     dither,
     ditherSeed: seed,
     onProgress: options.onProgress,
+    runner,
   });
   summary.push(...coarse.levels);
   for (const level of coarse.levels) totalBytes += level.bytes;

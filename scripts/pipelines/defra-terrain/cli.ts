@@ -551,6 +551,8 @@ async function main(): Promise<void> {
       gridRefFilter: args.region ?? args.cell,
       levelCount: args.levels ? Number.parseInt(args.levels, 10) : undefined,
       dither: args.dither,
+      poolSize: args.threads ? Number.parseInt(args.threads, 10) : undefined,
+      workerUrl: codecWorkerUrl(),
       onProgress: args.progress
         ? (event) => console.log(formatSourceChannelProgress(event))
         : undefined,
