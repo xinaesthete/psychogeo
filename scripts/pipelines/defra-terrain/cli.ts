@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { existsSync } from 'node:fs';
 import { inspectDataset } from './inspect.ts';
 import {
   defaultTileConcurrency,
@@ -27,6 +28,7 @@ import { syncCheckpointsFromDisk } from './v2/syncCheckpoints.ts';
 import { transcodeToZarr, type TranscodeProgressEvent } from './zarr/transcode.ts';
 import { renormaliseToZarr, type RenormaliseProgressEvent } from './zarr/renormalise.ts';
 import { buildStoreIndex } from './zarr/storeIndex.ts';
+import { defaultPoolSize } from './zarr/codecPool.ts';
 import { resortStore, type ResortProgressEvent } from './zarr/shardResort.ts';
 import {
   buildSourceChannel,
@@ -36,6 +38,22 @@ import {
 } from './zarr/sourceChannel.ts';
 
 const startTime = Date.now();
+
+/**
+ * The built codec worker, which sits beside this module in `dist`.
+ *
+ * Absent when running from source, and that is not an error: the pool falls
+ * back to running the codec inline, which is the path every existing
+ * verification covers.
+ */
+function codecWorkerUrl(): URL | undefined {
+  try {
+    const url = new URL('./codecWorker.mjs', import.meta.url);
+    return existsSync(url) ? url : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 interface CliArgs {
   readonly command: string;
@@ -61,6 +79,7 @@ interface CliArgs {
   readonly skipValidation: boolean;
   readonly verify: boolean;
   readonly dryRun: boolean;
+  readonly threads?: string;
 }
 
 function usage(): string {
@@ -87,8 +106,9 @@ function usage(): string {
     '        Repacks the existing HTJ2K chunks into a sharded zarr v3 store.',
     '        No decode or re-encode: the codestreams become zarr chunks as they are.',
     '  pnpm pipeline:defra -- renormalise-zarr --dataset <dataset-dir|.zip> --out <zarr-dir>',
-    '      [--region <gridRef>] [--dither] [--levels <n>] [--progress]',
+    '      [--region <gridRef>] [--dither] [--levels <n>] [--threads <n>] [--progress]',
     '        Re-encodes to one national scale/offset and a 4x pyramid of 1000px chunks.',
+    `        --threads runs the codec on N worker threads (default ${defaultPoolSize()} here, 0 for inline).`,
     '        Drops the per-chunk encoding arrays; smaller output, but decodes every chunk.',
     '  pnpm pipeline:defra -- channel-zarr --input <composite-zips-dir> --store <zarr-dir>',
     '      [--channel height.dsm.lz|height.aux.dz] [--region <gridRef>] [--levels <n>] [--progress]',
@@ -158,6 +178,7 @@ function parseArgs(argv: string[]): CliArgs {
     skipValidation: flags.has('skip-validation'),
     verify: flags.has('verify'),
     dryRun: flags.has('dry-run'),
+    threads: values.get('threads'),
   };
 }
 
@@ -481,6 +502,8 @@ async function main(): Promise<void> {
       gridRefFilter: args.region ?? args.cell,
       dither: args.dither,
       levelCount: args.levels ? Number.parseInt(args.levels, 10) : undefined,
+      poolSize: args.threads ? Number.parseInt(args.threads, 10) : undefined,
+      workerUrl: codecWorkerUrl(),
       onProgress: args.progress ? (event) => console.log(formatRenormaliseProgress(event)) : undefined,
     });
     const saved = summary.sourceBytes > 0

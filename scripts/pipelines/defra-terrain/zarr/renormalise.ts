@@ -2,17 +2,12 @@ import path from 'node:path';
 import { leafSlotBounds, leafSlotIndex } from '../v2/derive.ts';
 import { gridRefToBounds, normalizeGridRef } from '../v2/osgb.ts';
 import type { TerrainManifestV2 } from '../v2/types.ts';
-import { decodeChunk, encodeChunk } from './chunkCodec.ts';
-import {
-  dequantiseToHeights,
-  globalScaleOffset,
-  quantiseHeights,
-  type ScaleOffset,
-} from './globalScale.ts';
+import { globalScaleOffset, type ScaleOffset } from './globalScale.ts';
+import { createCodecRunner, mapWithRunner, type CodecRunner } from './codecPool.ts';
 import { chunkCoordFor, LEVEL_FACTOR, renormalisedLevels, type RenormLevel } from './levels.ts';
 import {
   buildCoarseLevels,
-  ditherFor,
+  ditherSeedFor,
   fileSize,
   groupByShard,
   heightReduction,
@@ -39,6 +34,10 @@ export type RenormaliseOptions = {
   readonly dither?: boolean;
   readonly ditherSeed?: number;
   readonly levelCount?: number;
+  /** Codec threads. 0 runs inline; omit for one per spare core. */
+  readonly poolSize?: number;
+  /** The built codec worker module. Omit to run inline. */
+  readonly workerUrl?: URL;
   readonly onProgress?: (event: RenormaliseProgressEvent) => void;
 };
 
@@ -104,9 +103,11 @@ async function scanLeaves(
 
 export async function renormaliseToZarr(options: RenormaliseOptions): Promise<RenormaliseSummary> {
   const store = await openSourceStore(options.datasetPath);
+  const runner = createCodecRunner({ size: options.poolSize, workerUrl: options.workerUrl });
   try {
-    return await runRenormalise(store, options);
+    return await runRenormalise(store, options, runner);
   } finally {
+    await runner.close();
     await store.close();
   }
 }
@@ -114,6 +115,7 @@ export async function renormaliseToZarr(options: RenormaliseOptions): Promise<Re
 async function runRenormalise(
   store: SourceStore,
   options: RenormaliseOptions,
+  runner: CodecRunner,
 ): Promise<RenormaliseSummary> {
   const source: TerrainManifestV2 = await readSourceMetadata(store);
   const levels = renormalisedLevels(options.levelCount);
@@ -165,19 +167,26 @@ async function runRenormalise(
       options.onProgress?.({ kind: 'chunk', level: 0, done, total: leaves.length });
       continue;
     }
-    const entries: ShardChunk[] = [];
-    for (const leaf of group) {
+    // Reads stay here — the archive handle and the resume logic live on this
+    // thread — while decode, requantise and encode go to the pool. One shard's
+    // worth is in flight at a time, which bounds memory the same way writing a
+    // shard at a time already does.
+    const width = Math.max(1, runner.size);
+    const encoded = await mapWithRunner(group, width, async (leaf) => {
       // One unreadable source chunk costs its own square kilometre. It used to
       // cost the whole run, which for a national pass is hours of completed
       // work thrown away over a single bad file.
       try {
         const codestream = await store.readBytes(leaf.sourcePath);
         if (!codestream) throw new Error(`missing from ${store.label}`);
-        const decoded = await decodeChunk(codestream);
-        const heights = dequantiseToHeights(decoded.raw, leaf.encoding);
-        const raw = quantiseHeights(heights, { encoding, dither: ditherFor(dither, seed, leaf.coord) });
-        const bytes = await encodeChunk(raw, decoded.width, decoded.height);
-        entries.push({ local: placeInShard(levels[0], leaf.coord).local, load: async () => bytes });
+        return await runner.run({
+          kind: 'requantise',
+          id: 0,
+          codestream,
+          from: leaf.encoding,
+          to: encoding,
+          ditherSeed: ditherSeedFor(dither, seed, leaf.coord),
+        });
       } catch (error) {
         failures += 1;
         options.onProgress?.({
@@ -186,12 +195,21 @@ async function runRenormalise(
           coord: leaf.coord,
           reason: `${leaf.sourcePath}: ${error instanceof Error ? error.message : String(error)}`,
         });
+        return undefined;
+      } finally {
+        done += 1;
+        if (done % 100 === 0) {
+          options.onProgress?.({ kind: 'chunk', level: 0, done, total: leaves.length });
+        }
       }
-      done += 1;
-      if (done % 100 === 0) {
-        options.onProgress?.({ kind: 'chunk', level: 0, done, total: leaves.length });
-      }
-    }
+    });
+
+    const entries: ShardChunk[] = [];
+    group.forEach((leaf, i) => {
+      const bytes = encoded[i];
+      if (!bytes) return;
+      entries.push({ local: placeInShard(levels[0], leaf.coord).local, load: async () => bytes });
+    });
     level0Bytes += await writeOneShard(levelDir0, levels[0], key, entries);
   }
   summary.push({

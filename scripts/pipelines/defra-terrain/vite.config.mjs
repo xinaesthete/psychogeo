@@ -14,14 +14,20 @@ export default defineConfig({
     },
   },
   build: {
-    ssr: 'cli.ts',
+    ssr: true,
     outDir: 'dist',
     emptyOutDir: true,
     target: 'node22',
     rollupOptions: {
-      input: resolve(pipelineRoot, 'cli.ts'),
+      // The codec worker is a second entry rather than a chunk: `new Worker()`
+      // needs a file it can address, and a bundler-emitted chunk name is not
+      // something the pool can predict.
+      input: {
+        cli: resolve(pipelineRoot, 'cli.ts'),
+        codecWorker: resolve(pipelineRoot, 'zarr/codecWorker.ts'),
+      },
       output: {
-        entryFileNames: 'cli.mjs',
+        entryFileNames: '[name].mjs',
         format: 'esm',
       },
     },

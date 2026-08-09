@@ -63,11 +63,24 @@ export function heightReduction(sourceLevel: number): Reduction {
   return sourceLevel === 0 ? { blockSize: LEVEL_FACTOR, bias: 1 } : { blockSize: 1, bias: 0 };
 }
 
+/**
+ * The dither seed for one chunk, or undefined when dithering is off.
+ *
+ * Varies by chunk so a single pattern does not tile across the country, and is
+ * a pure function of (seed, coord) so a re-run reproduces the store — which
+ * also means it survives being computed on one thread and used on another.
+ */
+export function ditherSeedFor(
+  dither: boolean,
+  seed: number,
+  coord: readonly [number, number],
+): number | undefined {
+  return dither ? seed + coord[0] * 73856093 + coord[1] * 19349663 : undefined;
+}
+
 export function ditherFor(dither: boolean, seed: number, coord: readonly [number, number]) {
-  if (!dither) return undefined;
-  // Vary by chunk so a single pattern does not tile across the country, but
-  // stay a pure function of (seed, coord) so a re-run reproduces the store.
-  return seededRandom(seed + coord[0] * 73856093 + coord[1] * 19349663);
+  const chunkSeed = ditherSeedFor(dither, seed, coord);
+  return chunkSeed === undefined ? undefined : seededRandom(chunkSeed);
 }
 
 export async function writeJson(filePath: string, value: unknown): Promise<void> {
