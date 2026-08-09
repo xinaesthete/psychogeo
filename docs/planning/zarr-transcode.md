@@ -720,6 +720,32 @@ directions — three at level 3 — which is coverage, not damage: FZ came from 
 v2 archive and LZ from the composite zips, and their footprints are not identical
 at the edges.
 
+Level 4 was still wrong after all that, and the reason is the same mistake one
+layer down. `shardIsComplete` skipped unsharded levels outright — *"an unsharded
+level is one chunk per object, so the file being there is the whole of the
+claim"* — which is the fallacy the function exists to prevent, written into the
+function itself. Level 4 is the first unsharded level (6x3 chunks, under the
+10x10 shard threshold), so its objects were skipped on existence and LZ kept the
+`--region SU42` run's leftovers: `4/c/4/1` still dated Aug 8 11:36 at 5,797 bytes
+where FZ has 836,361. At the coarsest zoom the store showed one block of the
+Pennines and a corner of Cornwall.
+
+An unsharded object has no index, so nothing about the file distinguishes a chunk
+reduced from two children from one reduced from sixteen. There is no local test.
+What settles it is **whether anything below was rewritten**, which now propagates
+up the pyramid level by level: a coarse object may be skipped only if it is
+complete *and* nothing among its children changed. That also closes the case the
+slot check cannot see — a present slot does not prove its contents were reduced
+from every child that exists now. Callers report which level-0 coords they
+re-encoded rather than which they requested, and the default is to treat
+everything as rebuilt, so a caller that has not thought about it gets a correct
+pyramid rather than a quietly stale one.
+
+Worth naming the pattern, since it has now caused three separate faults in one
+store: **every "it exists, so it must be finished" shortcut in this pipeline has
+been wrong.** Finished is a claim about an expectation, and the expectation lives
+in the run, not on the disk.
+
 **Rebuilding data is not publishing it.** The repair was run by hand rather than
 through the weekend script, and the manual path does not chain `dot_clean -m` and
 `index-zarr` the way the script does. So the bytes were correct at 18:44 and the
