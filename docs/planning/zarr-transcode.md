@@ -642,6 +642,43 @@ and exact.
 **National LZ is therefore ~63 GiB lossless**, taking the store to ~138 GiB. If
 that is too much to host, the honest lever is coverage rather than fidelity.
 
+### The national LZ run, and a correction
+
+Built in one attempt, 16:37 to 21:53 — 5h17m, no retries.
+
+| level | chunks | objects | size |
+|---|---|---|---|
+| 0 (1 m) | 141,823 | 1,542 | 62.19 GiB |
+| 1 (4 m) | 9,078 | 126 | 5.69 GiB |
+| 2 (16 m) | 641 | 18 | 406.98 MiB |
+| 3 (64 m) | 61 | 4 | 359.6 KiB |
+| 4 (256 m) | 5 | 7 | 45.2 KiB |
+| **total** | | | **68.27 GiB** |
+
+Store now 145 GB over three channels; the consolidated index is 2.57 MiB
+covering 302,817 chunks in 3,335 shards.
+
+Derived dz verified on four widely separated cells — NT60ne, SJ69sw, TQ28ne,
+SW62nw — at 0.58–0.74 cm RMSE. Two figures quoted earlier from SU42 alone do
+not survive contact with the country:
+
+- **Worst case is ~2.26 cm, not the 2.15 cm bound**, and
+- **bare ground is exactly zero for 97.2–99.4% of samples, not 100%.**
+
+One cause for both. LZ is written straight from the source raster and matches a
+direct quantisation of it *exactly* — 0.00% of samples differ, worst 0 codes.
+FZ came through the v2 archive, which normalises every chunk over its own
+min/max before the national step is applied on top, and that double rounding
+moves 0.56% of FZ samples by one code. One code is 2.152 cm, so the practical
+worst drifts a little past `scale` and a few bare-ground pixels stop agreeing.
+
+Worth knowing rather than fixing today, but it does mean **the stored dz layer
+was better at exactly one thing**: computed from the source in one step, its
+bare ground is exactly zero everywhere. Derived dz wins on accuracy by more than
+2× and loses this by 1–3%. Rebuilding FZ from the source rasters rather than
+from the v2 archive would give both, and would make FZ match LZ's provenance —
+which is the natural thing to do anyway when a channel is next rebuilt.
+
 ### A failing tile must not abort the run
 
 Learned the hard way on the first national LZ attempt, which died 1h46m in on
@@ -675,6 +712,11 @@ will never look at it again.
 
 ## Open
 
+- **The SJ69se hole is not in the final summary.** The flag fired on the run
+  that hit it, but the restart resumed past the already-written shard, so the
+  run that produced the closing summary never saw it. Per-run reporting is not
+  the same as a store-level record of what is missing, and only the latter
+  survives a resume.
 - **`LZ SJ69se` is a corrupt source download**, leaving a 5 km hole in LZ where
   FZ has data. Re-fetch, delete `height.dsm.lz/0/c/90/36`, re-run.
 - **LZ nationally.** Only SU42 exists so far, ~22 s for a 10 km cell, so roughly
