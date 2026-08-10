@@ -851,6 +851,38 @@ That is the double quantisation and nothing else, which is what the rebuild was
 for. (NT60 alone measured 2.50%, so the single-cell figure quoted when the spec
 landed is not representative — 0.96% is the national number.)
 
+### The smoke test poisoned the tile the fix would have saved
+
+The rebuilt FZ came out with its northernmost coarse tile, level-4 `4/c/2/1`,
+holding **589 valid samples** where LZ has 156,094 — 4,635 bytes against 218,274.
+Everything below it was healthy: the six level-3 children under that tile carry
+81k–880k valid samples each, and level 0 has 10,071 chunks in its footprint.
+Rebuilding level 4 from the same on-disk level 3 gives 151,121 valid samples, so
+nothing was ever unreadable.
+
+It is the unsharded-level fault again, and the chain is entirely self-inflicted:
+
+- The `--region NT60` smoke test, run twice while getting the launcher working,
+  wrote `4/c/2/1` from one 10 km cell. NT60 lands in level-4 row 2, column 1 —
+  that tile and no other.
+- The national run started at 19:53:57 from a CLI snapshot taken at **19:49:28**.
+  The fix for exactly this was committed at **22:14:50**, two and a half hours
+  later. The snapshot has no `rebuiltCoords` and no `nextDirty`.
+- So the run found the object present, called it complete, and skipped it.
+
+The other six level-4 tiles came back **byte-identical** on rebuild, which is the
+proof that only the smoke-tested one was affected. The sharded levels were never
+at risk: `shardIsComplete` predates the snapshot, so levels 1–3 saw NT60's shards
+as short against a national expectation and rebuilt them.
+
+Two things worth keeping. A snapshot pinned for stability is also a snapshot
+pinned against fixes, and the window between taking one and finding a bug is
+exactly when that hurts. And **a smoke test writes to the store it smokes** — the
+NT60 trial was the right call and it left a landmine, because it wrote into the
+channel the national run was about to resume into.
+
+### The swap
+
 The swap is a rename plus two metadata edits: `height.dsm.fz` →
 `height.dsm.fz.v2archive`, the rebuild into its place, `channelId` and the
 multiscales `name` repointed, and the root channel list left naming three
