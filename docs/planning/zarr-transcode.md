@@ -820,6 +820,37 @@ Byte-identical to the serial baseline at every step, which is only safe because
 what lands on disk. Dither had to become a seed rather than a closure so it
 survives crossing a thread boundary.
 
+### The FZ rebuild, measured
+
+19:53:57 → 02:31:31, **6h37m**, one attempt, no unreadable quads, no retries.
+Level 0 took 6h21m of that; all four coarse levels took 16 minutes.
+
+| | old (archive transcode) | rebuilt (composite zips) |
+|---|---|---|
+| L0 | 1,503 shards, 143,185 chunks, 69,772.5 MiB | 1,503 shards, **136,650** chunks, 69,754.9 MiB |
+| L1 | 119 shards, 9,232 chunks, 6,060.7 MiB | 119 shards, 8,850 chunks, 6,059.7 MiB |
+| L2 | 16 shards, 641 chunks, 492.2 MiB | 16 shards, 623 chunks, 492.2 MiB |
+| L3 | 3 shards, 59 chunks, 36.0 MiB | 3 shards, 57 chunks, 36.0 MiB |
+| L4 | 7 chunks, 2.63 MiB | 7 chunks, 2.43 MiB |
+
+Same shards, near-identical bytes, **6,535 fewer chunks**. Every one of those is
+exactly 2,463 bytes — the all-nodata chunk, a constant size because the payload is
+uniform. The v2 archive carried them (the walk that found "6,556 sub-3 KB
+all-nodata level-0 tiles" is the same population); the source-raster pass drops a
+chunk with no finite sample, so 15.3 MiB of empty objects goes away. The rebuild
+has nothing the transcode lacks, in either direction.
+
+Agreement, over 501 million samples across seven level-0 shards sampled evenly
+through the row-ordered list:
+
+- **0.96%** of samples differ, ranging 0.69%–1.92% by shard
+- every difference is **exactly one code** — 2.152 cm
+- **zero** nodata mismatches: the two agree exactly on where data is
+
+That is the double quantisation and nothing else, which is what the rebuild was
+for. (NT60 alone measured 2.50%, so the single-cell figure quoted when the spec
+landed is not representative — 0.96% is the national number.)
+
 **Do not carry 2.85× over to a source-raster pass.** That table is the
 renormalise pass, which reads chunks from an archive; a channel pass reads four
 5000² float32 GeoTIFFs — ~400 MB — out of a zip per quad, and that is main-thread
