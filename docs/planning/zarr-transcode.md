@@ -851,6 +851,14 @@ That is the double quantisation and nothing else, which is what the rebuild was
 for. (NT60 alone measured 2.50%, so the single-cell figure quoted when the spec
 landed is not representative — 0.96% is the national number.)
 
+The swap is a rename plus two metadata edits: `height.dsm.fz` →
+`height.dsm.fz.v2archive`, the rebuild into its place, `channelId` and the
+multiscales `name` repointed, and the root channel list left naming three
+channels. The parked copy stays on disk but **out of `psychogeo.channels`**,
+which is what the index and the viewer's picker enumerate — so it is neither
+indexed nor offered, and reinstating it is one line of JSON. The index went from
+449,216 chunks over 4 channels to 296,092 over 3.
+
 **Do not carry 2.85× over to a source-raster pass.** That table is the
 renormalise pass, which reads chunks from an archive; a channel pass reads four
 5000² float32 GeoTIFFs — ~400 MB — out of a zip per quad, and that is main-thread
