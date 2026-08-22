@@ -14,6 +14,8 @@ dependencies = [
 [project.scripts]
 codec-eval = "codec_eval.compare:main"
 codec-dither = "codec_eval.dither:main"
+codec-foliage = "codec_eval.foliage:main"
+codec-foliage-figures = "codec_eval.figures:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -105,10 +105,53 @@ the visibility threshold that no further statistic will settle it — it wants a
 eyeball test in the renderer, which is why the renormalisation pass takes dither
 as a flag rather than a decision.
 
-## Caveat
+## Foliage layer
 
-The lossless J2K baseline is encoded here with OpenJPEG rather than the
-pipeline's OpenJPH, because there is no HTJ2K encoder in `imagecodecs`. Lossless
-J2K and lossless HTJ2K are close but not identical, so treat that row as
-indicative of the shipped size and the real `.j2c` files on disk as ground
-truth.
+`uv run codec-foliage --cells SU42ne TQ28sw NT94nw SJ69sw SW62nw --per-cell 25`
+asks what a cheap vegetation channel should hold, given that `height.aux.dz`
+stores a 1 m signed difference and costs ~58% of what the heights cost. Candidates
+are scored against the products a foliage layer actually serves — mean penetration
+depth and canopy cover fraction over a 4 m block, computed from the float source —
+rather than against per-pixel dz, which is the thing worth discarding.
+
+`uv run codec-foliage-figures` regenerates the three figures that section
+carries, into `docs/planning/images/`. They are fixed cells and fixed crops, so a
+rerun reproduces them.
+
+Full write-up and tables in
+[docs/planning/zarr-transcode.md](../../docs/planning/zarr-transcode.md)
+§ _A foliage layer from dz_. In short, over 125 chunks from five quads in five
+regions:
+
+| | KiB/chunk | vs naive dz | national |
+|---|---|---|---|
+| naive dz, 1 m @ 10 cm | 274.4 | 100% | ~37 GiB |
+| 4 m block mean, uint8 @ 25 cm, deadbanded | 15.2 | 5.6% | 2.06 GiB |
+| **+ 3x3 opening of the canopy mask** | **9.7** | **3.5%** | **1.31 GiB** |
+
+Three results are worth having separately from the recommendation:
+
+- **A low-pass alone is the wrong lever.** A radius-3 blur at 1 m costs 44% of
+  naive dz to be twenty times less accurate than a 4 m block mean costing 7.8%.
+  The saving is decimation, not smoothing.
+- **Companding is a trap on this data.** 74-81% of dz samples sit within 5 cm of
+  zero, so square-root companding aims its finest codes at the noise floor. Linear
+  uint8 @ 25 cm is smaller *and* more accurate than companding at matched size.
+- **Building perimeters read as canopy.** A roof is opaque so its interior is
+  correctly ~0, but its one-pixel outline has first return on the roof and last on
+  the ground beside it. A 3x3 opening removes 93% of what the naive pipeline calls
+  foliage in inner London and 78% of the bytes, while keeping two thirds to three
+  quarters in farmland, hedgerows included.
+
+## Encoder fidelity
+
+Unlike the zfp comparison above, the foliage numbers are encoded with **OpenJPH
+via `imagecodecs.htj2k_encode`**, the same codec the pipeline ships. Quantising dz
+at 10 cm over the same 100 chunks of SU42 gives **38.67 MiB against the store's
+38.68 MiB**, so those figures compare directly against the plan's tables.
+
+The zfp tables predate that: they were measured when `imagecodecs` had no HTJ2K
+encoder, so their lossless baseline is OpenJPEG J2K. Lossless J2K and lossless
+HTJ2K are close but not identical — treat those rows as indicative and the real
+`.j2c` files on disk as ground truth. Re-measuring them against `htj2k_encode`
+would remove the caveat entirely and is cheap to do.

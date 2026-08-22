@@ -945,6 +945,304 @@ and SU42sw **+3.8%** where canopy and buildings make dz expensive. And it would
 cost every reader that wants one channel the bytes of two, where sibling groups
 let a reader fetch only what it asked for. Channels stay siblings.
 
+## A foliage layer from dz
+
+Derived dz is free — `(fz_raw - lz_raw) * scale`, no storage at all — but only to a
+reader that already holds both 1 m height channels for the tile in view. A viewer
+that wants to draw vegetation at low zoom, over the whole country, on a phone,
+cannot pay 145 GB of heights to get it. So the question is what a dedicated
+foliage channel should hold, and the honest starting point is that **the naive dz
+layer is the wrong shape for it**: `height.aux.dz` cost ~58% of what the heights
+cost, and almost none of that expense is foliage information.
+
+Measured with [python/codec-eval](../../python/codec-eval/README.md)
+(`codec-foliage`, and `codec-foliage-figures` for the pictures below), which
+reproduces the shipped encoder closely enough to compare directly against the
+tables above: quantising dz at 10 cm and encoding the same
+100 chunks of SU42 gives **38.67 MiB against the store's 38.68 MiB**.
+
+That agreement also corrects a projection. The national dz figure of ~43 GiB was
+scaled from SU42's ratio to LZ, and SU42 is far more wooded than the country:
+across 125 chunks — every chunk of five quads in five regions — naive dz costs
+274.4 KiB per chunk, or **~37 GiB nationally**, where SU42 alone would say ~54 GiB.
+Five quads is a thin sample for a national number and should be read as such.
+
+### What the layer is for
+
+dz is a *penetration depth*, not a canopy height model, and for this purpose that
+is an advantage rather than the caveat it was earlier. A roof is opaque: first and
+last return come off the same surface, so dz is ~0 over buildings and over bare
+ground alike, and rises only where the beam got through something. It is already a
+vegetation discriminator, which `FZ - DTM` is not.
+
+So the products a foliage layer owes a renderer are, over a block at some
+rendering scale: **mean penetration depth**, and **canopy cover fraction** — the
+share of 1 m samples with dz above 1 m. Everything below is scored against those,
+computed from the float source, rather than against per-pixel dz, because
+per-pixel dz is precisely the thing worth throwing away.
+
+### The negatives are not the expense, and mostly not what we said they were
+
+The first thing to try, since a signed difference is the obvious suspect, is
+clamping. It is not the lever: `max(dz, 0)` at the same 10 cm step saves **3.4%**,
+265.0 KiB against 274.4.
+
+The wider sample also refines a claim made earlier in this document. 23.8% of
+samples are negative — consistent with "a fifth to a third" — but only **0.47%
+fall below −0.5 m**. So the deep negatives attributed to surveys flown at
+different times are real and are worth keeping visible, but they are a fiftieth of
+the negative samples, not the bulk of them. The rest is float noise straddling
+zero where first and last return came off the same opaque surface, which is the
+same population that makes 74-81% of all samples land within 5 cm of zero.
+
+That matters here because it says where the bits actually are: not in the sign,
+and not in the bare ground, but in the 20-odd percent of pixels under vegetation,
+where penetration depth at 1 m is close to a random draw from a stand-level
+distribution and neighbouring pixels under one tree differ by metres. That is real
+measurement. It is not information a foliage layer needs, and a lossless codec has
+to pay for all of it.
+
+### A low-pass alone is the wrong lever
+
+The intuition that a low-pass filter should help is right about the signal and
+wrong about the mechanism. Smoothing at 1 m, with the pixel count unchanged, is
+dominated on every axis:
+
+| | KiB/chunk | vs naive dz | depth RMSE | mask IoU |
+|---|---|---|---|---|
+| naive dz, 1 m @ 10 cm | 274.4 | 100% | 0.003 m | 0.9948 |
+| box blur r3, 1 m @ 10 cm | 120.8 | 44.0% | 0.322 m | 0.7570 |
+| **block mean, 4 m @ 10 cm** | **21.5** | **7.8%** | **0.016 m** | **0.9999** |
+
+A radius-3 blur pays 44% of the naive cost to be *twenty times less accurate* than
+a 4 m block mean that costs 7.8%. **The saving is in the decimation, not in the
+smoothing** — and a block mean is both operations at once.
+
+It is also the exactly right reduction, for a reason that matters beyond this
+table: the mean of aligned block means is the mean over their union, so the
+coarser levels of a foliage pyramid are not an approximation of the product, they
+*are* the product. Contrast the heights, where FZ and LZ have to share
+`heightReduction` or their difference stops meaning anything above level 0.
+
+### Linear quantisation beats companding, and the reason generalises
+
+Square-root companding — fine codes near zero, coarse in the canopy — looks like
+the obvious fit for a quantity that is zero over most of the country and runs to
+30 m in a wood. It is a trap:
+
+| 4 m mean depth | KiB/chunk | depth RMSE |
+|---|---|---|
+| uint8, sqrt companded, 256 codes | 32.1 | 0.013 m |
+| uint8, sqrt companded, 64 codes | 17.8 | 0.051 m |
+| **uint8, linear @ 25 cm** | **15.4** | **0.040 m** |
+
+Linear is smaller *and* more accurate than companding at a matched size. The cause
+is the bare-ground noise floor: 74-81% of dz samples sit within 5 cm of zero,
+because first and last return off an opaque surface agree to within float noise. A
+linear step wide enough to ignore that puts all of it on one code. Companding aims
+its finest resolution exactly there, and **turns a silent majority of the country
+back into entropy**.
+
+The same argument kills the deadband as a *size* lever — flooring everything below
+25 cm to exactly zero saves 1.3% — but it earns its place for a different reason.
+It makes the layer's own foliage/not-foliage decision exact by construction rather
+than a function of where a quantiser boundary happens to fall, which moves the
+mask IoU from 0.83 to 1.00 at no cost.
+
+### 4 m is the resolution, and it is already in the grid
+
+How much of the 1 m field's spatial variance survives each coarsening, against
+what it costs (relu dz, deadbanded, uint8 @ 25 cm, per 1 km chunk):
+
+| scale | variance kept | KiB/chunk | smaller by |
+|---|---|---|---|
+| 1 m | 100.0% | 193.61 | 1.0x |
+| 2 m | 78.3% | 53.70 | 3.6x |
+| **4 m** | **65.0%** | **15.25** | **12.7x** |
+| 8 m | 53.1% | 4.44 | 43.6x |
+| 20 m | 36.7% | 1.00 | 193.4x |
+
+The first halving costs 21.7 points of variance; the two after it cost 13.3 and
+11.9. The extra loss in that first step is the uncorrelated per-pixel component,
+and what remains falls at a steady rate per doubling, which is what real landscape
+structure looks like. Size falls far
+faster than variance throughout, which is what makes coarsening worth doing at
+all, but 8 m is where it starts to hurt: scored against a 4 m product it comes
+back at 0.577 m RMSE and 0.66 mask IoU, and visibly smears a housing estate into
+woodland.
+
+4 m is also, conveniently, level 1 of the height ladder, so a foliage channel at
+4 m shares the store's existing chunk geometry rather than inventing one.
+
+### Building perimeters read as canopy
+
+This is the finding the size tables cannot show, and it is the reason a simple
+low-pass is not enough.
+
+A roof is opaque, so a building's *interior* is correctly ~0. Its **perimeter is
+not**: there the first return is the roof edge and the last return is the ground
+beside it, so dz jumps to the full building height. Every building in the country
+is outlined in several metres of apparent canopy, one or two pixels wide — and a
+block mean, faithfully, smears that outline across the block. In a suburb the
+naive layer reads as a uniform green haze; at 8 m an estate is indistinguishable
+from a wood.
+
+![Suburban SU42ne, five panels](images/foliage-opening.webp)
+
+*Left to right: FZ as greys; naive dz at 1 m; the 4 m block mean; the same with a
+3x3 opening; the same with 5x5. Read the first panel for ground truth — the round
+bright blobs are trees, the rectangles are houses. In panels two and three every
+house is traced and then smeared in green. In panel four the estate is gone and
+the trees are where the blobs are.*
+
+The outline is *thin*, and canopy is not. A 3x3 binary opening of the canopy mask
+before the block mean separates them, and the evidence that it separates the right
+thing is that its cost tracks how built-up the ground is:
+
+Both columns are the 4 m uint8 layer, deadbanded, differing only in whether the
+mask is opened first — not the 1 m naive dz of the tables above.
+
+| cell | | KiB, unopened | KiB, opened | foliage cells, unopened | opened | kept |
+|---|---|---|---|---|---|---|
+| TQ28sw | inner London | 18.37 | 4.02 | 17.0% | 1.1% | **6.8%** |
+| SJ69sw | Merseyside | 16.94 | 10.61 | 19.6% | 6.6% | 33.6% |
+| SU42ne | Hampshire, suburban | 22.44 | 19.81 | 30.8% | 20.7% | 67.3% |
+| NT94nw | Northumberland, rural | 6.48 | 4.86 | 6.7% | 4.3% | 64.9% |
+| SW62nw | Cornwall, coastal | 12.00 | 9.27 | 23.8% | 17.8% | 74.7% |
+
+In London the opening removes **93% of what the unopened pipeline called
+foliage** and 78% of the bytes. In farmland it keeps two thirds to three quarters,
+and what it removes there is isolated single-pixel speckle in open fields.
+Hedgerows and tree lines survive intact, because at 1 m a hedge is 2-4 pixels of
+overhanging crown rather than a line.
+
+![Farmland SU42nw, five panels](images/foliage-rural.webp)
+
+*The same five panels a few kilometres west. The hedgerow crossing the field and
+the wood at bottom left come through 3x3 and even 5x5 intact; what goes is
+scattered speckle in open ground. In farmland the opening is close to free.*
+
+Note also what the unopened column says on its own: **inner London costs almost as
+much as wooded Hampshire** — 18.4 KiB against 22.4 — because without the opening
+the layer spends most of its bits in towns, on building edges, describing
+vegetation that is not there.
+
+A 3x3 median filter, tried first for the same purpose, is not a substitute: it
+costs about as much (22.5 KiB), and because it is applied to the depth rather than
+the mask it destroys sparse real canopy, landing at 0.231 m RMSE and 0.71 IoU.
+
+Scored against the un-opened reference the opened layer looks terrible — 0.383 m
+RMSE, 0.42 mask IoU — and that number should be read for what it is. The
+reference product is the mean of `max(dz, 0)` from the float source, so it
+*contains* the building outlines; almost all of that "error" is the correction
+working. The per-cell table is the evidence that it removes the right thing,
+because the reference cannot be: it is the thing being corrected.
+
+### What it costs
+
+Cumulatively, over the same 125 chunks:
+
+| | KiB/chunk | vs naive dz | national |
+|---|---|---|---|
+| naive dz, 1 m @ 10 cm (`height.aux.dz` as built) | 274.4 | 100% | ~37 GiB |
+| 4 m block mean, uint16 @ 10 cm | 21.5 | 7.8% | 2.91 GiB |
+| uint8 linear @ 25 cm, deadbanded | 15.2 | 5.6% | 2.06 GiB |
+| **+ 3x3 opening — the proposal** | **9.7** | **3.5%** | **1.31 GiB** |
+| the same with a 5x5 opening | 6.7 | 2.4% | 0.90 GiB |
+| the same at 8 m rather than 4 m | 3.3 | 1.2% | 0.45 GiB |
+
+**~1.3 GiB nationally, against ~37 GiB for the layer it replaces** — 28x — and
+1% of the 145 GB the store already holds. 5x5 saves a further third but starts
+taking single trees with it, and 8 m is ruled out above.
+
+### One plane, not two
+
+Cover fraction is the thing a mean depth cannot express — half a block of 6 m
+canopy and a whole block of 3 m scrub reduce to the same number — so it is a fair
+question whether it earns a second plane. It does not. A second plane costs more
+than the first one does, and most of what it would carry is already recoverable:
+from the 4 m mean depth alone, a lookup table explains **78.7% of the spread in
+cover fraction** (residual RMSE 0.044) and **80.1% of the spread in p90 canopy
+top** (residual 0.47 m against a spread of 2.35 m).
+
+Two related shapes were tried and both are worse. Storing a high percentile
+instead of the mean costs *more* (36.1 KiB against 32.1) because a percentile is
+noisier than a mean. And splitting the product into cover x conditional depth — on
+the theory that canopy thickness is near-constant inside a stand where the product
+swings across every edge — comes out larger than storing cover and depth
+separately (46.1 KiB against 41.8) and less accurate.
+
+Irreversible coding is the wrong call here for the third time, and for the reason
+already established: at the mildest useful setting it is 22% *larger* than
+lossless while smearing the reserved nodata code.
+
+### The pipeline
+
+```
+dz = FZ - LZ                       derived, at 1 m
+  -> canopy mask: dz > 1 m
+  -> 3x3 binary opening            building perimeters out, hedgerows in
+  -> depth = max(dz, 0) inside the mask, 0 outside
+  -> 4 m block mean                low-pass and decimation in one, exact upward
+  -> deadband below 25 cm -> 0     makes the foliage decision exact
+  -> uint8 linear @ 25 cm          raw 0 reserved for nodata, as every channel does
+  -> lossless HTJ2K
+```
+
+### The building edge is a poor building signal
+
+The thing the opening throws away is a real signal about the built environment,
+which raises the obvious question of whether it should be kept rather than
+discarded. Measured, it should not — not in that form.
+
+![The two candidate building signals](images/foliage-building-signal.webp)
+
+*FZ; then in red the thin dz residual the opening discards; then in blue "opaque
+and raised". The red traces buildings but also kerbs, walls, vehicles and crown
+edges, and it is broken and doubled where it does. The blue fills footprints and
+leaves the trees alone.*
+
+On a suburban km, the thin residual is 12.2% of pixels, and only **40.8% of it
+lies within 2 m of anything that is both opaque and raised**. The rest is tree
+crown edges, kerbs, walls, vehicles and survey seams. It is also structurally the
+wrong product: an outline, broken and doubled, rather than a footprint.
+
+The same two inputs carry a much better one. A building is **opaque and raised**:
+dz below ~0.5 m, and LZ more than ~2.5 m above a local ground estimate, where the
+ground estimate is a grey-scale morphological opening of LZ over ~25 m. That
+fills footprints cleanly, reads a housing estate's plan directly, and does not
+fire on the trees — which are excluded by the opacity test, not by a threshold
+that has to be tuned against them.
+
+Two things follow for anything built on this. The opacity test is the part that
+comes from having both returns, and it is what makes buildings separable from
+vegetation at all. The ground estimate is the expensive part: it needs support of
+~25 m, so a tile-local derivation needs a halo of that order, against the single
+pixel the foliage opening needs. A small stored `ground` channel — a morphological
+minimum of LZ at 4 m or 16 m — would remove that constraint for every consumer,
+and is worth costing before committing to a client-side path.
+
+### Where the derivation should live
+
+Every step above is a local spatial operation: threshold, erosion, dilation, block
+reduction. The sibling `tgpu-htj2k` / IntraSpatial toolbox already has the harder
+half of that — `convolveSeparable` and the operation-graph runtime — and
+erosion/dilation is a small kernel next to what is there. So there is a real
+choice between baking a layer and deriving one in the client, and the answer is
+that they are not competing:
+
+- **A baked 4 m channel** is the cheap-proxy path NOTES.md asks for: whole
+  country, loadable at low zoom, no dependency on the 1 m heights being resident.
+  It costs ~1.3 GiB against the store's current 145 GB — under 1%.
+- **Client-side derivation from FZ and LZ** is the high-detail path, for tiles
+  already in view, at 1 m, with the thresholds live rather than frozen.
+
+They should share one definition rather than drift into two. If the derivation is
+written once as an operation graph, the pipeline runs it at 4 m to bake the
+channel and the client runs the same graph at 1 m when the heights are there —
+which is also the honest way to keep the baked layer's frozen choices (1 m canopy
+threshold, 3x3 element, 25 cm deadband) auditable rather than buried in a pass.
+
 ## Open
 
 - **The SJ69se hole is not in the final summary.** The flag fired on the run
@@ -959,7 +1257,21 @@ let a reader fetch only what it asked for. Channels stay siblings.
   pass already makes.
 - **Whether to keep the stored dz layer at all.** SU42 has one, 42 MiB, now
   superseded by derived dz. Left in place rather than deleted because it is the
-  evidence for the comparison and rebuilds in 35 s.
+  evidence for the comparison and rebuilds in 35 s. The foliage layer supersedes
+  it for the purpose it was actually wanted for, at 3.5% of its size.
+- **The foliage pass is measured but not built.** Everything above is
+  `python/codec-eval`; nothing writes a `height.aux.foliage` channel yet. The
+  extraction is `sourceChannel.ts` with a different reduction, and the pyramid
+  above 4 m is a plain mean, which `pyramidBuild.ts` already does.
+- **The 1 m canopy threshold and the 3x3 element are unvalidated against ground
+  truth.** They are justified by geometry and by how the cost splits between town
+  and country, not by a building or woodland dataset. `OS Open Greenspace` is on
+  the same volume and would test the woodland end; nothing to hand tests the
+  building end.
+- **Whether a `ground` channel is worth it.** A morphological minimum of LZ at 4 m
+  or 16 m would make building height derivable without a 25 m halo, and would
+  also give a real canopy height model rather than a penetration depth. Costing
+  it is the next measurement, not a decision yet.
 - **Deriving dz in the reader.** The subtraction is exact and cheap but nothing
   in the browser does it yet; the tile pipeline fetches one channel per tile.
 - **zfp was prototyped and lost** — see [python/codec-eval](../../python/codec-eval/README.md).
